@@ -15,11 +15,14 @@ aperture-nexus gives AI agents and applications a persistent, searchable memory 
 
 | Page | What it covers |
 |------|----------------|
+| [Getting Started](getting-started.md) | Step-by-step from zero to your first stored memory — **start here** |
 | [Concepts](concepts.md) | The KMC model, how the three core objects relate, ApertureDB storage mapping, and architecture diagrams |
 | [API Reference](api-reference.md) | Full reference for `Memory`, `Context`, `Information`, `MemoryTask`, and the exception hierarchy |
 | [Configuration](configuration.md) | Every field in `aperture_nexus.json` with defaults, constraints, and environment variable overrides |
 
-For installation, quickstart, deployment, and CLI reference, see the [main README](../README.md).
+For a one-command setup, run `bash setup.sh` from the repo root.
+See [`examples/`](../examples/) for runnable scripts covering each data modality.
+For installation and CLI reference, see the [main README](../README.md).
 
 ---
 
