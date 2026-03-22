@@ -36,7 +36,9 @@ No root access is required for any of these paths.
 {
     "models": {
         "llm": "gpt-4o",
-        "vlm": "clip-vit-base-patch32"
+        "text_embedding": "text-embedding-3-small",
+        "image_embedding": "clip-vit-base-patch32",
+        "video_embedding": "clip-vit-base-patch32"
     },
     "processing": {
         "num_threads": 4,
@@ -74,12 +76,25 @@ No root access is required for any of these paths.
 
 ## `models`
 
-Required only if `process_and_commit()` or `async_process_and_commit()` is used. If you only use `commit()` (raw storage), omit this section entirely.
+Required only if `process_and_commit()` or `async_process_and_commit()`
+is used. If you only use `commit()` (raw storage), omit this section.
+
+Each modality has its own embedding model and its own ApertureDB
+DescriptorSet (`nexus_text`, `nexus_image`, `nexus_video`). Search is
+per-modality: a text query searches text descriptors only, an image
+query searches image descriptors only.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `llm` | string | Language model for text processing and summarization. Examples: `"gpt-4o"`, `"gemini-2.5-pro"` |
-| `vlm` | string | Vision-language model for image and video embedding. Examples: `"clip-vit-base-patch32"`, `"gemini-embedding-001"` |
+| `llm` | string | Language model for summarization and text enrichment. Examples: `"gpt-4o"`, `"gemini-2.5-pro"` |
+| `text_embedding` | string | Embedding model for text. Examples: `"text-embedding-3-small"`, `"text-embedding-ada-002"` |
+| `image_embedding` | string | Embedding model for images. Examples: `"clip-vit-base-patch32"`, `"openclip-vit-l-14"` |
+| `video_embedding` | string | Embedding model for video frames. Can be the same as `image_embedding`. |
+
+> **Note:** `text_embedding`, `image_embedding`, and `video_embedding`
+> must each match the model used at index time (stored on the
+> DescriptorSet). Mismatches are caught at search time with a
+> `NexusConfigError`.
 
 ---
 

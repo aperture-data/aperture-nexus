@@ -91,8 +91,12 @@ task = await memory.async_process_and_commit(ctx, info)
 # Connect memories or contexts
 memory.connect(source=ctx, target=other_ctx, relationship="follows")
 
-# Search — permissions enforced automatically from principal
-results = memory.search(query=text_or_image_or_numpy, filters={...})
+# Search — per-modality, permissions enforced automatically
+# str → text descriptors, image/path/PIL → image descriptors,
+# np.ndarray requires modality= kwarg (ambiguous otherwise)
+results = memory.search(query="...", filters={...})
+results = memory.search(query="photo.jpg")
+results = memory.search(query=my_vector, modality="image")
 
 # Remove
 memory.remove(memory_id)
@@ -201,9 +205,10 @@ NexusError                 # base + unknown errors
 
 Good error message format:
 ```
-NexusConfigError: No embedding model resolved for image input.
-Provide embedding_model='your-model' in log(), or add a "models" section
-to aperture_nexus.json. Run 'adb-nexus init' to regenerate your config.
+NexusConfigError: No embedding model configured for image input.
+Set models.image_embedding in aperture_nexus.json, or pass
+embedding_model='your-model' to info.log().
+Run 'adb-nexus init' to regenerate your config.
 ```
 
 ---
@@ -220,7 +225,12 @@ Config file (`aperture_nexus.json`) is discovered in this order:
 Key sections and defaults:
 ```json
 {
-    "models": { "llm": "...", "vlm": "..." },
+    "models": {
+        "llm": "...",
+        "text_embedding": "...",
+        "image_embedding": "...",
+        "video_embedding": "..."
+    },
     "processing": {
         "num_threads": 4, "batch_size": 50, "embedding_batch": 32,
         "retry_attempts": 3, "retry_interval": 1.0,

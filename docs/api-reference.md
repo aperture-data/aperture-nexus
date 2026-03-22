@@ -157,40 +157,93 @@ else:
 
 ```python
 memory.search(
-    query: str | np.ndarray | None = None,
+    query: str | Path | PIL.Image | np.ndarray | bytes | None = None,
+    modality: str | None = None,
     filters: dict | None = None,
-    limit: int = 10,
-    max_hops: int = 0,
+    k: int = 10,
+    embedding_model: str | None = None,
+    min_score: float | None = None,
 ) -> list[SearchResult]
 ```
 
-Search across stored memories. Permissions are enforced automatically based on the principal associated with the Memory instance.
+Search stored memories by semantic similarity, metadata, or both.
+Permissions are enforced automatically from the Memory's principal.
+
+Search is **per-modality**: each query type searches its own descriptor
+set. There is no cross-modal search (e.g. image query finding text
+results) in v1.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `query` | `str \| np.ndarray \| None` | Semantic query. String triggers text embedding; ndarray is used directly. `None` returns results by metadata filters only. |
-| `filters` | `dict \| None` | Metadata filters. Common keys: `session_id`, `organization`, `user_id`, `purpose`. |
-| `limit` | `int` | Maximum results to return. Default: `10`. |
-| `max_hops` | `int` | Graph traversal depth for connected memories. Default: `0` (no traversal). |
+| `query` | see below | The search query. Type determines modality. `None` returns results by metadata only. |
+| `modality` | `str \| None` | Required when `query` is `np.ndarray` (ambiguous). One of `"text"`, `"image"`, `"video"`. |
+| `filters` | `dict \| None` | Metadata filters. Keys: `session_id`, `user_id`, `organization`, `purpose`. |
+| `k` | `int` | Maximum results. Default: `10`. |
+| `embedding_model` | `str \| None` | Override the configured embedding model for this query. Must match the model used at index time. |
+| `min_score` | `float \| None` | Minimum similarity score threshold. Results below this are excluded. |
+
+**Query type → modality mapping:**
+
+| `query` type | Modality | Embedding call |
+|---|---|---|
+| `str` | text | yes — uses `models.text_embedding` |
+| `Path` / URL `str` / `PIL.Image` | image | yes — uses `models.image_embedding` |
+| video `Path` / `bytes` | video | yes — frames sampled, uses `models.video_embedding` |
+| `np.ndarray` | requires `modality=` | no — used directly |
+| `None` | — | no — metadata filter only |
 
 **Returns:** `list[SearchResult]`
-**Raises:** `NexusPermissionError`, `NexusConnectionError`
+**Raises:** `NexusPermissionError`, `NexusConnectionError`,
+`NexusConfigError` (missing model, mismatched embedding space)
 
 ```python
-# Semantic search
+# Text query → searches text descriptor set
 results = memory.search(query="missing order last week")
 
-# Filtered by session
+# Image query → searches image descriptor set
+results = memory.search(query="photo.jpg")
+results = memory.search(query=pil_image)
+
+# Pre-computed embedding → modality required
+results = memory.search(query=my_vector, modality="image")
+
+# Metadata filter only — no embedding needed
+results = memory.search(filters={"user_id": "alice"}, k=50)
+
+# Combined: semantic + metadata filter
 results = memory.search(
     query="order inquiry",
     filters={"session_id": sid, "organization": "AcmeCorp"},
 )
 
-# Metadata-only (no semantic)
-results = memory.search(filters={"user_id": "alice"}, limit=50)
-
 for r in results:
-    print(r.memory_id, r.score, r.context.purpose)
+    print(r.score, r.modality, r.text or r.image)
+```
+
+---
+
+### `SearchResult`
+
+Returned by `memory.search()`. Exactly one content field is set,
+corresponding to the modality of the stored memory.
+
+```python
+@dataclass
+class SearchResult:
+    score: float              # similarity (higher = more similar)
+    modality: str             # "text" | "image" | "video" | "blob"
+    memory_id: str
+    session_id: str
+    context_id: str
+    timestamp: datetime
+
+    # Content — exactly one is set:
+    text: str | None = None
+    image: PIL.Image | None = None
+    video_url: str | None = None
+    blob: bytes | None = None
+
+    metadata: dict = field(default_factory=dict)
 ```
 
 ---
