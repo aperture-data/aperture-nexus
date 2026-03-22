@@ -1,0 +1,34 @@
+{
+    "permissions": {
+        "defaultMode": "acceptEdits",
+        "allow": [
+            "Bash(git status:*)",
+            "Bash(git diff:*)",
+            "Bash(git log:*)",
+            "Bash(git branch:*)",
+            "Bash(git checkout:*)",
+            "Bash(git switch:*)",
+            "Bash(git add:*)",
+            "Bash(git commit:*)",
+            "Bash(git stash:*)",
+            "Bash(git rebase:*)",
+            "Bash(git merge:*)",
+            "Bash(git fetch:*)",
+            "Bash(git reset:*)",
+            "Bash(git rm:*)",
+            "Bash(git cherry-pick:*)",
+            "Bash(git show:*)",
+            "Bash(make:*)",
+            "Bash(pytest:*)",
+            "Bash(python:*)",
+            "Bash(python3:*)",
+            "Bash(pip:*)",
+            "Bash(pip3:*)"
+        ],
+        "deny": [
+            "Bash(git push:*)",
+            "Bash(gh pr create:*)",
+            "Bash(gh pr merge:*)"
+        ]
+    }
+}

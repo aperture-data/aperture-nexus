@@ -75,11 +75,19 @@ class ModelsConfig(BaseModel):
     Required only when process_and_commit() or async_process_and_commit()
     is called. If you only use commit() (raw storage), omit this section.
 
+    Each modality has its own embedding model and its own ApertureDB
+    DescriptorSet (nexus_text, nexus_image, nexus_video). The model name
+    is stored on the DescriptorSet at creation time. Mismatches between
+    index-time and query-time models are caught at search time with a
+    NexusConfigError.
+
     Example (aperture_nexus.json):
         {
             "models": {
                 "llm": "gpt-4o",
-                "vlm": "clip-vit-base-patch32"
+                "text_embedding": "text-embedding-3-small",
+                "image_embedding": "clip-vit-base-patch32",
+                "video_embedding": "clip-vit-base-patch32"
             }
         }
     """
@@ -87,15 +95,29 @@ class ModelsConfig(BaseModel):
     llm: Optional[str] = Field(
         default=None,
         description=(
-            "Language model for text processing and summarization. "
-            "Example: 'gpt-4o', 'gemini-2.5-pro'."
+            "Language model for summarization and text enrichment. "
+            "Examples: 'gpt-4o', 'gemini-2.5-pro'."
         ),
     )
-    vlm: Optional[str] = Field(
+    text_embedding: Optional[str] = Field(
         default=None,
         description=(
-            "Vision-language model for image and video embedding. "
-            "Example: 'clip-vit-base-patch32', 'gemini-embedding-001'."
+            "Embedding model for text. "
+            "Examples: 'text-embedding-3-small', 'text-embedding-ada-002'."
+        ),
+    )
+    image_embedding: Optional[str] = Field(
+        default=None,
+        description=(
+            "Embedding model for images. "
+            "Examples: 'clip-vit-base-patch32', 'openclip-vit-l-14'."
+        ),
+    )
+    video_embedding: Optional[str] = Field(
+        default=None,
+        description=(
+            "Embedding model for video frames. "
+            "Can be the same as image_embedding."
         ),
     )
 
