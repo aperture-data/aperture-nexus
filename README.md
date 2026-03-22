@@ -67,7 +67,15 @@ pip install aperture-nexus[all]       # everything
 
 aperture-nexus requires a running ApertureDB instance.
 
-**Quickest option — Docker Compose (recommended):**
+> **Note on ApertureDB community edition:**
+> The Docker image used below (`aperturedata/aperturedb-community`) is
+> licensed for **evaluation and development only** — internal testing, no
+> production use, no commercial use. For production deployments, you need
+> a commercial ApertureDB license. See the
+> [ApertureDB community edition license](https://www.aperturedata.io/docker-license)
+> and [contact ApertureData](https://aperturedata.io/contact) for production licensing.
+
+**Quickest option — Docker Compose (recommended for development):**
 
 ```bash
 docker compose up -d
@@ -397,7 +405,14 @@ See [aperture_nexus_config.md](aperture_nexus_config.md) for the full configurat
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+aperture-nexus is released under the [MIT License](LICENSE).
+
+> **Note:** This license applies to aperture-nexus only. ApertureDB,
+> which aperture-nexus uses as its backend, is licensed separately.
+> The community edition Docker image is for evaluation and development
+> only. See the [ApertureDB community edition license](https://www.aperturedata.io/docker-license)
+> for details, and [contact ApertureData](https://aperturedata.io/contact)
+> for production licensing.
 
 ---
 
