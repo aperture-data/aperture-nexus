@@ -120,3 +120,9 @@ omit = ["tests/*"]
 python_version = "3.10"
 strict = true
 ignore_missing_imports = true
+
+[tool.autopep8]
+max_line_length = 80
+
+[tool.pycodestyle]
+max_line_length = 80

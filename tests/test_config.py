@@ -193,7 +193,8 @@ class TestConfigDiscovery:
         home_file = home_dir / "config.json"
         home_file.write_text(json.dumps({"processing": {"num_threads": 3}}))
 
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "fakehome"))
+        monkeypatch.setattr(Path, "home", staticmethod(
+            lambda: tmp_path / "fakehome"))
 
         cfg = load_config(validate_deps=False)
         assert cfg.processing.num_threads == 3
@@ -304,7 +305,10 @@ class TestOptionalDeps:
         # Simulate missing import by patching the import inside validate_deps
         import unittest.mock as mock
         with mock.patch.dict("sys.modules", {"scenedetect": None}):
-            with pytest.raises(NexusConfigError, match="pip install aperture-nexus\\[video\\]"):
+            with pytest.raises(
+                NexusConfigError,
+                match="pip install aperture-nexus\\[video\\]",
+            ):
                 load_config(path=config_file, validate_deps=True)
 
     def test_tokens_missing_dep_raises(self, tmp_path, monkeypatch):
@@ -315,7 +319,10 @@ class TestOptionalDeps:
 
         import unittest.mock as mock
         with mock.patch.dict("sys.modules", {"tiktoken": None}):
-            with pytest.raises(NexusConfigError, match="pip install aperture-nexus\\[tokens\\]"):
+            with pytest.raises(
+                NexusConfigError,
+                match="pip install aperture-nexus\\[tokens\\]",
+            ):
                 load_config(path=config_file, validate_deps=True)
 
     def test_metrics_missing_dep_raises(self, tmp_path):
@@ -324,7 +331,10 @@ class TestOptionalDeps:
 
         import unittest.mock as mock
         with mock.patch.dict("sys.modules", {"prometheus_client": None}):
-            with pytest.raises(NexusConfigError, match="pip install aperture-nexus\\[metrics\\]"):
+            with pytest.raises(
+                NexusConfigError,
+                match="pip install aperture-nexus\\[metrics\\]",
+            ):
                 load_config(path=config_file, validate_deps=True)
 
     def test_ui_missing_dep_raises(self, tmp_path):
@@ -333,7 +343,10 @@ class TestOptionalDeps:
 
         import unittest.mock as mock
         with mock.patch.dict("sys.modules", {"fastapi": None}):
-            with pytest.raises(NexusConfigError, match="pip install aperture-nexus\\[ui\\]"):
+            with pytest.raises(
+                NexusConfigError,
+                match="pip install aperture-nexus\\[ui\\]",
+            ):
                 load_config(path=config_file, validate_deps=True)
 
     def test_validate_deps_false_skips_checks(self, tmp_path):

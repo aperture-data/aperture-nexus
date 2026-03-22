@@ -25,9 +25,9 @@ from aperture_nexus.exceptions import NexusConnectionError
 # ---------------------------------------------------------------------------
 
 def _make_connector(host="localhost", port=55555, use_ssl=True):
-    """Return a mock Connector whose config object mirrors ApertureDB's Connector."""
+    """Return a mock Connector whose config object mirrors ApertureDB's."""
     c = MagicMock()
-    # Connector stores connection params on connector.config (the source of truth).
+    # Connector stores params on connector.config (source of truth).
     c.config.host = host
     c.config.port = port
     c.config.use_ssl = use_ssl
@@ -49,7 +49,7 @@ def _status_error_response(status=-1, info="Server error"):
 
 class TestGetConnector:
     def test_passthrough_when_db_provided(self):
-        """When a Connector is passed, it is returned unchanged (no create_connector call)."""
+        """Connector passed in is returned unchanged (no create_connector)."""
         existing = _make_connector()
         result = get_connector(db_client=existing)
         assert result is existing
@@ -63,15 +63,18 @@ class TestGetConnector:
         assert result is existing
 
     def test_creates_connector_when_db_is_none(self):
-        """When db_client=None, create_connector() is called and its result returned."""
+        """When db_client=None, create_connector() is called."""
         new_connector = _make_connector()
-        with patch("aperture_nexus._client.create_connector", return_value=new_connector) as mock_create:
+        with patch(
+            "aperture_nexus._client.create_connector",
+            return_value=new_connector,
+        ) as mock_create:
             result = get_connector()
         mock_create.assert_called_once_with()
         assert result is new_connector
 
     def test_raises_nexus_connection_error_on_assert_error(self):
-        """AssertionError from create_connector (no config found) → NexusConnectionError."""
+        """AssertionError from create_connector → NexusConnectionError."""
         with patch(
             "aperture_nexus._client.create_connector",
             side_effect=AssertionError("No configuration found."),
@@ -86,7 +89,10 @@ class TestGetConnector:
     def test_nexus_connection_error_chains_original_assert(self):
         """NexusConnectionError must chain the original AssertionError."""
         original = AssertionError("No configuration found.")
-        with patch("aperture_nexus._client.create_connector", side_effect=original):
+        with patch(
+            "aperture_nexus._client.create_connector",
+            side_effect=original,
+        ):
             with pytest.raises(NexusConnectionError) as exc_info:
                 get_connector()
 
@@ -107,16 +113,22 @@ class TestGetConnector:
 
     def test_unexpected_exception_is_chained(self):
         original = RuntimeError("boom")
-        with patch("aperture_nexus._client.create_connector", side_effect=original):
+        with patch(
+            "aperture_nexus._client.create_connector",
+            side_effect=original,
+        ):
             with pytest.raises(NexusConnectionError) as exc_info:
                 get_connector()
 
         assert exc_info.value.__cause__ is original
 
     def test_db_none_is_default(self):
-        """get_connector() with no args behaves the same as get_connector(db_client=None)."""
+        """No args behaves the same as get_connector(db_client=None)."""
         connector = _make_connector()
-        with patch("aperture_nexus._client.create_connector", return_value=connector):
+        with patch(
+            "aperture_nexus._client.create_connector",
+            return_value=connector,
+        ):
             result = get_connector()
         assert result is connector
 
@@ -127,7 +139,7 @@ class TestGetConnector:
 
 class TestValidateConnection:
     def test_succeeds_on_status_zero(self):
-        """validate_connection does not raise when GetStatus returns status=0."""
+        """Does not raise when GetStatus returns status=0."""
         connector = _make_connector()
         connector.query.return_value = (_status_ok_response(), [])
         # Should not raise
@@ -135,7 +147,7 @@ class TestValidateConnection:
         connector.query.assert_called_once_with([{"GetStatus": {}}])
 
     def test_raises_on_connection_error(self):
-        """Python ConnectionError from connector.query → NexusConnectionError."""
+        """ConnectionError from connector.query → NexusConnectionError."""
         connector = _make_connector()
         connector.query.side_effect = ConnectionError("connection refused")
         with pytest.raises(NexusConnectionError) as exc_info:
@@ -153,7 +165,7 @@ class TestValidateConnection:
             validate_connection(connector)
 
     def test_raises_on_unauthorized_exception(self):
-        """UnauthorizedException → NexusConnectionError mentioning credentials."""
+        """UnauthorizedException → NexusConnectionError (credentials)."""
         connector = _make_connector()
         connector.query.side_effect = UnauthorizedException("bad token")
         with pytest.raises(NexusConnectionError) as exc_info:
@@ -163,9 +175,10 @@ class TestValidateConnection:
         assert "unauthorized" in msg.lower() or "credentials" in msg.lower()
 
     def test_raises_on_unauthenticated_exception(self):
-        """UnauthenticatedException → NexusConnectionError mentioning credentials."""
+        """UnauthenticatedException → NexusConnectionError (credentials)."""
         connector = _make_connector()
-        connector.query.side_effect = UnauthenticatedException("not authenticated")
+        connector.query.side_effect = UnauthenticatedException(
+            "not authenticated")
         with pytest.raises(NexusConnectionError) as exc_info:
             validate_connection(connector)
 
@@ -184,7 +197,8 @@ class TestValidateConnection:
     def test_raises_on_non_zero_status(self):
         """A GetStatus response with status != 0 → NexusConnectionError."""
         connector = _make_connector()
-        connector.query.return_value = (_status_error_response(status=-1, info="DB error"), [])
+        connector.query.return_value = (
+            _status_error_response(status=-1, info="DB error"), [])
         with pytest.raises(NexusConnectionError) as exc_info:
             validate_connection(connector)
 
@@ -192,8 +206,9 @@ class TestValidateConnection:
         assert "non-zero status" in msg or "status=-1" in msg
 
     def test_error_message_includes_host_port_and_scheme(self):
-        """Error messages include the target host:port (scheme) for easier debugging."""
-        connector = _make_connector(host="mydb.internal", port=9999, use_ssl=False)
+        """Error messages include host:port (scheme) for easier debugging."""
+        connector = _make_connector(
+            host="mydb.internal", port=9999, use_ssl=False)
         connector.query.side_effect = ConnectionError("refused")
         with pytest.raises(NexusConnectionError) as exc_info:
             validate_connection(connector)
@@ -231,11 +246,13 @@ class TestValidateConnection:
 
 class TestConnectionDescription:
     def test_includes_scheme_ssl(self):
-        connector = _make_connector(host="db.example.com", port=12345, use_ssl=True)
+        connector = _make_connector(
+            host="db.example.com", port=12345, use_ssl=True)
         assert connection_description(connector) == "db.example.com:12345 (ssl)"
 
     def test_includes_scheme_tcp(self):
-        connector = _make_connector(host="db.example.com", port=12345, use_ssl=False)
+        connector = _make_connector(
+            host="db.example.com", port=12345, use_ssl=False)
         assert connection_description(connector) == "db.example.com:12345 (tcp)"
 
     def test_returns_localhost_default(self):
@@ -243,7 +260,7 @@ class TestConnectionDescription:
         assert connection_description(connector) == "localhost:55555 (ssl)"
 
     def test_falls_back_on_missing_config(self):
-        """If the connector has no config attribute, return a safe fallback string."""
+        """No config attribute → safe fallback string."""
         connector = MagicMock(spec=[])  # no attributes at all
         result = connection_description(connector)
         assert result == "<ApertureDB>"

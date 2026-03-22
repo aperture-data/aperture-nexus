@@ -162,7 +162,10 @@ class ProcessingConfig(BaseModel):
     text_chunk_overlap: int = Field(
         default=200,
         ge=0,
-        description="Overlap between consecutive chunks. Must be less than text_chunk_size.",
+        description=(
+            "Overlap between consecutive chunks. "
+            "Must be less than text_chunk_size."
+        ),
     )
     text_chunk_unit: Literal["characters", "tokens"] = Field(
         default="characters",
@@ -190,8 +193,8 @@ class ProcessingConfig(BaseModel):
         default=30,
         ge=1,
         description=(
-            "Extract one frame every N frames when scene detection is disabled. "
-            "At 30fps this extracts ~1 frame per second."
+            "Extract one frame every N frames when scene detection "
+            "is disabled. At 30fps this extracts ~1 frame per second."
         ),
     )
     video_scene_detection: bool = Field(
@@ -204,7 +207,10 @@ class ProcessingConfig(BaseModel):
     video_max_frames: int = Field(
         default=100,
         ge=1,
-        description="Hard cap on frames extracted per video, regardless of method.",
+        description=(
+            "Hard cap on frames extracted per video, "
+            "regardless of method."
+        ),
     )
 
     @model_validator(mode="after")
@@ -212,8 +218,9 @@ class ProcessingConfig(BaseModel):
         """Chunk overlap must be strictly less than chunk size."""
         if self.text_chunk_overlap >= self.text_chunk_size:
             raise ValueError(
-                f"text_chunk_overlap ({self.text_chunk_overlap}) must be less than "
-                f"text_chunk_size ({self.text_chunk_size})."
+                f"text_chunk_overlap ({self.text_chunk_overlap}) "
+                f"must be less than text_chunk_size "
+                f"({self.text_chunk_size})."
             )
         return self
 
@@ -222,8 +229,9 @@ class ProcessingConfig(BaseModel):
         """Clip overlap must be strictly less than clip duration."""
         if self.video_clip_overlap >= self.video_clip_duration:
             raise ValueError(
-                f"video_clip_overlap ({self.video_clip_overlap}) must be less than "
-                f"video_clip_duration ({self.video_clip_duration})."
+                f"video_clip_overlap ({self.video_clip_overlap}) "
+                f"must be less than video_clip_duration "
+                f"({self.video_clip_duration})."
             )
         return self
 
@@ -280,7 +288,10 @@ class MetricsConfig(BaseModel):
         default=8000,
         ge=1024,
         le=65535,
-        description="Port for the /metrics endpoint. Must be > 1024 (no root required).",
+        description=(
+            "Port for the /metrics endpoint. "
+            "Must be > 1024 (no root required)."
+        ),
     )
     path: str = Field(
         default="/metrics",
@@ -335,7 +346,10 @@ class UIConfig(BaseModel):
         default=8000,
         ge=1024,
         le=65535,
-        description="Port to serve the UI on. Must be > 1024 (no root required).",
+        description=(
+            "Port to serve the UI on. "
+            "Must be > 1024 (no root required)."
+        ),
     )
     api_key: Optional[str] = Field(
         default=None,
@@ -352,8 +366,9 @@ class UIConfig(BaseModel):
         if self.enabled and self.host != "127.0.0.1" and not self.api_key:
             raise ValueError(
                 "ui.api_key is required when ui.host is not '127.0.0.1'. "
-                "Set it via the APERTURE_NEXUS_UI_API_KEY environment variable. "
-                "Never put the API key value directly in aperture_nexus.json."
+                "Set it via the APERTURE_NEXUS_UI_API_KEY environment "
+                "variable. Never put the API key value directly in "
+                "aperture_nexus.json."
             )
         return self
 
@@ -400,8 +415,9 @@ def _find_config_file() -> Optional[Path]:
             return p
         # Env var set but file not found — this is always an error
         raise NexusConfigError(
-            f"Config file specified by {ENV_CONFIG_PATH} not found: {env_path}. "
-            f"Verify the path is correct, or unset {ENV_CONFIG_PATH} to use "
+            f"Config file specified by {ENV_CONFIG_PATH} not found: "
+            f"{env_path}. Verify the path is correct, or unset "
+            f"{ENV_CONFIG_PATH} to use "
             f"automatic discovery."
         )
 
@@ -449,8 +465,8 @@ def _apply_env_overrides(config: NexusConfig) -> NexusConfig:
         return NexusConfig.model_validate(raw)
     except Exception as e:
         raise NexusConfigError(
-            f"Config became invalid after applying environment variable overrides: {e}. "
-            f"Check your environment variables."
+            f"Config became invalid after applying environment variable "
+            f"overrides: {e}. Check your environment variables."
         ) from e
 
 
@@ -479,7 +495,8 @@ def _validate_optional_deps(config: NexusConfig) -> None:
             import tiktoken  # noqa: F401
         except ImportError:
             raise NexusConfigError(
-                "processing.text_chunk_unit is 'tokens' but tiktoken is not installed. "
+                "processing.text_chunk_unit is 'tokens' but tiktoken "
+                "is not installed. "
                 "Install it with: pip install aperture-nexus[tokens]"
             )
 
@@ -488,7 +505,8 @@ def _validate_optional_deps(config: NexusConfig) -> None:
             import prometheus_client  # noqa: F401
         except ImportError:
             raise NexusConfigError(
-                "metrics.enabled is true but prometheus-client is not installed. "
+                "metrics.enabled is true but prometheus-client "
+                "is not installed. "
                 "Install it with: pip install aperture-nexus[metrics]"
             )
 
