@@ -24,11 +24,13 @@ from aperture_nexus.exceptions import NexusConnectionError
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_connector(host="localhost", port=55555):
-    """Return a mock Connector with host/port attributes set."""
+def _make_connector(host="localhost", port=55555, use_ssl=True):
+    """Return a mock Connector whose config object mirrors ApertureDB's Connector."""
     c = MagicMock()
-    c.host = host
-    c.port = port
+    # Connector stores connection params on connector.config (the source of truth).
+    c.config.host = host
+    c.config.port = port
+    c.config.use_ssl = use_ssl
     return c
 
 
@@ -189,14 +191,14 @@ class TestValidateConnection:
         msg = str(exc_info.value)
         assert "non-zero status" in msg or "status=-1" in msg
 
-    def test_error_message_includes_host_port(self):
-        """Error messages include the target host:port for easier debugging."""
-        connector = _make_connector(host="mydb.internal", port=9999)
+    def test_error_message_includes_host_port_and_scheme(self):
+        """Error messages include the target host:port (scheme) for easier debugging."""
+        connector = _make_connector(host="mydb.internal", port=9999, use_ssl=False)
         connector.query.side_effect = ConnectionError("refused")
         with pytest.raises(NexusConnectionError) as exc_info:
             validate_connection(connector)
 
-        assert "mydb.internal:9999" in str(exc_info.value)
+        assert "mydb.internal:9999 (tcp)" in str(exc_info.value)
 
     def test_exceptions_are_chained(self):
         """Original exceptions must be chained on NexusConnectionError."""
@@ -228,29 +230,34 @@ class TestValidateConnection:
 # ---------------------------------------------------------------------------
 
 class TestConnectionDescription:
-    def test_returns_host_colon_port(self):
-        connector = _make_connector(host="db.example.com", port=12345)
-        assert connection_description(connector) == "db.example.com:12345"
+    def test_includes_scheme_ssl(self):
+        connector = _make_connector(host="db.example.com", port=12345, use_ssl=True)
+        assert connection_description(connector) == "db.example.com:12345 (ssl)"
+
+    def test_includes_scheme_tcp(self):
+        connector = _make_connector(host="db.example.com", port=12345, use_ssl=False)
+        assert connection_description(connector) == "db.example.com:12345 (tcp)"
 
     def test_returns_localhost_default(self):
-        connector = _make_connector(host="localhost", port=55555)
-        assert connection_description(connector) == "localhost:55555"
+        connector = _make_connector(host="localhost", port=55555, use_ssl=True)
+        assert connection_description(connector) == "localhost:55555 (ssl)"
 
-    def test_falls_back_on_missing_attributes(self):
-        """If the connector has no host/port, return a safe fallback string."""
-        connector = MagicMock(spec=[])  # no attributes
+    def test_falls_back_on_missing_config(self):
+        """If the connector has no config attribute, return a safe fallback string."""
+        connector = MagicMock(spec=[])  # no attributes at all
         result = connection_description(connector)
         assert result == "<ApertureDB>"
 
     def test_does_not_expose_credentials(self):
-        """Description must not contain passwords or tokens."""
+        """Description must not contain passwords, tokens, or usernames."""
         connector = _make_connector(host="myhost", port=55555)
-        connector.config = MagicMock()
         connector.config.password = "supersecret"
         connector.config.token = "mytoken"
+        connector.config.username = "admin"
         desc = connection_description(connector)
         assert "supersecret" not in desc
         assert "mytoken" not in desc
+        assert "admin" not in desc
 
 
 # ---------------------------------------------------------------------------

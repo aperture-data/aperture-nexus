@@ -94,8 +94,23 @@ where = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
-    "integration: marks tests that require a live ApertureDB instance",
+    "integration: requires a live ApertureDB instance (skipped automatically if unavailable)",
+    "slow: takes more than a few seconds — omit with -m 'not slow' for fast feedback",
 ]
+
+# ---------------------------------------------------------------------------
+# Test selection quick reference
+#
+#   pytest                              # all tests (integration skips if no DB)
+#   pytest -m "not integration"         # unit tests only
+#   pytest -m integration               # integration tests only
+#   pytest -m "not slow"                # skip slow tests
+#   pytest tests/test_client.py         # one module
+#   pytest tests/test_client.py::TestValidateConnection   # one class
+#   pytest -k "raises"                  # tests whose name contains "raises"
+#   pytest --co -q                      # list all tests without running them
+#   pytest --cov=aperture_nexus         # with coverage
+# ---------------------------------------------------------------------------
 
 [tool.coverage.run]
 source = ["aperture_nexus"]

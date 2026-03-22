@@ -163,22 +163,25 @@ def validate_connection(connector: Connector) -> None:
 def connection_description(connector: Connector) -> str:
     """Return a human-readable description of the connection target.
 
-    Used in log messages and error strings so operators know which ApertureDB
-    instance is involved without exposing credentials.
+    Reads from ``connector.config`` (the source of truth for all connection
+    parameters) and includes the transport scheme so operators can immediately
+    see whether TLS is in use. Credentials are never included.
 
     Args:
         connector: The ApertureDB Connector to describe.
 
     Returns:
-        A string of the form ``"host:port"`` (e.g. ``"localhost:55555"``),
-        or ``"<ApertureDB>"`` if the host/port cannot be determined.
+        A string of the form ``"host:port (ssl)"`` or ``"host:port (tcp)"``,
+        or ``"<ApertureDB>"`` if the config cannot be read.
 
     Example:
         desc = connection_description(connector)
-        # "localhost:55555"
+        # "localhost:55555 (ssl)" or "db.internal:55555 (tcp)"
     """
     try:
-        return f"{connector.host}:{connector.port}"
+        config = connector.config
+        scheme = "ssl" if config.use_ssl else "tcp"
+        return f"{config.host}:{config.port} ({scheme})"
     except AttributeError:
         return "<ApertureDB>"
 
