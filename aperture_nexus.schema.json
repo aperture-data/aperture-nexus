@@ -1,0 +1,180 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://aperturedata.dev/aperture-nexus/config.schema.json",
+    "title": "aperture-nexus Configuration",
+    "description": "Configuration schema for aperture_nexus.json. Generate a config file with: adb-nexus init",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "models": {
+            "description": "AI models used for embedding and processing. Required only if process_and_commit() or async_process_and_commit() is used.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "llm": {
+                    "description": "Language model for text processing and summarization (e.g. 'gpt-4o', 'gemini-2.5-pro').",
+                    "type": "string"
+                },
+                "vlm": {
+                    "description": "Vision-language model for image and video embedding (e.g. 'clip-vit-base-patch32', 'gemini-embedding-001').",
+                    "type": "string"
+                }
+            }
+        },
+        "processing": {
+            "description": "Controls how aperture-nexus processes and stores multimodal data.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "num_threads": {
+                    "description": "Number of parallel threads for DB writes. Increase for high-throughput workloads.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64,
+                    "default": 4
+                },
+                "batch_size": {
+                    "description": "Number of items sent to ApertureDB per batch. Tune based on item size and DB capacity.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "default": 50
+                },
+                "embedding_batch": {
+                    "description": "Number of items sent to the embedding model per inference call.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 512,
+                    "default": 32
+                },
+                "retry_attempts": {
+                    "description": "Number of times to retry a failed DB write before raising NexusStorageError.",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "default": 3
+                },
+                "retry_interval": {
+                    "description": "Seconds to wait between retry attempts.",
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 60.0,
+                    "default": 1.0
+                },
+                "text_chunk_size": {
+                    "description": "Size of each text chunk before embedding. Unit determined by text_chunk_unit.",
+                    "type": "integer",
+                    "minimum": 64,
+                    "default": 2000
+                },
+                "text_chunk_overlap": {
+                    "description": "Overlap between consecutive text chunks. Must be less than text_chunk_size.",
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 200
+                },
+                "text_chunk_unit": {
+                    "description": "Unit for text_chunk_size and text_chunk_overlap. 'tokens' requires aperture-nexus[tokens].",
+                    "type": "string",
+                    "enum": ["characters", "tokens"],
+                    "default": "characters"
+                },
+                "video_clip_duration": {
+                    "description": "Duration of each video clip in seconds. Should match your embedding model's expected input length.",
+                    "type": "number",
+                    "minimum": 1.0,
+                    "default": 10.0
+                },
+                "video_clip_overlap": {
+                    "description": "Overlap between consecutive video clips in seconds.",
+                    "type": "number",
+                    "minimum": 0.0,
+                    "default": 0.5
+                },
+                "video_frame_interval": {
+                    "description": "Extract one frame every N frames when scene detection is disabled.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 30
+                },
+                "video_scene_detection": {
+                    "description": "Extract frames at scene boundaries instead of fixed intervals. Requires aperture-nexus[video].",
+                    "type": "boolean",
+                    "default": false
+                },
+                "video_max_frames": {
+                    "description": "Maximum number of frames to extract per video, regardless of extraction method.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 100
+                }
+            }
+        },
+        "logging": {
+            "description": "Controls aperture-nexus internal logging. Does not affect your application's logging configuration.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "level": {
+                    "description": "Minimum log level to emit. Use DEBUG for troubleshooting, ERROR for production.",
+                    "type": "string",
+                    "enum": ["DEBUG", "INFO", "WARNING", "ERROR"],
+                    "default": "ERROR"
+                }
+            }
+        },
+        "metrics": {
+            "description": "Prometheus metrics export. Requires aperture-nexus[metrics].",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "description": "Enable Prometheus metrics endpoint. Requires aperture-nexus[metrics] to be installed.",
+                    "type": "boolean",
+                    "default": false
+                },
+                "port": {
+                    "description": "Port to expose the /metrics endpoint on. Must be above 1024 (no root required).",
+                    "type": "integer",
+                    "minimum": 1024,
+                    "maximum": 65535,
+                    "default": 8000
+                },
+                "path": {
+                    "description": "HTTP path for the metrics endpoint.",
+                    "type": "string",
+                    "default": "/metrics"
+                }
+            }
+        },
+        "ui": {
+            "description": "Web UI and REST API configuration. Requires aperture-nexus[ui].",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "description": "Enable the web UI and REST API. Requires aperture-nexus[ui] to be installed.",
+                    "type": "boolean",
+                    "default": false
+                },
+                "host": {
+                    "description": "Host to bind the UI to. Defaults to 127.0.0.1 (local only). Set to 0.0.0.0 for network access — api_key MUST be set when doing so.",
+                    "type": "string",
+                    "default": "127.0.0.1"
+                },
+                "port": {
+                    "description": "Port to serve the UI on. Must be above 1024 (no root required).",
+                    "type": "integer",
+                    "minimum": 1024,
+                    "maximum": 65535,
+                    "default": 8000
+                },
+                "api_key": {
+                    "description": "API key required for all UI and API requests. REQUIRED when host is not 127.0.0.1. Never commit this value — use the APERTURE_NEXUS_UI_API_KEY environment variable instead.",
+                    "type": ["string", "null"],
+                    "default": null
+                }
+            }
+        }
+    }
+}
