@@ -71,7 +71,7 @@ from aperture_nexus.exceptions import NexusConnectionError
 # Construction — DB connection from config/env, no hardcoding
 memory = Memory()
 memory = Memory(config="path/to/aperture_nexus.json")
-memory = Memory(db=existing_connector)   # inject for testing or reuse
+memory = Memory(db_client=existing_connector)   # inject for testing or reuse
 
 # Authentication
 principal = memory.authenticate(user_id="alice", api_key="...")

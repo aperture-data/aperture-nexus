@@ -51,19 +51,19 @@ class TestGetConnector:
     def test_passthrough_when_db_provided(self):
         """When a Connector is passed, it is returned unchanged (no create_connector call)."""
         existing = _make_connector()
-        result = get_connector(db=existing)
+        result = get_connector(db_client=existing)
         assert result is existing
 
     def test_passthrough_does_not_call_create_connector(self):
-        """Providing db= must short-circuit create_connector entirely."""
+        """Providing db_client= must short-circuit create_connector entirely."""
         existing = _make_connector()
         with patch("aperture_nexus._client.create_connector") as mock_create:
-            result = get_connector(db=existing)
+            result = get_connector(db_client=existing)
         mock_create.assert_not_called()
         assert result is existing
 
     def test_creates_connector_when_db_is_none(self):
-        """When db=None, create_connector() is called and its result returned."""
+        """When db_client=None, create_connector() is called and its result returned."""
         new_connector = _make_connector()
         with patch("aperture_nexus._client.create_connector", return_value=new_connector) as mock_create:
             result = get_connector()
@@ -114,7 +114,7 @@ class TestGetConnector:
         assert exc_info.value.__cause__ is original
 
     def test_db_none_is_default(self):
-        """get_connector() with no args behaves the same as get_connector(db=None)."""
+        """get_connector() with no args behaves the same as get_connector(db_client=None)."""
         connector = _make_connector()
         with patch("aperture_nexus._client.create_connector", return_value=connector):
             result = get_connector()
