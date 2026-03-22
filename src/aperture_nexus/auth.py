@@ -38,7 +38,9 @@ class Principal:
             display name is not meaningful.
 
     Example:
-        principal = memory.authenticate(user_id="alice@example.com", api_key="...")
+        principal = memory.authenticate(
+            user_id="alice@example.com", api_key="..."
+        )
         ctx = Context(principal=principal, session_name="support-001")
 
         # Safe to log — no credentials
@@ -51,7 +53,8 @@ class Principal:
     def __repr__(self) -> str:
         if self.user_name:
             return (
-                f"Principal(user_id={self.user_id!r}, user_name={self.user_name!r})"
+                f"Principal(user_id={self.user_id!r},"
+                f" user_name={self.user_name!r})"
             )
         return f"Principal(user_id={self.user_id!r})"
 
@@ -98,7 +101,8 @@ def validate_credentials(user_id: str, api_key: str) -> str:
         raise NexusValidationError(
             "api_key must be a non-empty string. "
             "Provide the API key or token for this principal. "
-            "Never hardcode credentials — use environment variables or a secrets manager."
+            "Never hardcode credentials — use environment variables "
+            "or a secrets manager."
         )
 
     normalized = user_id.strip()

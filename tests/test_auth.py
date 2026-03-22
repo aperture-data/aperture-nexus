@@ -152,7 +152,9 @@ class TestValidateCredentials:
         assert validate_credentials(uid, "key") == uid
 
     def test_accepts_email_user_id(self):
-        assert validate_credentials("alice@example.com", "key") == "alice@example.com"
+        uid = "alice@example.com"
+        assert validate_credentials(uid, "key") == uid
 
     def test_accepts_service_account_user_id(self):
-        assert validate_credentials("support-agent-v2", "key") == "support-agent-v2"
+        uid = "support-agent-v2"
+        assert validate_credentials(uid, "key") == uid
