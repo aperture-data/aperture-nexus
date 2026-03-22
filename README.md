@@ -299,7 +299,24 @@ info.log(text="See attached invoice", blob=pdf_bytes, document_type="pdf")
 
 ---
 
-## Web UI
+## Web UIs
+
+aperture-nexus involves two separate web interfaces — one for ApertureDB, one for aperture-nexus itself.
+
+### ApertureDB Web UI
+
+ApertureDB ships with its own web UI for exploring and visualizing the underlying database objects (entities, connections, descriptors, images, videos). It is not part of aperture-nexus.
+
+Access it after running `docker compose up -d` at:
+```
+http://localhost:8087
+```
+
+Use this to inspect raw ApertureDB objects, debug schema issues, or verify that aperture-nexus is storing data correctly.
+
+### aperture-nexus UI
+
+The aperture-nexus UI is a higher-level interface focused on the KMC model — sessions, contexts, memories, and search. It sits on top of ApertureDB and shows concepts in aperture-nexus terms, not raw database objects.
 
 ```bash
 pip install aperture-nexus[ui]

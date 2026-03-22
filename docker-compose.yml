@@ -3,6 +3,12 @@
 # Starts ApertureDB community edition and sets up the environment
 # for aperture-nexus to connect to it.
 #
+# Two web interfaces are available after startup:
+#   http://localhost:8087  — ApertureDB Web UI (raw database objects:
+#                            entities, connections, descriptors, images)
+#   http://localhost:8000  — aperture-nexus UI (sessions, contexts,
+#                            memories, search) — requires: adb-nexus ui
+#
 # Usage:
 #   docker compose up -d
 #   docker compose down          # stop (data preserved)
