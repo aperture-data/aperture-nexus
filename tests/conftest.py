@@ -22,7 +22,9 @@ def mock_connector():
 
     Example:
         def test_commit_stores_context(mock_connector):
-            mock_connector.query.return_value = ([{"AddEntity": {"status": 0}}], [])
+            mock_connector.query.return_value = (
+                [{"AddEntity": {"status": 0}}], []
+            )
             memory = Memory(db=mock_connector)
             ...
     """

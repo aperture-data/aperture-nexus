@@ -30,6 +30,7 @@ def live_connector():
     except Exception as e:
         pytest.skip(
             f"ApertureDB not reachable — skipping integration tests. "
-            f"Start ApertureDB with: docker run -p 55555:55555 aperturedata/aperturedb-community. "
+            f"Start ApertureDB with: "
+            f"docker run -p 55555:55555 aperturedata/aperturedb-community. "
             f"Error: {e}"
         )
