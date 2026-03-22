@@ -332,12 +332,23 @@ aperture-nexus/
 - Unit tests use mock DB connector — no live ApertureDB required
 - Integration tests in `tests/integration/` — clearly marked with `@pytest.mark.integration`
 - Minimum per function/method: one happy-path test + one error/edge-case test
+- Mark tests that take more than a few seconds with `@pytest.mark.slow`
 
 ```bash
-pytest tests/                        # unit tests only
-pytest tests/ -m "not integration"   # explicit unit-only
-pytest tests/integration/            # requires live ApertureDB
-pytest --cov=aperture_nexus tests/   # with coverage
+# Via Makefile (preferred)
+make test                        # unit tests only (no live DB)
+make test-all                    # everything (integration skips if no DB)
+make test-integration            # integration tests only
+make test-fast                   # unit tests, skip slow ones
+make test-cov                    # unit tests with coverage
+make test-module m=test_client   # one module by name
+
+# Fine-grained pytest selection
+pytest tests/test_client.py                          # one module
+pytest tests/test_client.py::TestValidateConnection  # one class
+pytest -k "raises"                                   # name pattern
+pytest -m "not integration and not slow"             # exclude markers
+pytest --co -q                                       # list tests without running
 ```
 
 ### Security Checklist (every PR)
