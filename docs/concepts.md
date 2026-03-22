@@ -1,0 +1,192 @@
+---
+title: Concepts
+description: The KMC model, core objects, ApertureDB storage mapping, and architecture diagrams
+sidebar_position: 1
+---
+
+# Concepts
+
+aperture-nexus is built around three objects — **Context**, **Information**, and **Memory** — that together form the KMC (Knowledge, Memory, Context) engine. This page explains what each object represents, how they relate, and how they map to ApertureDB's storage primitives.
+
+---
+
+## The Three Core Objects
+
+### Context
+
+A `Context` captures **who is doing what, in which session, and why**. It carries identity, session membership, and intent — but holds no data of its own.
+
+Key properties:
+- `principal` — the authenticated user or agent performing this action
+- `session_id` / `session_name` — which session this context belongs to
+- `purpose` — why this interaction is happening (e.g. `"Customer reporting missing order"`)
+- `organization` — optional group scope for permission and search filtering
+- `restrictions` — optional local or global constraints that affect what this context can access
+
+A context does not write to ApertureDB directly. `Memory` uses it as metadata when committing and enforces it during search.
+
+### Information
+
+`Information` is a **local buffer for multimodal inputs** accumulated during a session. Nothing is written to ApertureDB until `memory.commit()` or `memory.process_and_commit()` is called.
+
+Inputs are added via `Information.log()`, which validates and normalizes each entry immediately — so errors surface at log time, not later during commit.
+
+Supported input types:
+
+| Modality | Accepted forms |
+|----------|---------------|
+| Text | `str` |
+| Image | file path, URL, `bytes`, PIL `Image`, `numpy.ndarray` |
+| Video | file path, URL, `bytes` |
+| Blob | `bytes` + `document_type` (e.g. `"pdf"`, `"mp3"`, `"docx"`) |
+| Embedding | `numpy.ndarray` + `embedding_model` (skips model call at commit) |
+
+### Memory
+
+`Memory` is the **central engine**. It is the only component that writes to ApertureDB. It:
+- Authenticates principals
+- Commits and processes `Information` into durable storage
+- Connects memories and contexts with named relationships
+- Searches across stored memories with permission enforcement
+
+---
+
+## How the Three Objects Relate
+
+```mermaid
+flowchart TD
+    P["Principal\n(authenticated user or agent)"]
+    S["Session\n(shared across participants)"]
+    C["Context\n(one per participant per session)"]
+    I["Information\n(local buffer)"]
+    M["Memory\n(engine)"]
+    DB["ApertureDB"]
+
+    P -->|"participates in"| S
+    P -->|"identified by"| C
+    S -->|"scopes"| C
+    C -->|"context_id"| I
+    I -->|"commit / process_and_commit"| M
+    M -->|"reads and writes"| DB
+    DB -->|"search results"| M
+```
+
+---
+
+## Processing Flow
+
+`Information.log()` accepts raw inputs and validates them locally. The call to `memory.commit()` decides how they are stored.
+
+```mermaid
+flowchart LR
+    L["info.log(text, image, video, blob)"]
+    B["Information buffer\n(local, no DB)"]
+    R{"commit strategy"}
+    Raw["memory.commit()\nraw storage — fast\nno model calls"]
+    Proc["memory.process_and_commit()\nembeddings + summarization\nmodel calls"]
+    Async["memory.async_process_and_commit()\nreturns MemoryTask immediately\nnon-blocking"]
+    DB["ApertureDB"]
+    Search["memory.search()"]
+
+    L --> B
+    B --> R
+    R --> Raw
+    R --> Proc
+    R --> Async
+    Raw --> DB
+    Proc --> DB
+    Async -->|"background"| DB
+    DB --> Search
+```
+
+Use `commit()` when you need speed and will rely on metadata-only search. Use `process_and_commit()` when you need semantic (vector) search across the stored content.
+
+---
+
+## Sessions and Participants
+
+Sessions in aperture-nexus are **many-to-many with users**: one session can have multiple participants, and one user can belong to multiple sessions.
+
+Each participant gets their own `Context` into a shared session. Attribution is implicit — every piece of `Information` is linked to the `Context` that logged it.
+
+```mermaid
+graph LR
+    Alice["Alice\n(Principal)"]
+    AI["AI Agent\n(Principal)"]
+    Human["Support Rep\n(Principal)"]
+    S["Session\nsid=abc-123"]
+    M1["Memory: order inquiry"]
+    M2["Memory: first response"]
+    M3["Memory: escalation note"]
+
+    Alice  -->|"ctx_alice"| S
+    AI     -->|"ctx_ai"| S
+    Human  -->|"ctx_human"| S
+    S --> M1
+    S --> M2
+    S --> M3
+```
+
+Searching with `filters={"session_id": sid}` returns memories from all participants in that session.
+
+The same user can also be in multiple sessions simultaneously — for example an AI agent handling concurrent support tickets, or a data pipeline that logs to separate sessions per data source.
+
+---
+
+## ApertureDB Storage Mapping
+
+aperture-nexus is a semantic layer on top of ApertureDB's native storage primitives. The table below shows how aperture-nexus concepts map to ApertureDB objects.
+
+| aperture-nexus | ApertureDB primitive | Notes |
+|----------------|---------------------|-------|
+| Principal / User | `Entity` (`_nexus_class: "User"`) | One entity per unique `user_id` |
+| Session | `Entity` (`_nexus_class: "Session"`) | Shared across participants |
+| User ↔ Session | `Connection` (`participates_in`) | Many-to-many |
+| Context | `Entity` (`_nexus_class: "Context"`) | Properties: session_id, purpose, organization, restrictions |
+| Committed Memory | `Entity` (`_nexus_class: "Memory"`) | Links Context + Information entries |
+| Text (chunked) | `Entity` + `Descriptor` per chunk | Chunk text stored on entity; embedding in DescriptorSet |
+| Image | `Image` + `Descriptor` | ApertureDB native Image type; embedding in DescriptorSet |
+| Video | `Video` → `Clip` entities → `Descriptor` per clip | Clips at configurable duration and overlap |
+| Blob (pdf, mp3…) | `Blob` with `document_type` property | Raw bytes; no automatic embedding |
+| Pre-computed embedding | `Descriptor` directly | `embedding_model` recorded as property |
+| MemoryTask | `Entity` (`_nexus_class: "MemoryTask"`) | Status tracking for async commits |
+
+### DescriptorSets
+
+ApertureDB requires a **DescriptorSet** before any vectors can be stored or searched. aperture-nexus creates and manages DescriptorSets automatically based on the `embedding_model` name. Each unique model name gets its own DescriptorSet.
+
+This means:
+- `process_and_commit()` requires at least one model configured in `aperture_nexus.json`
+- Pre-computed embeddings passed via `info.log(embedding=..., embedding_model="...")` also require an existing or new DescriptorSet
+- Mixing models across calls is supported — each gets its own set
+
+### ApertureDB Web UI
+
+ApertureDB ships with its own web UI at `http://localhost:8087` (when running via `docker compose up -d`). It shows raw ApertureDB objects — Entities, Connections, Images, Videos, Descriptors — not aperture-nexus concepts. It is useful for:
+- Verifying that aperture-nexus is storing data correctly
+- Debugging schema issues
+- Inspecting DescriptorSets and their dimensions
+
+The aperture-nexus UI (`adb-nexus ui`) is a higher-level interface that shows sessions, contexts, memories, and search results in aperture-nexus terms.
+
+---
+
+## Knowledge Graph
+
+Memories and contexts can be connected with named relationships using `memory.connect()`. This builds a traversable knowledge graph on top of ApertureDB's `Connection` primitive.
+
+```python
+memory.connect(source=ctx_q1, target=ctx_q2, relationship="follows")
+memory.connect(source=memory_id_1, target=memory_id_2, relationship="related_to")
+```
+
+Graph traversal in `memory.search()` (via `max_hops` and relationship filters) is planned for a future release. The underlying ApertureDB `Connection` objects are created now and will be queryable once traversal is implemented.
+
+---
+
+## Security Model
+
+- **No root required** — all paths and ports are user-accessible
+- **Credentials via environment** — `APERTUREDB_KEY` or `APERTUREDB_HOST/PORT/USER/PASSWORD`; never hardcoded
+- **Permission enforcement** — all operations check the caller's `Principal`; restrictions on a `Context` affect what it can read and write
+- **UI local by default** — the aperture-nexus UI binds to `127.0.0.1`; network access requires an explicit `api_key` set via `APERTURE_NEXUS_UI_API_KEY`
