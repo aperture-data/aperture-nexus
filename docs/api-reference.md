@@ -23,7 +23,7 @@ from aperture_nexus import Memory
 ```python
 Memory(
     config: str | None = None,
-    db: Connector | None = None,
+    db_client: Connector | None = None,
 )
 ```
 
