@@ -36,12 +36,12 @@ logger = logging.getLogger(__name__)
 _STATUS_QUERY = [{"GetStatus": {}}]
 
 
-def get_connector(db: Optional[Connector] = None) -> Connector:
+def get_connector(db_client: Optional[Connector] = None) -> Connector:
     """Return an ApertureDB Connector, creating one if none is provided.
 
-    When ``db`` is given it is returned as-is — useful for testing, for
-    reusing an existing connection, or for injecting a pre-configured client.
-    When ``db`` is ``None``, a connector is built via
+    When ``db_client`` is given it is returned as-is — useful for testing,
+    for reusing an existing connection, or for injecting a pre-configured
+    client. When ``db_client`` is ``None``, a connector is built via
     ``aperturedb.CommonLibrary.create_connector()``, which resolves credentials
     from environment variables or the active ``adb`` configuration.
 
@@ -51,8 +51,8 @@ def get_connector(db: Optional[Connector] = None) -> Connector:
         to eagerly verify that ApertureDB is reachable.
 
     Args:
-        db: An existing ApertureDB Connector to use instead of creating a new
-            one. Pass ``None`` (default) to resolve from the environment.
+        db_client: An existing ApertureDB Connector to use instead of creating
+            a new one. Pass ``None`` (default) to resolve from the environment.
 
     Returns:
         A ready-to-use ApertureDB Connector.
@@ -66,11 +66,11 @@ def get_connector(db: Optional[Connector] = None) -> Connector:
         connector = get_connector()
 
         # Inject an existing connector (testing / connection reuse)
-        connector = get_connector(db=my_existing_connector)
+        connector = get_connector(db_client=my_existing_connector)
     """
-    if db is not None:
+    if db_client is not None:
         logger.debug("Using caller-provided ApertureDB Connector")
-        return db
+        return db_client
 
     logger.debug("Creating ApertureDB connector from environment / adb config")
     try:
