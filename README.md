@@ -65,8 +65,30 @@ pip install aperture-nexus[all]       # everything
 
 ### ApertureDB
 
-aperture-nexus requires a running ApertureDB instance. The fastest way to get one:
+aperture-nexus requires a running ApertureDB instance.
 
+**Quickest option — Docker Compose (recommended):**
+
+```bash
+docker compose up -d
+```
+
+This starts ApertureDB with persistent storage. Data survives restarts.
+To stop: `docker compose down`. To wipe data: `docker compose down -v`.
+
+**Mac users:** If port 55555 conflicts with another service, use a different host port without editing any files:
+
+```bash
+APERTUREDB_PORT=15555 docker compose up -d
+```
+
+Then set the same port in your `.env`:
+```
+APERTUREDB_HOST=localhost
+APERTUREDB_PORT=15555
+```
+
+**Bare Docker (no persistence):**
 ```bash
 docker run -p 55555:55555 aperturedata/aperturedb-community
 ```

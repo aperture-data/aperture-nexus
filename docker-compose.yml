@@ -1,0 +1,45 @@
+# aperture-nexus + ApertureDB — local development stack
+#
+# Starts ApertureDB community edition and sets up the environment
+# for aperture-nexus to connect to it.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose down          # stop (data preserved)
+#   docker compose down -v       # stop and delete all data
+#
+# Mac users: AirPlay Receiver uses port 5000 and 7000. ApertureDB's
+# default port 55555 is fine on Mac, but if you see a conflict disable
+# AirPlay Receiver in System Settings > General > AirDrop & Handoff,
+# or use the APERTUREDB_PORT override below.
+#
+# Override the host port without editing this file:
+#   APERTUREDB_PORT=15555 docker compose up -d
+
+services:
+
+  aperturedb:
+    image: aperturedata/aperturedb-community:latest
+    restart: unless-stopped
+    ports:
+      # HOST_PORT:CONTAINER_PORT
+      # Change APERTUREDB_PORT env var to use a different host port.
+      # The container always listens on 55555 internally.
+      - "${APERTUREDB_PORT:-55555}:55555"
+    environment:
+      ADB_MASTER_KEY: "${APERTUREDB_PASSWORD:-admin}"
+      ADB_FORCE_SSL: "false"
+    volumes:
+      # Persist ApertureDB data between restarts.
+      # Remove this volume to start fresh: docker compose down -v
+      - aperturedb_data:/aperturedb/db
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/55555'"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  aperturedb_data:
+    driver: local
