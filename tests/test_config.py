@@ -68,7 +68,9 @@ class TestDefaults:
     def test_models_empty_by_default(self):
         cfg = load_config(validate_deps=False)
         assert cfg.models.llm is None
-        assert cfg.models.vlm is None
+        assert cfg.models.text_embedding is None
+        assert cfg.models.image_embedding is None
+        assert cfg.models.video_embedding is None
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +82,11 @@ class TestConfigFileLoading:
     def test_loads_valid_config_file(self, tmp_path):
         config_file = tmp_path / "aperture_nexus.json"
         config_file.write_text(json.dumps({
-            "models": {"llm": "gpt-4o", "vlm": "clip-vit-base-patch32"},
+            "models": {
+                "llm": "gpt-4o",
+                "text_embedding": "text-embedding-3-small",
+                "image_embedding": "clip-vit-base-patch32",
+            },
             "processing": {"num_threads": 8},
             "logging": {"level": "DEBUG"},
         }))
@@ -88,7 +94,8 @@ class TestConfigFileLoading:
         cfg = load_config(path=config_file, validate_deps=False)
 
         assert cfg.models.llm == "gpt-4o"
-        assert cfg.models.vlm == "clip-vit-base-patch32"
+        assert cfg.models.text_embedding == "text-embedding-3-small"
+        assert cfg.models.image_embedding == "clip-vit-base-patch32"
         assert cfg.processing.num_threads == 8
         assert cfg.logging.level == "DEBUG"
 

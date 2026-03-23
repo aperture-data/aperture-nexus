@@ -124,15 +124,17 @@ Long text is chunked automatically before embedding. Tune chunk size to your emb
 
 ### Video processing
 
-Videos are split into clips, each clip becomes a `Descriptor` (embedding) in ApertureDB.
+Videos are split into clips. Each clip is embedded as a single vector by `models.video_embedding` and stored as one `Descriptor` in ApertureDB. Use a temporal video embedding model (e.g. CLIP4Clip, VideoCLIP) — image models cannot embed clips.
+
+`video_frame_interval`, `video_scene_detection`, and `video_max_frames` control how frames are **sampled internally** by the embedding model call. They do not produce separate embeddings.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `video_clip_duration` | `10.0` | Clip duration in seconds. Match to your VLM's expected input length. |
+| `video_clip_duration` | `10.0` | Clip duration in seconds. One embedding is produced per clip. Match to your model's expected input length. |
 | `video_clip_overlap` | `0.5` | Overlap between consecutive clips in seconds. |
-| `video_frame_interval` | `30` | Extract one frame every N frames when scene detection is off. At 30fps: ~1 frame/sec. |
-| `video_scene_detection` | `false` | Extract frames at scene boundaries instead. More accurate but requires `pip install aperture-nexus[video]`. |
-| `video_max_frames` | `100` | Hard cap on frames extracted per video regardless of method. |
+| `video_frame_interval` | `30` | Hint to the embedding model: sample one frame every N frames when selecting frames from the clip. At 30fps: ~1 frame/sec. |
+| `video_scene_detection` | `false` | Use scene boundaries instead of fixed intervals when selecting frames within a clip. Requires `pip install aperture-nexus[video]`. |
+| `video_max_frames` | `100` | Maximum frames passed to the embedding model per clip, regardless of sampling method. |
 
 ---
 

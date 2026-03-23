@@ -1,6 +1,6 @@
 ---
 title: API Reference
-description: Full reference for Memory, Context, Information, MemoryTask, and the exception hierarchy
+description: Full reference for NexusAdmin, Memory, Context, Information, MemoryTask, and the exception hierarchy
 sidebar_position: 2
 ---
 
@@ -10,9 +10,151 @@ Full reference for all public classes and methods. For the conceptual overview, 
 
 ---
 
+## `generate_session_id()`
+
+```python
+from aperture_nexus import generate_session_id
+
+generate_session_id(prefix: str | None = None) -> str
+```
+
+Generate a unique session ID. Use this when coordinating a shared session across multiple participants before any of them construct a `Context`.
+
+```python
+sid = generate_session_id()
+# or with a prefix for readability
+sid = generate_session_id(prefix="support")  # e.g. "support-a3f7c..."
+
+ctx_customer = Context(principal=customer_principal, session_id=sid, ...)
+ctx_agent    = Context(principal=agent_principal,    session_id=sid, ...)
+```
+
+---
+
+## `NexusAdmin`
+
+Identity authority. Creates and manages department-level ApertureDB users and
+app-level Principals. Requires admin ApertureDB credentials.
+
+```python
+from aperture_nexus import NexusAdmin
+```
+
+### Construction
+
+```python
+NexusAdmin(
+    config: str | None = None,
+    db_client: Connector | None = None,
+)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `config` | `str \| None` | Path to `aperture_nexus.json`. Discovered automatically if `None`. |
+| `db_client` | `Connector \| None` | Inject an existing admin `Connector`. If `None`, a connector is created from environment variables or the active `adb` configuration. |
+
+On first use, `NexusAdmin` creates the default organization (`nexus_default_org`)
+and department (`nexus_default_dept`) entities in ApertureDB if they do not exist.
+These names are configurable via `admin.default_organization` and
+`admin.default_department` in `aperture_nexus.json`.
+
+**Raises:** `NexusConnectionError` if admin credentials cannot be resolved;
+`NexusConfigError` if the config file is invalid.
+
+```python
+admin = NexusAdmin()
+admin = NexusAdmin(config="/path/to/aperture_nexus.json")
+admin = NexusAdmin(db_client=existing_admin_connector)
+```
+
+---
+
+### `admin.authenticate()`
+
+```python
+admin.authenticate(
+    user_id: str,
+    api_key: str,
+) -> Principal
+```
+
+Validate credentials and return a `Principal` for use in a `Context`.
+The `user_id` must have been created via `admin.create_principal()`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `user_id` | `str` | Unique identifier for this principal. |
+| `api_key` | `str` | API key issued at `create_principal()` time. Never log or store this value. |
+
+**Returns:** `Principal`
+**Raises:** `NexusPermissionError` if credentials are invalid or the user does not exist.
+
+```python
+principal = admin.authenticate(user_id="alice", api_key="...")
+```
+
+---
+
+### `admin.create_department()`
+
+```python
+admin.create_department(
+    department: str,
+    organization: str | None = None,
+) -> None
+```
+
+Create a department-level ApertureDB user with entity, connection, and index
+read/write permissions. Principals in this department use these credentials
+when `Memory` connects to ApertureDB.
+
+---
+
+### `admin.create_principal()`
+
+```python
+admin.create_principal(
+    user_id: str,
+    user_name: str | None = None,
+    department: str | None = None,
+    organization: str | None = None,
+) -> str
+```
+
+Register a new app-level Principal in ApertureDB. Returns a generated API key
+that must be delivered to the user out-of-band. The key is stored hashed —
+aperture-nexus cannot recover it after this call.
+
+**Returns:** `str` — the plaintext API key (show once, store securely)
+
+```python
+api_key = admin.create_principal(
+    user_id="alice",
+    user_name="Alice Chen",
+    department="support",
+    organization="AcmeCorp",
+)
+```
+
+---
+
+### `admin.delete_principal()`
+
+```python
+admin.delete_principal(user_id: str) -> None
+```
+
+Remove a Principal from ApertureDB. Existing memories written by this user are
+retained; the user can no longer authenticate.
+
+---
+
 ## `Memory`
 
-The central engine. The only component that writes to or reads from ApertureDB.
+Storage and retrieval engine. The only component that commits and searches
+memories in ApertureDB. Operates on behalf of an authenticated `Principal`
+via the `Context` passed to each operation.
 
 ```python
 from aperture_nexus import Memory
@@ -32,9 +174,11 @@ Memory(
 | `config` | `str \| None` | Path to `aperture_nexus.json`. If `None`, config is discovered automatically (see [Configuration](configuration.md#config-discovery)). |
 | `db_client` | `Connector \| None` | Inject an existing ApertureDB `Connector`. Useful for testing or connection reuse. If `None`, a connector is created from environment variables or the active `adb` configuration. |
 
-The ApertureDB connection is not established at construction time — it is created on the first operation.
+The ApertureDB connection is not established at construction time — it is
+created on the first operation.
 
-**Raises:** `NexusConnectionError` if credentials cannot be resolved; `NexusConfigError` if the config file is invalid.
+**Raises:** `NexusConnectionError` if credentials cannot be resolved;
+`NexusConfigError` if the config file is invalid.
 
 ```python
 # Default — credentials from environment or adb config
@@ -45,47 +189,6 @@ memory = Memory(config="/path/to/aperture_nexus.json")
 
 # Inject connector (testing, connection reuse)
 memory = Memory(db_client=existing_connector)
-```
-
----
-
-### `memory.authenticate()`
-
-```python
-memory.authenticate(
-    user_id: str,
-    api_key: str,
-) -> Principal
-```
-
-Authenticate a user or agent and return a `Principal` that can be attached to a `Context`.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `user_id` | `str` | Unique identifier for this principal. |
-| `api_key` | `str` | API key or token. Never log or store this value. |
-
-**Returns:** `Principal`
-**Raises:** `NexusPermissionError` if the credentials are invalid.
-
-```python
-principal = memory.authenticate(user_id="alice", api_key="...")
-```
-
----
-
-### `memory.generate_session_id()`
-
-```python
-memory.generate_session_id(prefix: str | None = None) -> str
-```
-
-Generate a unique session ID. Use this when creating a shared session with multiple participants.
-
-```python
-sid = memory.generate_session_id()
-# or with a prefix for readability
-sid = memory.generate_session_id(prefix="support")  # e.g. "support-a3f7c..."
 ```
 
 ---
@@ -188,7 +291,7 @@ results) in v1.
 |---|---|---|
 | `str` | text | yes — uses `models.text_embedding` |
 | `Path` / URL `str` / `PIL.Image` | image | yes — uses `models.image_embedding` |
-| video `Path` / `bytes` | video | yes — frames sampled, uses `models.video_embedding` |
+| video `Path` / `bytes` | video | yes — clip embedded, uses `models.video_embedding` |
 | `np.ndarray` | requires `modality=` | no — used directly |
 | `None` | — | no — metadata filter only |
 
@@ -494,14 +597,17 @@ elif task.status == "failed":
 
 ## `Principal`
 
-Returned by `memory.authenticate()`. Passed to `Context` to identify who is performing an action.
+Returned by `admin.authenticate()`. Passed to `Context` to identify who is
+performing an action. Do not construct directly.
 
 ```python
-principal = memory.authenticate(user_id="alice", api_key="...")
+principal = admin.authenticate(user_id="alice", api_key="...")
 
 # Properties
-principal.user_id    # "alice"
-principal.user_name  # display name, if available
+principal.user_id      # "alice"
+principal.user_name    # display name, if set at create_principal() time
+principal.department   # department this principal belongs to
+principal.organization # organization this principal belongs to
 ```
 
 ---

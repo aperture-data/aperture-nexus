@@ -39,15 +39,17 @@ Memory     — the engine: commits, processes, connects, and searches
 
 | aperture-nexus concept | ApertureDB storage |
 |------------------------|-------------------|
+| Department | ApertureDB DB user (entity/connection/index read+write, not admin) |
+| Principal | Entity (`User` class) with hashed `api_key` + `department` property |
 | Session | Entity (`Session` class) |
-| User / Principal | Entity (`User` class) |
-| User ↔ Session | Connection (`participates_in`) |
+| Principal ↔ Session | Connection (`participates_in`) |
 | Context | Entity (`Context` class) with properties |
 | Information (text) | Entity + chunked text + Descriptors |
 | Information (image) | `Image` + `Descriptor` |
-| Information (video) | `Video` → `Clip` (10s default) → `Descriptor` |
+| Information (video) | `Video` → `Clip` (10s default) → one `Descriptor` per clip (clip embedding, not per-frame) |
 | Information (blob) | `Blob` with `document_type` property |
 | Memory (committed) | Entity (`Memory` class) linking Context + Information |
+| Memory ↔ Memory | Connection (typed relationship, e.g. `follows`, `caused_by`) |
 | MemoryTask | Entity (`MemoryTask` class) with status tracking |
 
 ---
@@ -58,26 +60,59 @@ Memory     — the engine: commits, processes, connects, and searches
 
 ```python
 # Top-level — preferred for most users
-from aperture_nexus import Memory, Context, Information
+from aperture_nexus import Memory, Context, Information, NexusAdmin, generate_session_id
 
 # Submodule — also supported
 from aperture_nexus.memory import Memory
 from aperture_nexus.exceptions import NexusConnectionError
 ```
 
+### `NexusAdmin`
+
+Identity authority. Requires admin ApertureDB credentials. Used at setup time
+and by operators — not in the hot path of agent code.
+
+```python
+admin = NexusAdmin()
+admin = NexusAdmin(config="path/to/aperture_nexus.json")
+admin = NexusAdmin(db_client=existing_admin_connector)
+
+# Create a department (one ApertureDB DB user per department)
+admin.create_department(department="support", organization="AcmeCorp")
+
+# Register a Principal — returns plaintext API key (show once)
+api_key = admin.create_principal(
+    user_id="alice",
+    user_name="Alice Chen",
+    department="support",
+    organization="AcmeCorp",
+)
+
+# Validate credentials — used at session start
+principal = admin.authenticate(user_id="alice", api_key="...")
+
+# Remove a Principal (memories are retained)
+admin.delete_principal(user_id="alice")
+```
+
+### `generate_session_id()`
+
+```python
+# Top-level utility — no DB access required
+sid = generate_session_id()                    # uuid-based
+sid = generate_session_id(prefix="support")    # e.g. "support-a3f7c..."
+```
+
 ### `Memory`
+
+Storage and retrieval engine. Operates on already-authenticated Principals
+via the Context passed to each operation. Never authenticates directly.
 
 ```python
 # Construction — DB connection from config/env, no hardcoding
 memory = Memory()
 memory = Memory(config="path/to/aperture_nexus.json")
 memory = Memory(db_client=existing_connector)   # inject for testing or reuse
-
-# Authentication
-principal = memory.authenticate(user_id="alice", api_key="...")
-
-# Session ID generation
-sid = memory.generate_session_id()   # uuid-based, optionally prefixed with user_id
 
 # Commit (raw store, sync, fast — no model calls)
 memory.commit(ctx, info)
@@ -112,17 +147,16 @@ memory.stats(scope="global")
 
 ### `Context`
 
-Minimum required: (`user_id` OR `user_name`) AND (`session_id` OR unique `session_name`)
+Minimum required: `principal` AND (`session_id` OR unique `session_name`)
 
 ```python
 ctx = Context(
-    principal=principal,           # required
+    principal=principal,           # required — from admin.authenticate()
     session_id=sid,                # or session_name (must be unique)
     session_name="support-001",    # or session_id
-    user_id="alice",               # or user_name
-    user_name="Alice Chen",        # or user_id
     purpose="Q1 analysis",         # optional but recommended
     organization="AcmeCorp",       # optional
+    department="support",          # optional
     priority=1,                    # optional
     restrictions={                 # optional — affect permissions
         "local": [...],
@@ -292,11 +326,12 @@ If an optional dep is missing for an enabled feature → raise `NexusConfigError
 aperture-nexus/
 ├── src/
 │   └── aperture_nexus/
-│       ├── __init__.py        # exposes Memory, Context, Information
-│       ├── memory.py          # Memory class — central engine
+│       ├── __init__.py        # exposes Memory, Context, Information, NexusAdmin, generate_session_id
+│       ├── memory.py          # Memory class — storage and retrieval engine
+│       ├── admin.py           # NexusAdmin class — identity authority
 │       ├── context.py         # Context class
 │       ├── information.py     # Information class
-│       ├── auth.py            # Principal, authenticate()
+│       ├── auth.py            # Principal (data object)
 │       ├── tasks.py           # MemoryTask
 │       ├── config.py          # ProcessingConfig, config file loading
 │       ├── cli.py             # adb-nexus CLI (init, validate, stats, ui)
@@ -306,6 +341,7 @@ aperture-nexus/
 ├── tests/
 │   ├── conftest.py            # shared fixtures, mock DB connector
 │   ├── test_memory.py
+│   ├── test_admin.py
 │   ├── test_context.py
 │   ├── test_information.py
 │   ├── test_auth.py
