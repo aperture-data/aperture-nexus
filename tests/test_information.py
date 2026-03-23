@@ -368,3 +368,39 @@ class TestInformationMeta:
         info = Information(context_id="c")
         info.log(text="hello")
         assert "1" in repr(info)
+
+
+# ---------------------------------------------------------------------------
+# _drain() — checkpoint / periodic-flush behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestDrain:
+    def test_drain_returns_entries(self):
+        info = Information(context_id="c")
+        info.log(text="first")
+        info.log(text="second")
+        entries = info._drain()
+        assert len(entries) == 2
+        assert entries[0].text == "first"
+
+    def test_drain_resets_buffer(self):
+        info = Information(context_id="c")
+        info.log(text="entry")
+        info._drain()
+        assert len(info) == 0
+
+    def test_drain_allows_continued_logging(self):
+        """Buffer is reused after drain — same object, multiple commits."""
+        info = Information(context_id="c")
+        info.log(text="before flush")
+        info._drain()
+        info.log(text="after flush")
+        assert len(info) == 1
+        assert info._entries[0].text == "after flush"
+
+    def test_drain_empty_buffer_returns_empty_list(self):
+        info = Information(context_id="c")
+        entries = info._drain()
+        assert entries == []
+        assert len(info) == 0

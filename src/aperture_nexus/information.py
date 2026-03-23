@@ -168,8 +168,18 @@ class Information:
             self.context_id,
         )
 
+    def _drain(self) -> list["_LogEntry"]:
+        """Return all buffered entries and reset the buffer.
+
+        Called by Memory after a successful commit. Matches the
+        standard checkpoint pattern: the buffer is reused across
+        commits rather than discarded.
+        """
+        entries, self._entries = self._entries, []
+        return entries
+
     def __len__(self) -> int:
-        """Return the number of logged entries."""
+        """Return the number of pending (uncommitted) entries."""
         return len(self._entries)
 
     def __repr__(self) -> str:
