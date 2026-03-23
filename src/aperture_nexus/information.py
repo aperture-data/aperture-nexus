@@ -35,7 +35,7 @@ _IMAGE_CHANNELS = {1, 3, 4}
 
 @dataclass
 class _LogEntry:
-    """Internal: one item added via Information.log() or .query()."""
+    """Internal: one item added via Information.log()."""
 
     text: Optional[str] = None
     image: Optional[Any] = None   # PIL.Image, np.ndarray, bytes, or str
@@ -44,7 +44,6 @@ class _LogEntry:
     document_type: Optional[str] = None
     embedding: Optional[np.ndarray] = None
     embedding_model: Optional[str] = None
-    is_query: bool = False
 
 
 class Information:
@@ -169,31 +168,6 @@ class Information:
             self.context_id,
         )
 
-    def query(self, text: str) -> None:
-        """Log a retrieval intent.
-
-        Records what the user or agent was looking for. Stored as
-        metadata and used to improve future search relevance.
-
-        Args:
-            text: Description of what is being searched for.
-
-        Raises:
-            NexusValidationError: If text is empty or not a string.
-
-        Example:
-            info.query("what did we discuss last quarter?")
-        """
-        if not isinstance(text, str) or not text.strip():
-            raise NexusValidationError(
-                "Query text must be a non-empty string."
-            )
-        entry = _LogEntry(text=text.strip(), is_query=True)
-        self._entries.append(entry)
-        logger.debug(
-            "Logged query entry for context_id=%r", self.context_id
-        )
-
     def __len__(self) -> int:
         """Return the number of logged entries."""
         return len(self._entries)
@@ -245,7 +219,7 @@ def _validate_image(image: Optional[Any]) -> Optional[Any]:
         return image
 
     if isinstance(image, np.ndarray):
-        _validate_image_array(image)
+        _validate_image_ndarray(image)
         return image
 
     raise NexusValidationError(
@@ -254,7 +228,7 @@ def _validate_image(image: Optional[Any]) -> Optional[Any]:
     )
 
 
-def _validate_image_array(arr: np.ndarray) -> None:
+def _validate_image_ndarray(arr: np.ndarray) -> None:
     if arr.ndim not in {2, 3}:
         raise NexusValidationError(
             "Image numpy array must be 2D (H, W) or 3D (H, W, C). "

@@ -345,49 +345,6 @@ class TestLogCombined:
 
 
 # ---------------------------------------------------------------------------
-# query()
-# ---------------------------------------------------------------------------
-
-
-class TestQuery:
-    def test_valid_query(self):
-        info = Information(context_id="c")
-        info.query("what did we discuss last quarter?")
-        assert len(info) == 1
-        entry = info._entries[0]
-        assert entry.is_query is True
-        assert entry.text == "what did we discuss last quarter?"
-
-    def test_query_text_stripped(self):
-        info = Information(context_id="c")
-        info.query("  search term  ")
-        assert info._entries[0].text == "search term"
-
-    def test_empty_query_raises(self):
-        info = Information(context_id="c")
-        with pytest.raises(NexusValidationError):
-            info.query("")
-
-    def test_whitespace_query_raises(self):
-        info = Information(context_id="c")
-        with pytest.raises(NexusValidationError):
-            info.query("   ")
-
-    def test_non_string_query_raises(self):
-        info = Information(context_id="c")
-        with pytest.raises(NexusValidationError):
-            info.query(None)  # type: ignore
-
-    def test_query_not_mixed_with_log_entries(self):
-        info = Information(context_id="c")
-        info.log(text="some content")
-        info.query("retrieval intent")
-        assert len(info) == 2
-        assert info._entries[0].is_query is False
-        assert info._entries[1].is_query is True
-
-
-# ---------------------------------------------------------------------------
 # __len__ and __repr__
 # ---------------------------------------------------------------------------
 
