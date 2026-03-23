@@ -188,7 +188,7 @@ results) in v1.
 |---|---|---|
 | `str` | text | yes — uses `models.text_embedding` |
 | `Path` / URL `str` / `PIL.Image` | image | yes — uses `models.image_embedding` |
-| video `Path` / `bytes` | video | yes — frames sampled, uses `models.video_embedding` |
+| video `Path` / `bytes` | video | yes — clip embedded, uses `models.video_embedding` |
 | `np.ndarray` | requires `modality=` | no — used directly |
 | `None` | — | no — metadata filter only |
 

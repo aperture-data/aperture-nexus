@@ -45,7 +45,7 @@ Memory     — the engine: commits, processes, connects, and searches
 | Context | Entity (`Context` class) with properties |
 | Information (text) | Entity + chunked text + Descriptors |
 | Information (image) | `Image` + `Descriptor` |
-| Information (video) | `Video` → `Clip` (10s default) → `Descriptor` |
+| Information (video) | `Video` → `Clip` (10s default) → one `Descriptor` per clip (clip embedding, not per-frame) |
 | Information (blob) | `Blob` with `document_type` property |
 | Memory (committed) | Entity (`Memory` class) linking Context + Information |
 | MemoryTask | Entity (`MemoryTask` class) with status tracking |
