@@ -914,14 +914,16 @@ class Memory:
     def _generate_missing_embeddings(self, entries: list) -> None:
         """Generate embeddings for entries that don't have one yet.
 
-        In v1, only pre-computed embeddings (set via info.log(embedding=...))
-        are supported. If an entry lacks an embedding and no model is
-        configured, raises NexusConfigError with a clear message.
+        Calls the CLIP embedder for entries that lack a pre-computed
+        embedding. If the configured model is not a CLIP model, raises
+        NexusConfigError with a clear message.
         """
+        from aperture_nexus._embeddings import is_clip_model, get_clip_embedder
+
         for entry in entries:
             if entry.embedding is not None:
                 continue   # pre-computed — nothing to do
-            # Determine which modality this is
+
             if entry.text is not None:
                 modality = "text"
                 model = self._cfg.models.text_embedding
@@ -932,23 +934,46 @@ class Memory:
                 modality = "video"
                 model = self._cfg.models.video_embedding
             else:
-                continue   # blob-only entry, no embedding needed
+                continue   # blob-only — no embedding needed
+
             if not model:
                 raise NexusConfigError(
                     f"No embedding model configured for {modality} input. "
-                    f"Set models.{modality}_embedding in aperture_nexus.json, "
-                    f"or pass embedding=my_vector and "
-                    f"embedding_model='...' to info.log(). "
+                    f"Set models.{modality}_embedding in aperture_nexus.json "
+                    f"(e.g. \"ViT-B-32\" for CLIP), or pass "
+                    f"embedding=my_vector and embedding_model='...' to info.log(). "
+                    f"Install CLIP with: pip install aperture-nexus[clip]. "
                     f"Run 'adb-nexus init' to regenerate your config."
                 )
-            # Model integration for auto-embedding is planned for a
-            # future PR. Raise a clear, actionable error for now.
-            raise NexusConfigError(
-                f"Automatic {modality} embedding via model={model!r} is "
-                f"not yet available. Pre-compute your embedding and pass "
-                f"it to info.log(embedding=my_vector, "
-                f"embedding_model={model!r})."
-            )
+
+            if not is_clip_model(model):
+                raise NexusConfigError(
+                    f"Automatic embedding via model={model!r} is not yet available. "
+                    f"Use a CLIP model (e.g. 'ViT-B-32') or pre-compute your "
+                    f"embedding and pass it to info.log(embedding=my_vector, "
+                    f"embedding_model={model!r})."
+                )
+
+            embedder = get_clip_embedder(model)
+            try:
+                if modality == "text":
+                    entry.embedding = embedder.embed_text([entry.text])[0]
+                elif modality == "image":
+                    entry.embedding = embedder.embed_image(entry.image)
+                else:  # video
+                    entry.embedding = embedder.embed_video(
+                        entry.video,
+                        frame_interval=self._cfg.processing.video_frame_interval,
+                        max_frames=self._cfg.processing.video_max_frames,
+                    )
+                entry.embedding_model = model
+            except (NexusConfigError, NexusValidationError):
+                raise
+            except Exception as e:
+                raise NexusProcessingError(
+                    f"CLIP embedding failed for {modality} entry: {e}. "
+                    f"Check that the model {model!r} is available."
+                ) from e
 
     # ------------------------------------------------------------------
     # Internal: search
@@ -969,14 +994,28 @@ class Memory:
             if not model:
                 raise NexusConfigError(
                     "No text embedding model configured for search. "
-                    "Set models.text_embedding in aperture_nexus.json, "
-                    "or pass embedding_model= to memory.search()."
+                    "Set models.text_embedding in aperture_nexus.json "
+                    "(e.g. \"ViT-B-32\"), or pass embedding_model= to "
+                    "memory.search(). Install CLIP with: "
+                    "pip install aperture-nexus[clip]."
                 )
-            raise NexusConfigError(
-                f"Automatic text embedding for search via model={model!r} "
-                f"is not yet available. Pass query=my_vector and "
-                f"modality='text' to search with a pre-computed vector."
-            )
+            from aperture_nexus._embeddings import is_clip_model, get_clip_embedder
+            if not is_clip_model(model):
+                raise NexusConfigError(
+                    f"Automatic text embedding for search via model={model!r} "
+                    f"is not yet available. Use a CLIP model (e.g. 'ViT-B-32') "
+                    f"or pass query=my_vector and modality='text'."
+                )
+            embedder = get_clip_embedder(model)
+            try:
+                vector = embedder.embed_text([query])[0]
+            except (NexusConfigError, NexusValidationError):
+                raise
+            except Exception as e:
+                raise NexusProcessingError(
+                    f"CLIP text embedding for search failed: {e}."
+                ) from e
+            return vector, "text"
 
         raise NexusValidationError(
             f"Unsupported query type: {type(query).__name__!r}. "

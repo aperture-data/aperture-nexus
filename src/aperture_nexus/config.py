@@ -73,21 +73,47 @@ class ModelsConfig(BaseModel):
     AI models used for embedding and processing.
 
     Required only when process_and_commit() or async_process_and_commit()
-    is called. If you only use commit() (raw storage), omit this section.
+    is called with entries that have no pre-computed embeddings.
+    If you only use commit() (raw storage), omit this section.
 
-    Each modality has its own embedding model and its own ApertureDB
-    DescriptorSet (nexus_text, nexus_image, nexus_video). The model name
-    is stored on the DescriptorSet at creation time. Mismatches between
-    index-time and query-time models are caught at search time with a
-    NexusConfigError.
+    Recommended default: CLIP (ViT-B-32)
+    ======================================
+    CLIP works across all modalities (text, image, video frames) using
+    a single model and a shared embedding space. This means you can
+    search with a text query and find images, or vice versa.
 
-    Example (aperture_nexus.json):
+    To use CLIP, set all embedding fields to a CLIP model name and
+    install the dependency:
+        pip install aperture-nexus[clip]
+
+    CLIP limitations
+    ----------------
+    CLIP was trained on image-text pairs, not document retrieval.
+    For workloads that are primarily text-based, a purpose-built text
+    embedding model will give significantly better recall:
+    - BGE-M3 (bge-m3): strong multilingual, long-document retrieval
+    - text-embedding-3-small (OpenAI API): strong general-purpose text
+    - Instructor-XL: task-aware embeddings
+
+    CLIP's text encoder also truncates input at 77 tokens (roughly
+    300 characters). Longer passages must be chunked before embedding.
+    Dedicated text models handle up to 8192 tokens.
+
+    Example (aperture_nexus.json) — CLIP for everything:
         {
             "models": {
-                "llm": "gpt-4o",
+                "text_embedding": "ViT-B-32",
+                "image_embedding": "ViT-B-32",
+                "video_embedding": "ViT-B-32"
+            }
+        }
+
+    Example — dedicated text model + CLIP for images/video:
+        {
+            "models": {
                 "text_embedding": "text-embedding-3-small",
-                "image_embedding": "clip-vit-base-patch32",
-                "video_embedding": "clip-vit-base-patch32"
+                "image_embedding": "ViT-B-32",
+                "video_embedding": "ViT-B-32"
             }
         }
     """

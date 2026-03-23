@@ -61,6 +61,17 @@ ui = [
     "python-multipart>=0.0.9",
 ]
 
+# CLIP embeddings (text, image, video)
+clip = [
+    "open-clip-torch>=2.24",
+]
+
+# Integration test dependencies (spins up local ApertureDB via Docker)
+integration = [
+    "testcontainers>=4.4",
+    "docker>=7.0",
+]
+
 # Development dependencies
 dev = [
     "pytest>=8.0",
@@ -71,11 +82,13 @@ dev = [
     "autopep8>=2.0",
     "pre-commit>=3.0",
     "mypy>=1.10",
+    "testcontainers>=4.4",
+    "docker>=7.0",
 ]
 
 # Install everything
 all = [
-    "aperture-nexus[video,tokens,metrics,ui]",
+    "aperture-nexus[video,tokens,metrics,ui,clip]",
 ]
 
 [project.scripts]
