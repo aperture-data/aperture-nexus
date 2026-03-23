@@ -197,6 +197,24 @@ class ProcessingConfig(BaseModel):
         ),
     )
 
+    # DescriptorSet defaults
+    descriptor_metric: str = Field(
+        default="CS",
+        description=(
+            "Distance metric for ApertureDB DescriptorSets. "
+            "'CS' = cosine similarity (recommended). "
+            "Also supported: 'L2', 'IP'."
+        ),
+    )
+    descriptor_engine: str = Field(
+        default="FaissFlat",
+        description=(
+            "Index engine for ApertureDB DescriptorSets. "
+            "'FaissFlat' = exact search (recommended for correctness). "
+            "Also supported: 'FaissIVFFlat', 'TileDBDense'."
+        ),
+    )
+
     # Video processing
     video_clip_duration: float = Field(
         default=10.0,
@@ -256,6 +274,39 @@ class ProcessingConfig(BaseModel):
                 f"({self.video_clip_duration})."
             )
         return self
+
+
+class AdminConfig(BaseModel):
+    """
+    NexusAdmin identity management settings.
+
+    Controls the default organization and department created by
+    NexusAdmin at init time. These are the fallback scope for
+    Principals that are not assigned to a specific department.
+
+    Example (aperture_nexus.json):
+        {
+            "admin": {
+                "default_organization": "my-company",
+                "default_department": "general"
+            }
+        }
+    """
+
+    default_organization: str = Field(
+        default="nexus_default_org",
+        description=(
+            "Organization entity created at NexusAdmin init time. "
+            "Used as fallback for Principals with no organization set."
+        ),
+    )
+    default_department: str = Field(
+        default="nexus_default_dept",
+        description=(
+            "Department entity created at NexusAdmin init time. "
+            "Used as fallback for Principals with no department set."
+        ),
+    )
 
 
 class LoggingConfig(BaseModel):
@@ -412,6 +463,7 @@ class NexusConfig(BaseModel):
 
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
+    admin: AdminConfig = Field(default_factory=AdminConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     ui: UIConfig = Field(default_factory=UIConfig)

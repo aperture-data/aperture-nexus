@@ -74,7 +74,16 @@ class TestContextConstruction:
         ctx = Context(principal=principal, session_name="s")
         assert ctx.purpose is None
         assert ctx.organization is None
+        assert ctx.department is None
         assert ctx.restrictions is None
+
+    def test_department_field(self, principal):
+        ctx = Context(
+            principal=principal,
+            session_name="s",
+            department="support",
+        )
+        assert ctx.department == "support"
 
     def test_id_is_auto_generated(self, principal):
         ctx = Context(principal=principal, session_name="s")

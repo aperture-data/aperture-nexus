@@ -51,6 +51,13 @@ class TestDefaults:
         assert cfg.processing.video_frame_interval == 30
         assert cfg.processing.video_scene_detection is False
         assert cfg.processing.video_max_frames == 100
+        assert cfg.processing.descriptor_metric == "CS"
+        assert cfg.processing.descriptor_engine == "FaissFlat"
+
+    def test_admin_defaults(self):
+        cfg = load_config(validate_deps=False)
+        assert cfg.admin.default_organization == "nexus_default_org"
+        assert cfg.admin.default_department == "nexus_default_dept"
 
     def test_logging_default_is_error(self):
         cfg = load_config(validate_deps=False)
