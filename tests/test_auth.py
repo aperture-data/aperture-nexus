@@ -20,11 +20,22 @@ class TestPrincipal:
         p = Principal(user_id="alice")
         assert p.user_id == "alice"
         assert p.user_name is None
+        assert p.department is None
+        assert p.organization is None
 
     def test_creates_with_user_name(self):
         p = Principal(user_id="alice", user_name="Alice Chen")
         assert p.user_id == "alice"
         assert p.user_name == "Alice Chen"
+
+    def test_creates_with_department_and_organization(self):
+        p = Principal(
+            user_id="alice",
+            department="support",
+            organization="AcmeCorp",
+        )
+        assert p.department == "support"
+        assert p.organization == "AcmeCorp"
 
     def test_is_immutable(self):
         """Principal is a frozen dataclass — attributes cannot be changed."""
