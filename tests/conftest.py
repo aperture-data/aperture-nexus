@@ -29,7 +29,8 @@ def mock_connector():
             ...
     """
     connector = MagicMock()
-    connector.query.return_value = ([{"status": 0}], [])
+    # connector.query() returns (response_list, blobs_out) — always a 2-tuple
+    connector.query.return_value = ([{"AddEntity": {"status": 0}}], [])
     connector.last_query_ok.return_value = True
     return connector
 
