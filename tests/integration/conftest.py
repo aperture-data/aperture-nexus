@@ -1,32 +1,56 @@
 """
 Integration test fixtures for aperture-nexus.
 
-Spins up ApertureDB community edition in Docker for the test session.
-The container is stopped and removed automatically when the session ends —
-even on test failure. No containers are left running.
+Spins up ApertureDB community edition in Docker for the test session,
+registers it as the active ``adb`` configuration, then tears both
+down cleanly — even on test failure.
 
-Requires:
+Lifecycle (session-scoped):
+    1. Start ApertureDB community container (random host port via testcontainers)
+    2. Run  ``adb config create nexus-integ-<hex>`` — all defaults except
+       port (dynamic) and ssl=False — and activate it immediately
+    3. Memory() / NexusAdmin() resolve the connector through the normal
+       ``create_connector()`` path, exactly as a real user would
+    4. On teardown:
+       a. ``adb config remove nexus-integ-<hex>`` restores the previous
+          active config (or leaves the file clean if none existed)
+       b. testcontainers stops and removes the Docker container
+
+No containers or config entries are left behind.
+
+Requirements:
     pip install testcontainers docker
     docker daemon running
 
-Skip all integration tests if Docker is unavailable:
+Skip integration tests without Docker:
     pytest -m "not integration"
+    make test
 """
 
+import json
 import time
 import socket
-import pytest
-from unittest.mock import MagicMock
+import uuid
 
-# Mark all tests in this directory as integration
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# Auto-mark every test in this directory as @pytest.mark.integration
+# ---------------------------------------------------------------------------
+
 def pytest_collection_modifyitems(items):
     for item in items:
         if "integration" in str(item.fspath):
             item.add_marker(pytest.mark.integration)
 
 
-def _wait_for_port(host: str, port: int, timeout: float = 60.0) -> None:
-    """Poll until host:port accepts TCP connections or timeout expires."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _wait_for_port(host: str, port: int, timeout: float = 90.0) -> None:
+    """Poll TCP until host:port accepts connections or timeout expires."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -36,27 +60,55 @@ def _wait_for_port(host: str, port: int, timeout: float = 60.0) -> None:
             time.sleep(0.5)
     raise TimeoutError(
         f"ApertureDB did not become available at {host}:{port} "
-        f"within {timeout:.0f}s."
+        f"within {timeout:.0f}s. Is Docker running?"
     )
 
 
+def _adb_config_path(as_global: bool = True):
+    """Return the Path to the adb config JSON file."""
+    from aperturedb.cli.configure import _config_file_path
+    return _config_file_path(as_global=as_global)
+
+
+def _load_configs(config_path):
+    """Load (configs_dict, active_name) from the adb config file.
+
+    Returns ({}, None) if the file does not exist or is malformed.
+    """
+    try:
+        from aperturedb.cli.configure import get_configurations
+        return get_configurations(str(config_path))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}, None
+
+
+def _save_configs(config_path, configs: dict, active: str | None) -> None:
+    """Write configs dict back to the adb config file."""
+    from aperturedb.cli.configure import _write_config
+    if active is not None:
+        configs["active"] = active
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_config(config_path, configs)
+
+
+# ---------------------------------------------------------------------------
+# Container fixture
+# ---------------------------------------------------------------------------
+
 @pytest.fixture(scope="session")
 def aperturedb_container():
-    """Start ApertureDB community edition and yield connection params.
+    """Start ApertureDB community edition; yield {host, port, user, password}.
 
-    Uses testcontainers to manage the Docker lifecycle. The container is
-    stopped and removed when the session ends — no cleanup required by
-    individual tests.
-
-    Yields:
-        dict with keys: host, port, user, password
+    testcontainers manages the full Docker lifecycle — the container is
+    stopped and removed when the ``with`` block exits, regardless of whether
+    tests passed or failed.
     """
     try:
         from testcontainers.core.container import DockerContainer
     except ImportError:
         pytest.skip(
-            "testcontainers not installed. "
-            "Install with: pip install testcontainers docker"
+            "testcontainers is not installed. "
+            "Run: pip install aperture-nexus[integration]"
         )
 
     with (
@@ -69,55 +121,107 @@ def aperturedb_container():
         host = container.get_container_host_ip()
         port = int(container.get_exposed_port(55553))
 
-        # Wait for ApertureDB to accept connections (up to 60s)
         try:
-            _wait_for_port(host, port, timeout=60.0)
-        except TimeoutError as e:
-            pytest.fail(str(e))
+            _wait_for_port(host, port, timeout=90.0)
+        except TimeoutError as exc:
+            pytest.fail(str(exc))
 
-        # Give the DB a moment to finish internal initialisation
-        time.sleep(2.0)
+        # Brief pause for ApertureDB to finish internal initialisation
+        # after the TCP port is open.
+        time.sleep(3.0)
 
         yield {"host": host, "port": port, "user": "admin", "password": "admin"}
-        # Container is stopped and removed here by the context manager
 
+        # Container stop + rm happens here via context manager __exit__
+
+
+# ---------------------------------------------------------------------------
+# adb config create / remove fixture
+# ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
-def db_connector(aperturedb_container):
-    """Return an ApertureDB Connector connected to the test container."""
-    from aperturedb.Connector import Connector
-    conn_params = aperturedb_container
-    connector = Connector(
-        host=conn_params["host"],
-        port=conn_params["port"],
-        user=conn_params["user"],
-        password=conn_params["password"],
+def adb_config_name(aperturedb_container):
+    """Create a named adb config for the test container; activate it.
+
+    Uses all ``adb config create`` defaults except:
+    - port  → dynamic port assigned by the container
+    - ssl   → False  (community edition without TLS)
+
+    The previous active config (if any) is restored on teardown.
+    The test config entry is always removed on teardown.
+
+    Yields:
+        str — the config name (e.g. ``"nexus-integ-a3f7c2d1"``)
+    """
+    from aperturedb.Configuration import Configuration
+
+    config_name = f"nexus-integ-{uuid.uuid4().hex[:8]}"
+    config_path = _adb_config_path(as_global=True)
+
+    # Snapshot the current state so we can restore it later
+    configs, prev_active = _load_configs(config_path)
+
+    # Register the test config and make it active
+    configs[config_name] = Configuration(
+        name=config_name,
+        host=aperturedb_container["host"],
+        port=aperturedb_container["port"],
+        username="admin",
+        password="admin",
         use_ssl=False,
+        use_rest=False,
+        verify_hostname=False,
     )
-    return connector
+    _save_configs(config_path, configs, active=config_name)
 
+    yield config_name
+
+    # ---- Teardown: remove test config, restore previous active ----
+    try:
+        configs_now, _ = _load_configs(config_path)
+        configs_now.pop(config_name, None)
+
+        # Restore the config that was active before we started, if it
+        # still exists.  If nothing is left, remove the active key.
+        if prev_active and prev_active in configs_now:
+            _save_configs(config_path, configs_now, active=prev_active)
+        elif configs_now:
+            _save_configs(
+                config_path, configs_now,
+                active=next(iter(configs_now))
+            )
+        else:
+            # Nothing left — write an empty-ish file without "active"
+            config_path.write_text("{}")
+    except Exception:
+        pass  # best-effort; container is being torn down anyway
+
+
+# ---------------------------------------------------------------------------
+# High-level fixtures that depend on adb_config_name
+# ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
-def nexus_admin(db_connector):
-    """Return a NexusAdmin wired to the test container."""
+def nexus_admin(adb_config_name):
+    """Return a NexusAdmin that resolves its connector from the active adb config.
+
+    No db_client is injected — this exercises the full create_connector()
+    resolution path, exactly as a real user would call NexusAdmin().
+    """
     from aperture_nexus.admin import NexusAdmin
-    return NexusAdmin(db_client=db_connector)
+    return NexusAdmin()
 
 
 @pytest.fixture(scope="session")
 def test_principal(nexus_admin):
-    """Create a test principal and return it. Cleaned up at session end."""
-    import uuid
+    """Create a test principal once for the session; delete it on teardown."""
     user_id = f"test-user-{uuid.uuid4().hex[:8]}"
     api_key = nexus_admin.create_principal(
         user_id=user_id,
         user_name="Integration Test User",
-        department="nexus_default_dept",
-        organization="nexus_default_org",
     )
     principal = nexus_admin.authenticate(user_id=user_id, api_key=api_key)
     yield principal
-    # Best-effort cleanup
     try:
         nexus_admin.delete_principal(user_id=user_id)
     except Exception:
@@ -125,7 +229,7 @@ def test_principal(nexus_admin):
 
 
 @pytest.fixture()
-def memory_engine(db_connector):
-    """Return a Memory instance wired to the test container."""
+def memory_engine(adb_config_name):
+    """Return a Memory instance that resolves its connector from the active adb config."""
     from aperture_nexus.memory import Memory
-    return Memory(db_client=db_connector)
+    return Memory()
