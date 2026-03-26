@@ -345,6 +345,72 @@ class TestLogCombined:
 
 
 # ---------------------------------------------------------------------------
+# metadata
+# ---------------------------------------------------------------------------
+
+
+class TestLogMetadata:
+    def test_metadata_stored_on_entry(self):
+        info = Information(context_id="c")
+        info.log(text="hello", metadata={"ticket_id": "T-99", "priority": 1})
+        assert info._entries[0].metadata == {"ticket_id": "T-99", "priority": 1}
+
+    def test_metadata_none_by_default(self):
+        info = Information(context_id="c")
+        info.log(text="hello")
+        assert info._entries[0].metadata is None
+
+    def test_metadata_all_value_types(self):
+        info = Information(context_id="c")
+        info.log(text="x", metadata={
+            "s": "string", "i": 42, "f": 3.14, "b": True
+        })
+        assert info._entries[0].metadata["s"] == "string"
+        assert info._entries[0].metadata["i"] == 42
+        assert info._entries[0].metadata["f"] == 3.14
+        assert info._entries[0].metadata["b"] is True
+
+    def test_metadata_not_a_dict_raises(self):
+        info = Information(context_id="c")
+        with pytest.raises(NexusValidationError, match="metadata must be a dict"):
+            info.log(text="x", metadata=["not", "a", "dict"])
+
+    def test_metadata_non_string_key_raises(self):
+        info = Information(context_id="c")
+        with pytest.raises(NexusValidationError, match="keys must be strings"):
+            info.log(text="x", metadata={1: "value"})
+
+    def test_metadata_reserved_key_raises(self):
+        info = Information(context_id="c")
+        with pytest.raises(NexusValidationError, match="reserved"):
+            info.log(text="x", metadata={"context_id": "override"})
+
+    def test_metadata_all_reserved_keys_rejected(self):
+        reserved = [
+            "context_id", "session_id", "user_id", "created_at",
+            "document_type", "text_preview", "text",
+            "embedding_model", "modality", "start_frame", "stop_frame",
+        ]
+        info = Information(context_id="c")
+        for key in reserved:
+            with pytest.raises(NexusValidationError, match="reserved"):
+                info.log(text="x", metadata={key: "v"})
+
+    def test_metadata_unsupported_value_type_raises(self):
+        info = Information(context_id="c")
+        with pytest.raises(NexusValidationError, match="unsupported type"):
+            info.log(text="x", metadata={"tags": ["a", "b"]})
+
+    def test_metadata_dict_is_copied(self):
+        """Mutating the original dict after log() does not affect the entry."""
+        original = {"k": "v"}
+        info = Information(context_id="c")
+        info.log(text="x", metadata=original)
+        original["k"] = "mutated"
+        assert info._entries[0].metadata["k"] == "v"
+
+
+# ---------------------------------------------------------------------------
 # __len__ and __repr__
 # ---------------------------------------------------------------------------
 

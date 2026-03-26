@@ -211,6 +211,20 @@ class TestCommit:
         with pytest.raises(NexusStorageError, match="conflict"):
             memory.commit(ctx, info)
 
+    def test_metadata_included_in_blob_props(self, mock_connector):
+        """metadata from log() is forwarded as ApertureDB properties."""
+        mock_connector.query.side_effect = _commit_side_effects()
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        info.log(text="hello", metadata={"ticket_id": "T-99", "priority": 1})
+        memory.commit(ctx, info)
+        # The 4th call is AddBlob — check its properties contain metadata
+        blob_call_args = mock_connector.query.call_args_list[3][0][0]
+        props = blob_call_args[0]["AddBlob"]["properties"]
+        assert props["ticket_id"] == "T-99"
+        assert props["priority"] == 1
+
     def test_connection_error_propagated(self, mock_connector):
         mock_connector.query.side_effect = NexusConnectionError("timeout")
         memory = _make_memory(mock_connector)

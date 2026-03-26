@@ -32,6 +32,17 @@ _IMAGE_DTYPES = {np.dtype("uint8"), np.dtype("float32")}
 # Accepted number of channels for image arrays
 _IMAGE_CHANNELS = {1, 3, 4}
 
+# Property keys managed by aperture-nexus — callers may not override these
+_RESERVED_METADATA_KEYS = frozenset({
+    "context_id", "session_id", "user_id", "created_at",
+    "document_type", "text_preview", "text",
+    "embedding_model", "modality", "start_frame", "stop_frame",
+})
+
+# ApertureDB accepts only these scalar types as entity/object properties
+_METADATA_VALUE_TYPES = (str, int, float, bool)
+
+
 @dataclass
 class _LogEntry:
     """Internal: one item added via Information.log()."""
@@ -48,6 +59,7 @@ class _LogEntry:
     # Set by Memory._generate_missing_embeddings(); None for pre-computed
     # single embeddings supplied by the caller via info.log(embedding=...).
     video_clip_embeddings: Optional[list] = None
+    metadata: Optional[dict] = None
 
 
 @dataclass
@@ -87,6 +99,10 @@ class Information:
         # Blob — document_type required
         info.log(blob=pdf_bytes, document_type="pdf")
 
+        # Metadata — arbitrary key-value properties stored alongside the entry
+        info.log(text="Order #4821 missing", metadata={"ticket_id": "T-99", "priority": 1})
+        info.log(image="photo.jpg", metadata={"source": "webcam", "location": "lobby"})
+
         # Combined — one log entry, multiple modalities
         info.log(text="See attached", blob=pdf_bytes, document_type="pdf")
 
@@ -120,6 +136,7 @@ class Information:
         document_type: Optional[str] = None,
         embedding: Optional[np.ndarray] = None,
         embedding_model: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> None:
         """Add one entry to the buffer.
 
@@ -143,11 +160,18 @@ class Information:
                 ``embedding_model``.
             embedding_model: Name of the model that produced the
                 embedding. Required when ``embedding`` is provided.
+            metadata: Arbitrary key-value properties stored alongside
+                the entry in ApertureDB. Keys must be strings; values
+                must be ``str``, ``int``, ``float``, or ``bool``.
+                Reserved keys (``context_id``, ``session_id``, etc.)
+                are rejected — use the Context fields for those.
 
         Raises:
             NexusValidationError: If input is invalid (missing file,
                 wrong numpy shape, missing document_type for blob,
-                embedding provided without embedding_model, etc.)
+                embedding provided without embedding_model,
+                invalid metadata key/value types, reserved key used,
+                etc.)
         """
         if all(v is None for v in [text, image, video, blob]):
             raise NexusValidationError(
@@ -164,6 +188,7 @@ class Information:
         validated_emb, validated_emb_model = _validate_embedding(
             embedding, embedding_model
         )
+        validated_metadata = _validate_metadata(metadata)
 
         entry = _LogEntry(
             text=validated_text,
@@ -173,6 +198,7 @@ class Information:
             document_type=validated_doc_type,
             embedding=validated_emb,
             embedding_model=validated_emb_model,
+            metadata=validated_metadata,
         )
         self._entries.append(entry)
         logger.debug(
@@ -369,6 +395,34 @@ def _validate_blob(
         )
 
     return blob, document_type.strip().lower()
+
+
+def _validate_metadata(
+    metadata: Optional[dict],
+) -> Optional[dict]:
+    if metadata is None:
+        return None
+    if not isinstance(metadata, dict):
+        raise NexusValidationError(
+            f"metadata must be a dict. Got {type(metadata).__name__!r}."
+        )
+    for key, value in metadata.items():
+        if not isinstance(key, str):
+            raise NexusValidationError(
+                f"metadata keys must be strings. Got {type(key).__name__!r}."
+            )
+        if key in _RESERVED_METADATA_KEYS:
+            raise NexusValidationError(
+                f"metadata key {key!r} is reserved by aperture-nexus. "
+                f"Use the Context fields for session/user identity."
+            )
+        if not isinstance(value, _METADATA_VALUE_TYPES):
+            raise NexusValidationError(
+                f"metadata[{key!r}] has unsupported type "
+                f"{type(value).__name__!r}. "
+                f"Use str, int, float, or bool."
+            )
+    return dict(metadata)
 
 
 def _validate_embedding(

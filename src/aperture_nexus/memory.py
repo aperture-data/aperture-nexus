@@ -835,6 +835,8 @@ class Memory:
             "user_id": ctx.principal.user_id,
             "created_at": datetime.utcnow().isoformat(),
         }
+        if entry.metadata:
+            common_props.update(entry.metadata)
 
         if entry.text is not None:
             text_bytes = entry.text.encode("utf-8")
@@ -892,6 +894,8 @@ class Memory:
             "modality": modality,
             "created_at": datetime.utcnow().isoformat(),
         }
+        if entry.metadata:
+            props.update(entry.metadata)
         if entry.text and len(entry.text) <= 2000:
             props["text"] = entry.text   # inline for short text
 
@@ -923,6 +927,8 @@ class Memory:
                 "stop_frame": clip_meta["stop_frame"],
                 "created_at": datetime.utcnow().isoformat(),
             }
+            if entry.metadata:
+                props.update(entry.metadata)
             emb_bytes = _embedding_to_bytes(clip_emb)
             cmd = [{"AddDescriptor": {"set": dset, "properties": props}}]
             response, _ = self._db.query(cmd, [emb_bytes])
