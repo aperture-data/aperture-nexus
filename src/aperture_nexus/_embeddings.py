@@ -41,7 +41,7 @@ from aperture_nexus.exceptions import NexusConfigError, NexusValidationError
 
 logger = logging.getLogger(__name__)
 
-CLIP_DEFAULT_MODEL = "ViT-B-32"
+CLIP_DEFAULT_MODEL = "ViT-B/16"
 CLIP_DEFAULT_PRETRAINED = "openai"  # OpenAI pretrained weights, not the API
 
 # Known CLIP model names users can specify
@@ -74,7 +74,7 @@ class ClipEmbedder:
     for all calls within a Memory instance.
 
     Args:
-        model_name: CLIP model name. Default: "ViT-B-32".
+        model_name: CLIP model name. Default: "ViT-B/16".
         pretrained: Pretrained weights name. Default: "openai".
 
     Raises:
@@ -177,19 +177,33 @@ class ClipEmbedder:
         self,
         video,
         frame_interval: int = 30,
-        max_frames: int = 100,
-    ) -> np.ndarray:
-        """Embed a video by extracting frames and mean-pooling embeddings.
+        frames_per_clip: int = 10,
+        max_clips: int = 50,
+    ) -> list[tuple[np.ndarray, dict]]:
+        """Embed a video as a list of per-clip embeddings.
+
+        Each clip segment gets one embedding (mean of frame embeddings within
+        that segment). This preserves temporal structure for search: a text
+        query can find the specific part of a video that matches, not just
+        whether the video matches at all.
 
         Requires opencv-python for frame extraction.
 
         Args:
             video: File path (str) or bytes.
-            frame_interval: Extract one frame every N frames.
-            max_frames: Hard cap on extracted frames.
+            frame_interval: Sample one frame every N video frames. Default 30
+                means one frame per second at 30 fps.
+            frames_per_clip: Number of sampled frames to group into one clip
+                segment. Default 10 means 10 sampled frames per clip.
+                At frame_interval=30 and frames_per_clip=10, each clip covers
+                ~300 original frames (~10 seconds at 30 fps).
+            max_clips: Hard cap on number of clips returned.
 
         Returns:
-            Mean-pooled embedding of shape (D,) as float32.
+            List of ``(embedding, metadata)`` tuples, one per clip segment.
+            ``embedding`` is float32 of shape (D,).
+            ``metadata`` keys: ``start_frame`` (int), ``stop_frame`` (int) —
+            frame numbers in the original video's frame index.
 
         Raises:
             NexusConfigError: If open-clip-torch or opencv-python is not installed.
@@ -206,6 +220,7 @@ class ClipEmbedder:
 
         import os
         import tempfile
+        import PIL.Image as PILImage
 
         # Write bytes to a temp file if needed
         tmp = None
@@ -219,33 +234,45 @@ class ClipEmbedder:
 
         try:
             cap = cv2.VideoCapture(path)
-            frames = []
-            frame_count = 0
-            import PIL.Image as PILImage
-            while len(frames) < max_frames:
+            # List of (original_frame_number, PIL image)
+            sampled: list[tuple[int, any]] = []
+            frame_number = 0
+            while True:
                 ret, frame = cap.read()
                 if not ret:
                     break
-                if frame_count % frame_interval == 0:
+                if frame_number % frame_interval == 0:
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frames.append(PILImage.fromarray(frame_rgb))
-                frame_count += 1
+                    sampled.append((frame_number, PILImage.fromarray(frame_rgb)))
+                frame_number += 1
             cap.release()
         finally:
             if tmp is not None:
                 os.unlink(path)
 
-        if not frames:
+        if not sampled:
             raise NexusValidationError(
                 "No frames could be extracted from the video."
             )
 
-        embeddings = [self.embed_image(f) for f in frames]
-        mean_emb = np.mean(embeddings, axis=0).astype(np.float32)
-        norm = np.linalg.norm(mean_emb)
-        if norm > 0:
-            mean_emb = mean_emb / norm
-        return mean_emb
+        # Group sampled frames into clip segments
+        results: list[tuple[np.ndarray, dict]] = []
+        for clip_idx in range(0, len(sampled), frames_per_clip):
+            if len(results) >= max_clips:
+                break
+            clip_frames = sampled[clip_idx: clip_idx + frames_per_clip]
+            start_frame = clip_frames[0][0]
+            stop_frame = clip_frames[-1][0]
+
+            frame_embeddings = [self.embed_image(pil) for _, pil in clip_frames]
+            clip_emb = np.mean(frame_embeddings, axis=0).astype(np.float32)
+            norm = np.linalg.norm(clip_emb)
+            if norm > 0:
+                clip_emb = clip_emb / norm
+
+            results.append((clip_emb, {"start_frame": start_frame, "stop_frame": stop_frame}))
+
+        return results
 
 
 # Module-level embedder cache keyed by (model_name, pretrained)
@@ -259,7 +286,7 @@ def get_clip_embedder(
     """Return a cached ClipEmbedder for the given model.
 
     Args:
-        model_name: CLIP model name. Default: "ViT-B-32".
+        model_name: CLIP model name. Default: "ViT-B/16".
         pretrained: Pretrained weights name. Default: "openai".
 
     Returns:

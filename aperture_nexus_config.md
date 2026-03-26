@@ -44,7 +44,8 @@ No root access is required for any of these paths.
         "video_clip_overlap": 0.5,
         "video_frame_interval": 30,
         "video_scene_detection": false,
-        "video_max_frames": 100
+        "video_frames_per_clip": 10,
+        "video_max_clips": 50
     },
     "logging": {
         "level": "ERROR"
@@ -111,7 +112,8 @@ Videos are stored in ApertureDB as `Video` → `Clip` → `Descriptor` (embeddin
 | `video_clip_overlap` | `0.5` | Overlap between consecutive clips in seconds. |
 | `video_frame_interval` | `30` | Extract one frame every N frames (when `video_scene_detection` is `false`). At 30fps this is ~1 frame/sec. |
 | `video_scene_detection` | `false` | Extract frames at scene boundaries. More accurate but requires `pip install aperture-nexus[video]`. |
-| `video_max_frames` | `100` | Hard cap on frames extracted per video, regardless of method. |
+| `video_frames_per_clip` | `10` | Number of sampled frames to group into one clip segment. At frame_interval=30 and frames_per_clip=10, each clip covers ~300 original frames (~10s at 30fps). One Descriptor per clip. |
+| `video_max_clips` | `50` | Hard cap on clip segments (and Descriptors) produced per video. |
 
 ---
 

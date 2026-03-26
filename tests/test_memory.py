@@ -11,7 +11,7 @@ Tests cover:
 - search(): ndarray without modality raises; metadata-only; vector search;
   min_score filtering; unknown modality raises
 - connect(): happy path; empty relationship raises
-- remove(): happy path; empty memory_id raises
+- remove(): happy path; empty context_id raises
 - pending_commits() / failed_commits(): task list filtering
 - stats(): raises NexusConfigError when prometheus not installed
 - _resolve_session_id(): uses session_id if set; derives from session_name
@@ -69,7 +69,10 @@ def _ok_response(cmd_name: str = "AddEntity") -> tuple:
 
 
 def _make_memory(mock_connector):
-    return Memory(db_client=mock_connector)
+    m = Memory(db_client=mock_connector)
+    m._schema_ensured = True  # skip CreateIndex calls in unit tests
+    m._ensured_contexts = set()  # start fresh per test
+    return m
 
 
 def _make_principal(user_id: str = "alice"):
@@ -95,33 +98,35 @@ def _make_info(ctx=None):
     return Information(context_id=c.id)
 
 
-# Standard sequence for a commit() with one text entry and no existing
-# session or context:
-#   1. FindEntity session → 0 (create needed)
-#   2. AddEntity session  → ok
-#   3. FindEntity context → 0 (create needed)
-#   4. AddEntity context  → ok
-#   5. AddEntity memory   → ok
-#   6. AddBlob  text      → ok
-def _commit_side_effects_fresh():
+def _ok_conn_response() -> tuple:
+    """3-command batch: FindEntity + FindEntity + AddConnection."""
+    return ([
+        {"FindEntity": {"status": 0}},
+        {"FindEntity": {"status": 0}},
+        {"AddConnection": {"status": 0}},
+    ], [])
+
+
+# Standard sequence for a commit() with one text entry.
+# Session/context use if_not_found — one AddEntity each (no prior FindEntity).
+# After context AddEntity, a nexus_session_context connection is written (3 cmds).
+# ApertureDB returns status=0 whether it created or skipped the entity.
+#   1. AddEntity session  (if_not_found) → ok
+#   2. AddEntity context  (if_not_found) → ok
+#   3. nexus_session_context connection  → ok (FindEntity+FindEntity+AddConnection)
+#   4. AddBlob  text                     → ok
+def _commit_side_effects():
     return [
-        _find_response(count=0),    # ensure_session: not found
-        _ok_response("AddEntity"),  # ensure_session: add
-        _find_response(count=0),    # ensure_context: not found
-        _ok_response("AddEntity"),  # ensure_context: add
-        _ok_response("AddEntity"),  # write_memory_entity
+        _ok_response("AddEntity"),  # ensure_session (if_not_found)
+        _ok_response("AddEntity"),  # ensure_context (if_not_found)
+        _ok_conn_response(),        # nexus_session_context connection
         _ok_response("AddBlob"),    # write text entry
     ]
 
 
-# Same but session + context already exist
-def _commit_side_effects_existing():
-    return [
-        _find_response(count=1),    # ensure_session: exists
-        _find_response(count=1),    # ensure_context: exists
-        _ok_response("AddEntity"),  # write_memory_entity
-        _ok_response("AddBlob"),    # write text entry
-    ]
+# Alias — both fresh and existing sessions have the same mock shape now
+_commit_side_effects_fresh = _commit_side_effects
+_commit_side_effects_existing = _commit_side_effects
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +135,7 @@ def _commit_side_effects_existing():
 
 
 class TestCommit:
-    def test_happy_path_returns_memory_id(self, mock_connector):
+    def test_happy_path_returns_context_id(self, mock_connector):
         mock_connector.query.side_effect = _commit_side_effects_existing()
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -151,9 +156,11 @@ class TestCommit:
 
     def test_does_not_drain_on_failure(self, mock_connector):
         mock_connector.query.side_effect = [
-            _find_response(count=1),  # ensure_session: exists
-            _find_response(count=1),  # ensure_context: exists
-            ([{"AddEntity": {"status": -1, "info": "schema error"}}], []),
+            _ok_response("AddEntity"),  # ensure_session (if_not_found)
+            _ok_response("AddEntity"),  # ensure_context (if_not_found)
+            ([{"FindEntity": {"status": -1, "info": "schema error"}},
+              {"FindEntity": {"status": 0}},
+              {"AddConnection": {"status": 0}}], []),  # nexus_session_context fails
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -171,16 +178,18 @@ class TestCommit:
             memory.commit(ctx, info)
 
     def test_creates_session_when_absent(self, mock_connector):
-        mock_connector.query.side_effect = _commit_side_effects_fresh()
+        # if_not_found: 1 AddEntity per ensure call regardless of prior state
+        mock_connector.query.side_effect = _commit_side_effects()
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
         info = _make_info(ctx)
         info.log(text="hello")
         memory.commit(ctx, info)
-        assert mock_connector.query.call_count == 6
+        assert mock_connector.query.call_count == 4
 
     def test_skips_session_creation_when_present(self, mock_connector):
-        mock_connector.query.side_effect = _commit_side_effects_existing()
+        # if_not_found: same query count whether session exists or not
+        mock_connector.query.side_effect = _commit_side_effects()
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
         info = _make_info(ctx)
@@ -190,9 +199,10 @@ class TestCommit:
 
     def test_storage_error_propagated(self, mock_connector):
         mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-            ([{"AddEntity": {"status": -1, "info": "conflict"}}], []),
+            _ok_response("AddEntity"),  # ensure_session
+            _ok_response("AddEntity"),  # ensure_context
+            _ok_conn_response(),        # nexus_session_context connection
+            ([{"AddBlob": {"status": -1, "info": "conflict"}}], []),  # blob write fails
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -221,12 +231,18 @@ class TestCommit:
         mid1 = memory.commit(ctx, info)
         assert len(info) == 0
 
-        # Second round
-        mock_connector.query.side_effect = _commit_side_effects_existing()
+        # Second round — same ctx returns same context_id
+        # Note: for the second commit, context is already in _ensured_contexts
+        # so the connection step is skipped. Provide only 3 responses.
+        mock_connector.query.side_effect = [
+            _ok_response("AddEntity"),  # ensure_session (if_not_found)
+            _ok_response("AddEntity"),  # ensure_context (if_not_found)
+            _ok_response("AddBlob"),    # write text entry
+        ]
         info.log(text="second")
         mid2 = memory.commit(ctx, info)
         assert len(info) == 0
-        assert mid1 != mid2
+        assert mid1 == mid2  # same ctx returns same context_id
 
 
 # ---------------------------------------------------------------------------
@@ -236,13 +252,10 @@ class TestCommit:
 
 class TestCommitWithDescriptors:
     def test_writes_descriptor_for_precomputed_embedding(self, mock_connector):
-        # FindEntity session, AddEntity session, FindEntity context,
-        # AddEntity context, AddEntity memory, AddBlob text,
-        # FindDescriptorSet (exists), AddDescriptor
         mock_connector.query.side_effect = [
-            _find_response(count=1),                    # session exists
-            _find_response(count=1),                    # context exists
-            _ok_response("AddEntity"),                  # memory entity
+            _ok_response("AddEntity"),                  # ensure_session
+            _ok_response("AddEntity"),                  # ensure_context
+            _ok_conn_response(),                        # nexus_session_context connection
             _ok_response("AddBlob"),                    # text blob
             _find_descriptor_set_response(count=1),     # dset exists
             _ok_response("AddDescriptor"),              # write descriptor
@@ -257,9 +270,9 @@ class TestCommitWithDescriptors:
 
     def test_creates_descriptor_set_on_first_use(self, mock_connector):
         mock_connector.query.side_effect = [
-            _find_response(count=1),                    # session exists
-            _find_response(count=1),                    # context exists
-            _ok_response("AddEntity"),                  # memory entity
+            _ok_response("AddEntity"),                  # ensure_session
+            _ok_response("AddEntity"),                  # ensure_context
+            _ok_conn_response(),                        # nexus_session_context connection
             _ok_response("AddBlob"),                    # text blob
             _find_descriptor_set_response(count=0),     # dset not found
             _ok_response("AddDescriptorSet"),           # create dset
@@ -295,9 +308,9 @@ class TestProcessAndCommit:
         # so the FindDescriptorSet comes first, then the commit sequence.
         mock_connector.query.side_effect = [
             _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets
-            _find_response(count=1),                  # session exists
-            _find_response(count=1),                  # context exists
-            _ok_response("AddEntity"),                # memory entity
+            _ok_response("AddEntity"),                # ensure_session
+            _ok_response("AddEntity"),                # ensure_context
+            _ok_conn_response(),                      # nexus_session_context connection
             _ok_response("AddBlob"),                  # text blob
             _find_descriptor_set_response(count=1),  # _write_descriptor dset check
             _ok_response("AddDescriptor"),            # write descriptor
@@ -313,9 +326,9 @@ class TestProcessAndCommit:
     def test_blob_only_entry_does_not_need_embedding(self, mock_connector):
         # blob-only entry: no embedding needed — commit proceeds
         mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-            _ok_response("AddEntity"),
+            _ok_response("AddEntity"),  # ensure_session
+            _ok_response("AddEntity"),  # ensure_context
+            _ok_conn_response(),        # nexus_session_context connection
             _ok_response("AddBlob"),
         ]
         memory = _make_memory(mock_connector)
@@ -327,6 +340,126 @@ class TestProcessAndCommit:
 
 
 # ---------------------------------------------------------------------------
+# Video clip embeddings
+# ---------------------------------------------------------------------------
+
+
+class TestVideoClipEmbeddings:
+    """Video entries produce per-clip Descriptors, not a single mean-pool."""
+
+    def test_video_clip_embeddings_written_as_multiple_descriptors(
+        self, mock_connector
+    ):
+        # video entry with 2 pre-generated clip embeddings (simulating what
+        # _generate_missing_embeddings does when a CLIP model is configured).
+        # Expected query sequence:
+        #   1. _ensure_descriptor_sets → FindDescriptorSet (exists)
+        #   2. commit: AddEntity session (if_not_found), AddEntity context (if_not_found),
+        #              nexus_session_context connection
+        #   3. AddVideo
+        #   4. _write_video_clip_descriptors → FindDescriptorSet + AddDescriptor × 2
+        clip1 = np.ones(128, dtype=np.float32)
+        clip2 = np.zeros(128, dtype=np.float32) + 0.5
+        mock_connector.query.side_effect = [
+            _find_descriptor_set_response(count=1),   # _ensure_descriptor_sets
+            _ok_response("AddEntity"),                 # ensure_session (if_not_found)
+            _ok_response("AddEntity"),                 # ensure_context (if_not_found)
+            _ok_conn_response(),                       # nexus_session_context connection
+            _ok_response("AddVideo"),                  # video blob
+            _find_descriptor_set_response(count=1),   # _write_video_clip_descriptors dset check
+            _ok_response("AddDescriptor"),             # clip 1
+            _ok_response("AddDescriptor"),             # clip 2
+        ]
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        # Manually set video_clip_embeddings on the entry to bypass actual CLIP
+        info.log(video=b"fakevideo")
+        entry = info._entries[0]
+        entry.video_clip_embeddings = [
+            (clip1, {"start_frame": 0, "stop_frame": 29}),
+            (clip2, {"start_frame": 30, "stop_frame": 59}),
+        ]
+        entry.embedding_model = "ViT-B-32"
+
+        mid = memory.process_and_commit(ctx, info)
+        assert isinstance(mid, str)
+
+        # Verify AddDescriptor was called twice (once per clip)
+        descriptor_calls = [
+            call
+            for call in mock_connector.query.call_args_list
+            if call.args and any("AddDescriptor" in cmd for cmd in call.args[0])
+        ]
+        assert len(descriptor_calls) == 2
+
+    def test_video_clip_descriptors_carry_frame_metadata(self, mock_connector):
+        # Verify start_frame/stop_frame land on the Descriptor properties.
+        clip_emb = np.ones(64, dtype=np.float32)
+        captured_cmds = []
+
+        def _capture(cmd, blobs=None):
+            captured_cmds.append(cmd)
+            if any("FindDescriptorSet" in c for c in cmd):
+                return _find_descriptor_set_response(count=1)
+            if any("FindEntity" in c for c in cmd):
+                return _find_response(count=1)
+            return _ok_response(list(cmd[0].keys())[0])
+
+        mock_connector.query.side_effect = _capture
+
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        info.log(video=b"v")
+        entry = info._entries[0]
+        entry.video_clip_embeddings = [
+            (clip_emb, {"start_frame": 5, "stop_frame": 34}),
+        ]
+        entry.embedding_model = "ViT-B-32"
+
+        memory.process_and_commit(ctx, info)
+
+        descriptor_cmd = next(
+            cmd[0]["AddDescriptor"]
+            for cmd in captured_cmds
+            if cmd and "AddDescriptor" in cmd[0]
+        )
+        props = descriptor_cmd["properties"]
+        assert props["start_frame"] == 5
+        assert props["stop_frame"] == 34
+        assert props["modality"] == "video"
+
+    def test_single_precomputed_video_embedding_still_works(self, mock_connector):
+        # A caller who passes embedding= directly still gets one Descriptor
+        # (the existing code path — not the per-clip path).
+        vec = np.ones(128, dtype=np.float32)
+        mock_connector.query.side_effect = [
+            _find_descriptor_set_response(count=1),   # _ensure_descriptor_sets
+            _ok_response("AddEntity"),                 # ensure_session (if_not_found)
+            _ok_response("AddEntity"),                 # ensure_context (if_not_found)
+            _ok_conn_response(),                       # nexus_session_context connection
+            _ok_response("AddVideo"),
+            _find_descriptor_set_response(count=1),
+            _ok_response("AddDescriptor"),
+        ]
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        # Pre-compute a single embedding — video_clip_embeddings stays None
+        info.log(video=b"v", embedding=vec, embedding_model="ViT-B/16")
+        mid = memory.process_and_commit(ctx, info)
+        assert isinstance(mid, str)
+
+        descriptor_calls = [
+            call
+            for call in mock_connector.query.call_args_list
+            if call.args and any("AddDescriptor" in cmd for cmd in call.args[0])
+        ]
+        assert len(descriptor_calls) == 1
+
+
+# ---------------------------------------------------------------------------
 # async_process_and_commit()
 # ---------------------------------------------------------------------------
 
@@ -335,9 +468,9 @@ class TestAsyncProcessAndCommit:
     @pytest.mark.asyncio
     async def test_returns_pending_task(self, mock_connector):
         mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-            _ok_response("AddEntity"),
+            _ok_response("AddEntity"),                # ensure_session (if_not_found)
+            _ok_response("AddEntity"),                # ensure_context (if_not_found)
+            _ok_conn_response(),                      # nexus_session_context connection
             _ok_response("AddBlob"),
             _find_descriptor_set_response(count=1),
             _ok_response("AddDescriptor"),
@@ -353,9 +486,9 @@ class TestAsyncProcessAndCommit:
     @pytest.mark.asyncio
     async def test_drains_info_immediately(self, mock_connector):
         mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-            _ok_response("AddEntity"),
+            _ok_response("AddEntity"),                # ensure_session (if_not_found)
+            _ok_response("AddEntity"),                # ensure_context (if_not_found)
+            _ok_conn_response(),                      # nexus_session_context connection
             _ok_response("AddBlob"),
             _find_descriptor_set_response(count=1),
             _ok_response("AddDescriptor"),
@@ -373,9 +506,9 @@ class TestAsyncProcessAndCommit:
     @pytest.mark.asyncio
     async def test_task_completes_successfully(self, mock_connector):
         mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-            _ok_response("AddEntity"),
+            _ok_response("AddEntity"),  # ensure_session (if_not_found)
+            _ok_response("AddEntity"),  # ensure_context (if_not_found)
+            _ok_conn_response(),        # nexus_session_context connection
             _ok_response("AddBlob"),
         ]
         memory = _make_memory(mock_connector)
@@ -385,7 +518,7 @@ class TestAsyncProcessAndCommit:
         task = await memory.async_process_and_commit(ctx, info)
         await task.wait()
         assert task.status == "complete"
-        assert isinstance(task.memory_id, str)
+        assert isinstance(task.context_id, str)
 
     @pytest.mark.asyncio
     async def test_task_fails_on_storage_error(self, mock_connector):
@@ -402,9 +535,9 @@ class TestAsyncProcessAndCommit:
     @pytest.mark.asyncio
     async def test_task_registered_in_memory_instance(self, mock_connector):
         mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-            _ok_response("AddEntity"),
+            _ok_response("AddEntity"),  # ensure_session (if_not_found)
+            _ok_response("AddEntity"),  # ensure_context (if_not_found)
+            _ok_conn_response(),        # nexus_session_context connection
             _ok_response("AddBlob"),
         ]
         memory = _make_memory(mock_connector)
@@ -436,9 +569,8 @@ class TestSearch:
     def test_metadata_only_search(self, mock_connector):
         entities = [
             {
-                "memory_id": "m-1",
+                "id": "m-1",
                 "session_id": "s-1",
-                "context_id": "c-1",
                 "created_at": "2024-01-01T00:00:00",
                 "user_id": "alice",
             }
@@ -449,15 +581,15 @@ class TestSearch:
         memory = _make_memory(mock_connector)
         results = memory.search(filters={"session_id": "s-1"})
         assert len(results) == 1
-        assert results[0].memory_id == "m-1"
+        assert results[0].context_id == "m-1"
         assert results[0].score == 1.0
 
     def test_vector_search_returns_results(self, mock_connector):
         descriptors = [
             {
-                "memory_id": "m-2",
                 "session_id": "s-1",
                 "context_id": "c-1",
+                "user_id": "alice",
                 "created_at": "2024-01-01T00:00:00",
                 "modality": "text",
                 "embedding_model": "test-model",
@@ -470,21 +602,21 @@ class TestSearch:
         vec = np.ones(64, dtype=np.float32)
         results = memory.search(query=vec, modality="text")
         assert len(results) == 1
-        assert results[0].memory_id == "m-2"
+        assert results[0].context_id == "c-1"
         assert results[0].score == pytest.approx(0.95)
 
     def test_vector_search_respects_min_score(self, mock_connector):
         descriptors = [
             {
-                "memory_id": "m-1",
                 "session_id": "s-1",
                 "context_id": "c-1",
+                "user_id": "alice",
                 "created_at": "2024-01-01T00:00:00",
             },
             {
-                "memory_id": "m-2",
                 "session_id": "s-1",
-                "context_id": "c-1",
+                "context_id": "c-2",
+                "user_id": "alice",
                 "created_at": "2024-01-01T00:00:00",
             },
         ]
@@ -495,7 +627,7 @@ class TestSearch:
         vec = np.ones(64, dtype=np.float32)
         results = memory.search(query=vec, modality="text", min_score=0.5)
         assert len(results) == 1
-        assert results[0].memory_id == "m-1"
+        assert results[0].context_id == "c-1"
 
     def test_none_query_with_no_filters_returns_all(self, mock_connector):
         mock_connector.query.return_value = (
@@ -539,7 +671,7 @@ class TestConnect:
         memory.connect(ctx1, ctx2, relationship="follows")
         assert mock_connector.query.call_count == 1
 
-    def test_creates_connection_between_memory_ids(self, mock_connector):
+    def test_creates_connection_between_context_ids(self, mock_connector):
         mock_connector.query.return_value = (
             [
                 {"FindEntity": {"status": 0}},
@@ -599,20 +731,20 @@ class TestConnect:
 
 
 class TestRemove:
-    def test_removes_existing_memory(self, mock_connector):
+    def test_removes_existing_context(self, mock_connector):
         mock_connector.query.return_value = (
             [{"DeleteEntity": {"status": 0}}], []
         )
         memory = _make_memory(mock_connector)
-        memory.remove("mem-xyz")
+        memory.remove("ctx-xyz")
         assert mock_connector.query.call_count == 1
 
-    def test_empty_memory_id_raises(self, mock_connector):
+    def test_empty_context_id_raises(self, mock_connector):
         memory = _make_memory(mock_connector)
         with pytest.raises(NexusValidationError, match="non-empty"):
             memory.remove("")
 
-    def test_whitespace_memory_id_raises(self, mock_connector):
+    def test_whitespace_context_id_raises(self, mock_connector):
         memory = _make_memory(mock_connector)
         with pytest.raises(NexusValidationError, match="non-empty"):
             memory.remove("   ")
@@ -740,7 +872,7 @@ class TestEnsureDescriptorSet:
         ]
         memory = _make_memory(mock_connector)
         vec = np.ones(128, dtype=np.float32)
-        memory._ensure_descriptor_set("nexus_text", vec, "CS", "FaissFlat")
+        memory._ensure_descriptor_set("nexus_text__mymodel", vec, "text", "mymodel", "CS", "HNSW")
         assert mock_connector.query.call_count == 2
 
     def test_skips_when_exists(self, mock_connector):
@@ -749,22 +881,11 @@ class TestEnsureDescriptorSet:
         ]
         memory = _make_memory(mock_connector)
         vec = np.ones(128, dtype=np.float32)
-        memory._ensure_descriptor_set("nexus_text", vec, "CS", "FaissFlat")
+        memory._ensure_descriptor_set("nexus_text__mymodel", vec, "text", "mymodel", "CS", "HNSW")
         assert mock_connector.query.call_count == 1
 
     def test_infers_dimensions_from_embedding(self, mock_connector):
         captured = []
-
-        def capture(cmd, blobs=None):
-            captured.extend(cmd)
-            return _ok_response("AddDescriptorSet")
-
-        mock_connector.query.side_effect = [
-            _find_descriptor_set_response(count=0),
-            capture,
-        ]
-        # Override the second call
-        calls = [_find_descriptor_set_response(count=0)]
 
         def side_effect(cmd, blobs=None):
             if mock_connector.query.call_count == 1:
@@ -775,7 +896,7 @@ class TestEnsureDescriptorSet:
         mock_connector.query.side_effect = side_effect
         memory = _make_memory(mock_connector)
         vec = np.ones(256, dtype=np.float32)
-        memory._ensure_descriptor_set("nexus_text", vec, "CS", "FaissFlat")
+        memory._ensure_descriptor_set("nexus_text__mymodel", vec, "text", "mymodel", "CS", "HNSW")
         add_cmd = next(c for c in captured if "AddDescriptorSet" in c)
         assert add_cmd["AddDescriptorSet"]["dimensions"] == 256
 
@@ -790,10 +911,10 @@ class TestSearchResult:
         sr = SearchResult(
             score=0.95,
             modality="text",
-            memory_id="m-1",
             session_id="s-1",
             context_id="c-1",
-            timestamp=datetime(2024, 1, 1),
+            user_id="alice",
+            created_at=datetime(2024, 1, 1),
         )
         assert sr.score == 0.95
         assert sr.text is None

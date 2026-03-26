@@ -1,19 +1,17 @@
 """
 NexusAdmin — identity authority for aperture-nexus.
 
-NexusAdmin manages departments and Principals. It is the only component
-that creates ApertureDB DB users and app-level identity records. Memory
-never authenticates — it receives an already-authenticated Principal
-via Context and trusts it.
+NexusAdmin manages Principals. It is the only component that creates
+app-level identity records. Memory never authenticates — it receives
+an already-authenticated Principal via Context and trusts it.
 
 Usage pattern:
     # Setup (once per deployment)
     admin = NexusAdmin()
-    admin.create_department("support", organization="AcmeCorp")
     api_key = admin.create_principal(
         user_id="alice",
         user_name="Alice Chen",
-        department="support",
+        department="engineering",
         organization="AcmeCorp",
     )
     # Deliver api_key to alice out-of-band (not logged, not stored)
@@ -22,9 +20,7 @@ Usage pattern:
     principal = admin.authenticate(user_id="alice", api_key="...")
 
 ApertureDB entity classes used here:
-    NexusOrganization — organisation records
-    NexusDepartment   — department records (one ApertureDB DB user each)
-    NexusUser         — app-level Principal records (hashed api_key)
+    NexusUser — app-level Principal records (hashed api_key)
 """
 
 from __future__ import annotations
@@ -47,15 +43,15 @@ from aperture_nexus.exceptions import (
 logger = logging.getLogger(__name__)
 
 # ApertureDB entity class names
-_CLASS_ORG = "NexusOrganization"
-_CLASS_DEPT = "NexusDepartment"
 _CLASS_USER = "NexusUser"
 
-# ApertureDB permissions granted to department DB users
-_DEPT_PERMISSIONS = ["EntityRead", "EntityWrite",
-                     "ConnectionRead", "ConnectionWrite",
-                     "DescriptorRead", "DescriptorWrite",
-                     "BlobRead", "BlobWrite"]
+# ApertureDB permission model note:
+# ApertureDB does not have per-object-type permission grants.
+# Granting a DB user access gives read/write/update/delete on ALL object types.
+# The only permission distinctions are:
+#   - Admin users: can create/remove DB users and roles.
+#   - Regular users: can read/write/update/delete all objects (including indexes).
+# There is no way to grant "entity read" without also granting "blob read", etc.
 
 
 def _hash_key(api_key: str) -> str:
@@ -118,11 +114,10 @@ class NexusAdmin:
 
     Example:
         admin = NexusAdmin()
-        admin.create_department("support", organization="AcmeCorp")
         api_key = admin.create_principal(
             user_id="alice",
             user_name="Alice Chen",
-            department="support",
+            department="engineering",
             organization="AcmeCorp",
         )
         principal = admin.authenticate(user_id="alice", api_key=api_key)
@@ -141,59 +136,6 @@ class NexusAdmin:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
-    def create_department(
-        self,
-        department: str,
-        organization: Optional[str] = None,
-    ) -> None:
-        """Create a department entity in ApertureDB.
-
-        If a department with this name already exists, this is a no-op.
-
-        In a full deployment, this also creates an ApertureDB DB user for
-        the department. That capability depends on the ApertureDB edition
-        and is handled separately from the entity record.
-
-        Args:
-            department: Department name (e.g. ``"support"``).
-            organization: Organization this department belongs to. If
-                ``None``, uses the configured default organization.
-
-        Raises:
-            NexusValidationError: If department is empty.
-            NexusStorageError: If ApertureDB rejects the write.
-
-        Example:
-            admin.create_department("support", organization="AcmeCorp")
-        """
-        if not isinstance(department, str) or not department.strip():
-            raise NexusValidationError(
-                "department must be a non-empty string."
-            )
-        self._ensure_defaults()
-        org = organization or self._cfg.admin.default_organization
-
-        if _entity_exists(
-            self._db, _CLASS_DEPT, {"name": ["==", department]}
-        ):
-            logger.debug(
-                "Department %r already exists — skipping create", department
-            )
-            return
-
-        cmd = [{
-            "AddEntity": {
-                "class": _CLASS_DEPT,
-                "properties": {
-                    "name": department,
-                    "organization": org,
-                },
-            }
-        }]
-        response, _ = self._db.query(cmd)
-        _check_response(response, f"create_department({department!r})")
-        logger.debug("Created department %r in org %r", department, org)
 
     def create_principal(
         self,
@@ -229,7 +171,7 @@ class NexusAdmin:
             api_key = admin.create_principal(
                 user_id="alice",
                 user_name="Alice Chen",
-                department="support",
+                department="engineering",
                 organization="AcmeCorp",
             )
             # Deliver api_key to alice — it cannot be recovered later
@@ -377,40 +319,31 @@ class NexusAdmin:
     # ------------------------------------------------------------------
 
     def _ensure_defaults(self) -> None:
-        """Create default org and dept entities if they don't exist."""
+        """Create property indexes — idempotent."""
         if self._defaults_ensured:
             return
-
-        default_org = self._cfg.admin.default_organization
-        default_dept = self._cfg.admin.default_department
-
-        if not _entity_exists(
-            self._db, _CLASS_ORG, {"name": ["==", default_org]}
-        ):
-            cmd = [{
-                "AddEntity": {
-                    "class": _CLASS_ORG,
-                    "properties": {"name": default_org},
-                }
-            }]
-            response, _ = self._db.query(cmd)
-            _check_response(response, "ensure default organization")
-            logger.debug("Created default organization %r", default_org)
-
-        if not _entity_exists(
-            self._db, _CLASS_DEPT, {"name": ["==", default_dept]}
-        ):
-            cmd = [{
-                "AddEntity": {
-                    "class": _CLASS_DEPT,
-                    "properties": {
-                        "name": default_dept,
-                        "organization": default_org,
-                    },
-                }
-            }]
-            response, _ = self._db.query(cmd)
-            _check_response(response, "ensure default department")
-            logger.debug("Created default department %r", default_dept)
-
+        self._ensure_schema()
         self._defaults_ensured = True
+
+    def _ensure_schema(self) -> None:
+        """Create property indexes for fast constraint lookups — idempotent."""
+        indexes = [
+            (_CLASS_USER, "user_id"),
+        ]
+        for cls, prop in indexes:
+            cmd = [{"CreateIndex": {
+                "index_type": "entity",
+                "class": cls,
+                "property_key": prop,
+            }}]
+            response, _ = self._db.query(cmd)
+            for item in response:
+                for _, body in item.items():
+                    status = body.get("status", -1) if isinstance(body, dict) else -1
+                    if status not in (0, 2):
+                        info = body.get("info", "no details") if isinstance(body, dict) else str(body)
+                        logger.warning(
+                            "CreateIndex %r.%r returned status=%d: %s",
+                            cls, prop, status, info,
+                        )
+            logger.debug("Ensured index on %s.%s", cls, prop)

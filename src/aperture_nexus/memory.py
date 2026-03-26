@@ -10,22 +10,25 @@ summarisation. The same stored data is accessible across sessions,
 participants, and time horizons via filters and vector search.
 
 ApertureDB entity classes used here:
-    NexusSession    — one per unique session_id
-    NexusContext    — one per Context passed to commit()
-    NexusMemory     — one per commit() call; links context to content
-    NexusMemoryTask — one per async_process_and_commit() call
+    NexusSession — one per unique session_id
+    NexusContext — one per Context passed to commit()
+
+ApertureDB connection classes used here:
+    nexus_session_context — Session → Context
+    nexus_entry           — Context → Blob / Image / Video
+    nexus_link            — Context → Context (user-defined relationship)
 
 Multimodal content storage:
-    Text  → AddBlob   (content_type="text", memory_id stamped)
-    Image → AddImage  (memory_id stamped)
-    Video → AddVideo  (memory_id stamped)
-    Blob  → AddBlob   (document_type stamped, memory_id stamped)
-    Embedding → AddDescriptor in per-modality DescriptorSet
+    Text  → AddBlob   (document_type="text", context_id/session_id stamped)
+    Image → AddImage  (context_id/session_id stamped)
+    Video → AddVideo  (context_id/session_id stamped)
+    Blob  → AddBlob   (document_type stamped, context_id/session_id stamped)
+    Embedding → AddDescriptor in per-modality+model DescriptorSet
 
-DescriptorSet names:
-    nexus_text   — text embeddings
-    nexus_image  — image embeddings
-    nexus_video  — video clip embeddings
+DescriptorSet names: nexus_{modality}__{sanitized_model_name}
+    e.g. nexus_text__text-embedding-3-small
+         nexus_image__ViT-B_16
+         nexus_video__ViT-B_16
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -58,20 +62,11 @@ logger = logging.getLogger(__name__)
 # ApertureDB entity class names
 _CLASS_SESSION = "NexusSession"
 _CLASS_CONTEXT = "NexusContext"
-_CLASS_MEMORY = "NexusMemory"
-_CLASS_TASK = "NexusMemoryTask"
 
-# DescriptorSet names (one per modality)
-_DSET_TEXT = "nexus_text"
-_DSET_IMAGE = "nexus_image"
-_DSET_VIDEO = "nexus_video"
-
-# Maps modality name → DescriptorSet name
-_DSET_FOR_MODALITY = {
-    "text": _DSET_TEXT,
-    "image": _DSET_IMAGE,
-    "video": _DSET_VIDEO,
-}
+# ApertureDB connection class names (snake_case, nexus-prefixed)
+_CONN_SESSION_CONTEXT = "nexus_session_context"  # Session → Context
+_CONN_ENTRY = "nexus_entry"                       # Context → Blob/Image/Video
+_CONN_LINK = "nexus_link"                         # Context → Context
 
 
 # ---------------------------------------------------------------------------
@@ -83,34 +78,30 @@ _DSET_FOR_MODALITY = {
 class SearchResult:
     """One result from Memory.search().
 
-    Exactly one content field is set, corresponding to the modality of
-    the stored memory.
-
     Attributes:
         score: Similarity score (higher = more similar).
         modality: ``"text"`` | ``"image"`` | ``"video"`` | ``"blob"``
-        memory_id: The memory this result belongs to.
-        session_id: Session the memory was committed under.
-        context_id: Context the memory was committed under.
-        timestamp: When the memory was committed.
-        text: Text content (set when modality is ``"text"``).
-        image: PIL Image (set when modality is ``"image"``).
-        video_url: Video URL or path (set when modality is ``"video"``).
-        blob: Raw bytes (set when modality is ``"blob"``).
+        session_id: Session the entry was committed under.
+        context_id: Context the entry was committed under.
+        user_id: Principal who committed this entry.
+        created_at: When the entry was committed.
+        text: Short text content stored inline on the Descriptor
+            (set when modality is ``"text"`` and text is short).
+        start_frame: First frame of the matched video clip.
+        stop_frame: Last frame of the matched video clip.
         metadata: Additional properties from ApertureDB.
     """
 
     score: float
     modality: str
-    memory_id: str
     session_id: str
     context_id: str
-    timestamp: datetime
+    user_id: Optional[str]
+    created_at: datetime
 
     text: Optional[str] = None
-    image: Optional[Any] = None   # PIL.Image
-    video_url: Optional[str] = None
-    blob: Optional[bytes] = None
+    start_frame: Optional[int] = None
+    stop_frame: Optional[int] = None
 
     metadata: dict = field(default_factory=dict)
 
@@ -208,6 +199,16 @@ def _embedding_to_bytes(embedding: np.ndarray) -> bytes:
     return embedding.astype(np.float32).tobytes()
 
 
+def _dset_name(modality: str, model: str) -> str:
+    """Return the DescriptorSet name for a given modality and model.
+
+    Names are stable: same modality + model always gives the same name.
+    Slashes, spaces, and other non-alphanumeric chars become underscores.
+    """
+    safe_model = re.sub(r"[^a-zA-Z0-9_-]", "_", model)
+    return f"nexus_{modality}__{safe_model}"
+
+
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
@@ -222,8 +223,7 @@ class Memory:
 
     Calling ``commit()`` multiple times on the same ``Context`` and
     ``Information`` buffer is the standard pattern for mid-session
-    checkpoints and periodic flushes. Each call creates a new
-    ``NexusMemory`` entity in ApertureDB. The ``Information`` buffer
+    checkpoints and periodic flushes. The ``Information`` buffer
     is drained after each successful commit and is ready for continued
     use — consistent with how database transactions and write buffers work.
 
@@ -246,7 +246,7 @@ class Memory:
         ctx = Context(principal=principal, session_name="support-001")
         info = Information(context_id=ctx.id)
         info.log(text="Customer says order #4821 never arrived")
-        memory_id = memory.commit(ctx, info)
+        context_id = memory.commit(ctx, info)
     """
 
     def __init__(
@@ -258,7 +258,48 @@ class Memory:
         self._db = get_connector(db_client)
         # In-memory task registry for pending/failed async tasks
         self._tasks: dict[str, MemoryTask] = {}
+        self._schema_ensured = False
+        # Track which contexts have had their nexus_session_context connection written.
+        # Using an in-memory set means first-call-per-context writes the connection;
+        # subsequent calls within the same Memory instance are no-ops.
+        self._ensured_contexts: set[str] = set()
         logger.debug("Memory engine initialised")
+
+    def ensure_schema(self) -> None:
+        """Create property indexes for fast constraint lookups — idempotent.
+
+        Called automatically on the first ``commit()``. Safe to call
+        explicitly at startup to pre-warm the schema before first use.
+
+        ApertureDB returns status=2 when an index already exists — treated
+        as success so this is safe to call on every deployment.
+        """
+        if self._schema_ensured:
+            return
+        indexes = [
+            (_CLASS_SESSION, "session_id"),
+            (_CLASS_CONTEXT, "id"),
+            (_CLASS_CONTEXT, "session_id"),
+            (_CLASS_CONTEXT, "user_id"),
+        ]
+        for cls, prop in indexes:
+            cmd = [{"CreateIndex": {
+                "index_type": "entity",
+                "class": cls,
+                "property_key": prop,
+            }}]
+            response, _ = self._db.query(cmd)
+            for item in response:
+                for _, body in item.items():
+                    status = body.get("status", -1) if isinstance(body, dict) else -1
+                    if status not in (0, 2):
+                        info = body.get("info", "no details") if isinstance(body, dict) else str(body)
+                        logger.warning(
+                            "CreateIndex %r.%r returned status=%d: %s",
+                            cls, prop, status, info,
+                        )
+            logger.debug("Ensured index on %s.%s", cls, prop)
+        self._schema_ensured = True
 
     # ------------------------------------------------------------------
     # commit()
@@ -281,7 +322,7 @@ class Memory:
             info: Buffered multimodal information to commit.
 
         Returns:
-            The ``memory_id`` of the committed memory (UUID string).
+            The ``context_id`` of the committed context.
 
         Raises:
             NexusValidationError: If ``info`` has no entries.
@@ -289,7 +330,7 @@ class Memory:
             NexusConnectionError: If ApertureDB is unreachable.
 
         Example:
-            memory_id = memory.commit(ctx, info)
+            context_id = memory.commit(ctx, info)
             # info is now empty and ready for more log() calls
         """
         if not info._entries:
@@ -298,24 +339,24 @@ class Memory:
                 "Call info.log() at least once before committing."
             )
 
-        entries = list(info._entries)   # snapshot before drain
-        memory_id = str(uuid.uuid4())
+        self.ensure_schema()
+
+        entries = list(info._entries)          # snapshot before drain
+        pending_conns = list(info._pending_connections)
         session_id = self._resolve_session_id(ctx)
-        now = datetime.utcnow().isoformat()
 
         try:
             # Ensure session and context entities exist
             self._ensure_session(ctx, session_id)
             self._ensure_context(ctx, session_id)
 
-            # Write the Memory entity
-            self._write_memory_entity(
-                memory_id, ctx, session_id, now
-            )
-
             # Write each content entry
             for entry in entries:
-                self._write_entry(entry, memory_id, ctx, session_id)
+                self._write_entry(entry, ctx, session_id)
+
+            # Write any connections buffered via info.connect()
+            for pc in pending_conns:
+                self.connect(ctx, pc.target_id, pc.relationship, pc.properties or {})
 
         except NexusStorageError:
             raise
@@ -330,10 +371,10 @@ class Memory:
         # Drain only after all writes succeed
         info._drain()
         logger.debug(
-            "Committed memory_id=%r for session_id=%r",
-            memory_id, session_id,
+            "Committed context_id=%r for session_id=%r",
+            ctx.id, session_id,
         )
-        return memory_id
+        return ctx.id
 
     # ------------------------------------------------------------------
     # process_and_commit()
@@ -356,7 +397,7 @@ class Memory:
             info: Buffered multimodal information to process and commit.
 
         Returns:
-            The ``memory_id`` of the committed memory.
+            The ``context_id`` of the committed context.
 
         Raises:
             NexusConfigError: If a modality has entries without embeddings
@@ -370,11 +411,11 @@ class Memory:
             # With pre-computed embeddings (no model configured needed)
             info.log(text="hello", embedding=my_vector,
                      embedding_model="text-embedding-3-small")
-            memory_id = memory.process_and_commit(ctx, info)
+            context_id = memory.process_and_commit(ctx, info)
 
             # With model configured in aperture_nexus.json
             info.log(text="hello")
-            memory_id = memory.process_and_commit(ctx, info)
+            context_id = memory.process_and_commit(ctx, info)
         """
         self._generate_missing_embeddings(info._entries)
         self._ensure_descriptor_sets(info._entries)
@@ -403,29 +444,33 @@ class Memory:
             task = await memory.async_process_and_commit(ctx, info)
             await task.wait()
             if task.status == "complete":
-                print(task.memory_id)
+                print(task.context_id)
         """
         task_id = str(uuid.uuid4())
         task = MemoryTask(task_id=task_id)
         self._tasks[task_id] = task
 
         # Drain the info buffer immediately so the caller can keep using it
-        entries_snapshot = info._drain()
+        entries_snapshot = list(info._entries)
+        conns_snapshot = list(info._pending_connections)
+        info._drain()
         # Rebuild a fresh Information object with the snapshotted entries
         info_copy = Information.__new__(Information)
         info_copy.context_id = info.context_id
         info_copy._entries = entries_snapshot
+        info_copy._pending_connections = conns_snapshot
 
         async def _run() -> None:
             task._mark_processing()
             try:
-                memory_id = self.process_and_commit(ctx, info_copy)
-                task._mark_complete(memory_id)
+                self.process_and_commit(ctx, info_copy)
+                task._mark_complete(ctx.id)
             except Exception as exc:
                 task._mark_failed(exc)
 
         async def _retry() -> None:
             info_copy._entries = list(entries_snapshot)
+            info_copy._pending_connections = list(conns_snapshot)
             await _run()
 
         task._retry_fn = _retry
@@ -514,7 +559,8 @@ class Memory:
             query, modality, embedding_model
         )
         return self._search_by_vector(
-            vector, resolved_modality, filters or {}, k, min_score
+            vector, resolved_modality, filters or {}, k, min_score,
+            embedding_model=embedding_model,
         )
 
     # ------------------------------------------------------------------
@@ -528,27 +574,26 @@ class Memory:
         relationship: str,
         properties: Optional[dict] = None,
     ) -> None:
-        """Create a named relationship between two memories or contexts.
+        """Create a named relationship between two contexts.
 
-        Builds the knowledge graph on top of ApertureDB ``Connection``
-        objects. Relationships are directed (source → target), typed
-        (``relationship`` string), and optionally carry properties.
+        Writes a ``nexus_link`` connection from source to target with
+        a ``type`` property. Both source and target must be ``NexusContext``
+        entities — pass a ``Context`` object or its ``context_id`` string.
 
         Args:
-            source: Source ``Context`` or ``memory_id`` string.
-            target: Target ``Context`` or ``memory_id`` string.
-            relationship: Relationship name, e.g. ``"follows"``,
+            source: Source ``Context`` object or ``context_id`` string.
+            target: Target ``Context`` object or ``context_id`` string.
+            relationship: Relationship type, e.g. ``"follows"``,
                 ``"caused_by"``, ``"references"``.
-            properties: Optional dict of properties on the connection
-                (e.g. ``{"confidence": 0.9, "note": "inferred"}``).
+            properties: Optional extra properties on the connection.
 
         Raises:
-            NexusValidationError: If source or target cannot be resolved.
+            NexusValidationError: If ``relationship`` is empty.
             NexusStorageError: If ApertureDB rejects the write.
 
         Example:
             memory.connect(ctx_q1, ctx_q2, relationship="follows")
-            memory.connect("mem-id-1", "mem-id-2", relationship="caused_by")
+            memory.connect("ctx-id-1", "ctx-id-2", relationship="caused_by")
         """
         if not isinstance(relationship, str) or not relationship.strip():
             raise NexusValidationError(
@@ -558,38 +603,33 @@ class Memory:
         src_id = source.id if isinstance(source, Context) else source
         dst_id = target.id if isinstance(target, Context) else target
 
-        # Determine class based on type
-        src_class = (
-            _CLASS_CONTEXT if isinstance(source, Context)
-            else _CLASS_MEMORY
-        )
-        dst_class = (
-            _CLASS_CONTEXT if isinstance(target, Context)
-            else _CLASS_MEMORY
-        )
-
-        conn_props = {"created_at": datetime.utcnow().isoformat()}
+        conn_props: dict = {
+            "type": relationship.strip(),
+            "created_at": datetime.utcnow().isoformat(),
+        }
         if properties:
             conn_props.update(properties)
 
         cmd = [
             {
                 "FindEntity": {
-                    "class": src_class,
+                    "class": _CLASS_CONTEXT,
                     "constraints": {"id": ["==", src_id]},
                     "_ref": 1,
+                    "results": {"count": True},
                 }
             },
             {
                 "FindEntity": {
-                    "class": dst_class,
+                    "class": _CLASS_CONTEXT,
                     "constraints": {"id": ["==", dst_id]},
                     "_ref": 2,
+                    "results": {"count": True},
                 }
             },
             {
                 "AddConnection": {
-                    "class": relationship,
+                    "class": _CONN_LINK,
                     "_src_ref": 1,
                     "_dst_ref": 2,
                     "properties": conn_props,
@@ -606,36 +646,36 @@ class Memory:
     # remove()
     # ------------------------------------------------------------------
 
-    def remove(self, memory_id: str) -> None:
-        """Remove a committed memory from ApertureDB.
+    def remove(self, context_id: str) -> None:
+        """Remove a committed context from ApertureDB.
 
-        The ``NexusMemory`` entity is deleted. Associated blobs, images,
-        and descriptors are retained but will no longer be linked to the
-        deleted memory.
+        Deletes the ``NexusContext`` entity. Associated blobs, images,
+        videos, and descriptors retain their ``context_id`` property and
+        can be cleaned up separately by filtering on ``context_id``.
 
         Args:
-            memory_id: The memory ID returned by ``commit()``.
+            context_id: The context ID returned by ``commit()``.
 
         Raises:
-            NexusValidationError: If ``memory_id`` is empty.
+            NexusValidationError: If ``context_id`` is empty.
             NexusStorageError: If ApertureDB rejects the delete.
 
         Example:
-            memory.remove(memory_id)
+            memory.remove(ctx.id)
         """
-        if not isinstance(memory_id, str) or not memory_id.strip():
+        if not isinstance(context_id, str) or not context_id.strip():
             raise NexusValidationError(
-                "memory_id must be a non-empty string."
+                "context_id must be a non-empty string."
             )
         cmd = [{
             "DeleteEntity": {
-                "class": _CLASS_MEMORY,
-                "constraints": {"memory_id": ["==", memory_id]},
+                "class": _CLASS_CONTEXT,
+                "constraints": {"id": ["==", context_id]},
             }
         }]
         response, _ = self._db.query(cmd)
-        _check_response(response, f"remove({memory_id!r})")
-        logger.debug("Removed memory_id=%r", memory_id)
+        _check_response(response, f"remove({context_id!r})")
+        logger.debug("Removed context_id=%r", context_id)
 
     # ------------------------------------------------------------------
     # Task monitoring
@@ -716,11 +756,7 @@ class Memory:
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
     def _ensure_session(self, ctx: Context, session_id: str) -> None:
-        """Create a NexusSession entity if it doesn't exist."""
-        if _entity_exists(
-            self._db, _CLASS_SESSION, {"session_id": ["==", session_id]}
-        ):
-            return
+        """Create a NexusSession entity if one doesn't exist yet."""
         props: dict = {
             "session_id": session_id,
             "user_id": ctx.principal.user_id,
@@ -732,16 +768,16 @@ class Memory:
             props["organization"] = ctx.organization
         if ctx.department:
             props["department"] = ctx.department
-        cmd = [{"AddEntity": {"class": _CLASS_SESSION, "properties": props}}]
+        cmd = [{"AddEntity": {
+            "class": _CLASS_SESSION,
+            "properties": props,
+            "if_not_found": {"session_id": ["==", session_id]},
+        }}]
         response, _ = self._db.query(cmd)
         _check_response(response, "ensure_session")
 
     def _ensure_context(self, ctx: Context, session_id: str) -> None:
-        """Create a NexusContext entity for this context."""
-        if _entity_exists(
-            self._db, _CLASS_CONTEXT, {"id": ["==", ctx.id]}
-        ):
-            return
+        """Create a NexusContext entity and connect it to its session."""
         props: dict = {
             "id": ctx.id,
             "session_id": session_id,
@@ -752,57 +788,74 @@ class Memory:
             val = getattr(ctx, attr, None)
             if val is not None:
                 props[attr] = val
-        cmd = [{"AddEntity": {"class": _CLASS_CONTEXT, "properties": props}}]
+        cmd = [{"AddEntity": {
+            "class": _CLASS_CONTEXT,
+            "properties": props,
+            "if_not_found": {"id": ["==", ctx.id]},
+        }}]
         response, _ = self._db.query(cmd)
         _check_response(response, "ensure_context")
 
-    def _write_memory_entity(
-        self, memory_id: str, ctx: Context, session_id: str, now: str
-    ) -> None:
-        props: dict = {
-            "memory_id": memory_id,
-            "context_id": ctx.id,
-            "session_id": session_id,
-            "user_id": ctx.principal.user_id,
-            "created_at": now,
-        }
-        for attr in ("organization", "department", "purpose"):
-            val = getattr(ctx, attr, None)
-            if val is not None:
-                props[attr] = val
-        cmd = [{"AddEntity": {"class": _CLASS_MEMORY, "properties": props}}]
-        response, _ = self._db.query(cmd)
-        _check_response(response, "write_memory_entity")
+        if ctx.id not in self._ensured_contexts:
+            conn_cmd = [
+                {
+                    "FindEntity": {
+                        "class": _CLASS_SESSION,
+                        "constraints": {"session_id": ["==", session_id]},
+                        "_ref": 1,
+                        "results": {"count": True},
+                    }
+                },
+                {
+                    "FindEntity": {
+                        "class": _CLASS_CONTEXT,
+                        "constraints": {"id": ["==", ctx.id]},
+                        "_ref": 2,
+                        "results": {"count": True},
+                    }
+                },
+                {
+                    "AddConnection": {
+                        "class": _CONN_SESSION_CONTEXT,
+                        "_src_ref": 1,
+                        "_dst_ref": 2,
+                        "properties": {"created_at": datetime.utcnow().isoformat()},
+                    }
+                },
+            ]
+            response, _ = self._db.query(conn_cmd)
+            _check_response(response, "nexus_session_context")
+            self._ensured_contexts.add(ctx.id)
 
-    def _write_entry(self, entry, memory_id: str, ctx: Context,
-                     session_id: str) -> None:
+    def _write_entry(self, entry, ctx: Context, session_id: str) -> None:
         """Write one _LogEntry to ApertureDB."""
         common_props = {
-            "memory_id": memory_id,
             "context_id": ctx.id,
             "session_id": session_id,
             "user_id": ctx.principal.user_id,
+            "created_at": datetime.utcnow().isoformat(),
         }
 
         if entry.text is not None:
             text_bytes = entry.text.encode("utf-8")
-            props = dict(common_props, content_type="text")
-            # Store first 500 chars as a searchable property
-            props["text_preview"] = entry.text[:500]
+            props = dict(common_props, document_type="text")
+            if len(entry.text) <= 2000:
+                # Short text: also store inline on Descriptor (done in _write_descriptor)
+                props["text_preview"] = entry.text[:500]
             cmd = [{"AddBlob": {"properties": props}}]
             response, _ = self._db.query(cmd, [text_bytes])
             _check_response(response, "write_text_entry")
 
         if entry.image is not None:
             image_bytes = _to_image_bytes(entry.image)
-            props = dict(common_props, content_type="image")
+            props = dict(common_props)
             cmd = [{"AddImage": {"properties": props}}]
             response, _ = self._db.query(cmd, [image_bytes])
             _check_response(response, "write_image_entry")
 
         if entry.video is not None:
             video_bytes = _to_video_bytes(entry.video)
-            props = dict(common_props, content_type="video")
+            props = dict(common_props)
             cmd = [{"AddVideo": {"properties": props}}]
             response, _ = self._db.query(cmd, [video_bytes])
             _check_response(response, "write_video_entry")
@@ -815,35 +868,65 @@ class Memory:
             _check_response(response, "write_blob_entry")
 
         if entry.embedding is not None and entry.embedding_model:
-            self._write_descriptor(entry, memory_id, ctx, session_id)
+            self._write_descriptor(entry, ctx, session_id)
 
-    def _write_descriptor(self, entry, memory_id: str, ctx: Context,
-                           session_id: str) -> None:
+        if entry.video_clip_embeddings is not None and entry.embedding_model:
+            self._write_video_clip_descriptors(entry, ctx, session_id)
+
+    def _write_descriptor(self, entry, ctx: Context, session_id: str) -> None:
         """Write a pre-computed embedding as an ApertureDB Descriptor."""
         modality = self._infer_modality_from_entry(entry)
-        dset_name = _DSET_FOR_MODALITY.get(modality, _DSET_TEXT)
+        dset = _dset_name(modality, entry.embedding_model)
 
         self._ensure_descriptor_set(
-            dset_name, entry.embedding,
+            dset, entry.embedding, modality, entry.embedding_model,
             self._cfg.processing.descriptor_metric,
             self._cfg.processing.descriptor_engine,
         )
 
         props: dict = {
-            "memory_id": memory_id,
             "context_id": ctx.id,
             "session_id": session_id,
             "user_id": ctx.principal.user_id,
             "embedding_model": entry.embedding_model,
             "modality": modality,
+            "created_at": datetime.utcnow().isoformat(),
         }
-        if entry.text:
-            props["text_preview"] = entry.text[:500]
+        if entry.text and len(entry.text) <= 2000:
+            props["text"] = entry.text   # inline for short text
 
         emb_bytes = _embedding_to_bytes(entry.embedding)
-        cmd = [{"AddDescriptor": {"set": dset_name, "properties": props}}]
+        cmd = [{"AddDescriptor": {"set": dset, "properties": props}}]
         response, _ = self._db.query(cmd, [emb_bytes])
-        _check_response(response, f"write_descriptor({dset_name})")
+        _check_response(response, f"write_descriptor({dset})")
+
+    def _write_video_clip_descriptors(
+        self, entry, ctx: Context, session_id: str
+    ) -> None:
+        """Write one Descriptor per clip segment for a video entry."""
+        dset = _dset_name("video", entry.embedding_model)
+        first_emb = entry.video_clip_embeddings[0][0]
+        self._ensure_descriptor_set(
+            dset, first_emb, "video", entry.embedding_model,
+            self._cfg.processing.descriptor_metric,
+            self._cfg.processing.descriptor_engine,
+        )
+
+        for clip_emb, clip_meta in entry.video_clip_embeddings:
+            props: dict = {
+                "context_id": ctx.id,
+                "session_id": session_id,
+                "user_id": ctx.principal.user_id,
+                "embedding_model": entry.embedding_model,
+                "modality": "video",
+                "start_frame": clip_meta["start_frame"],
+                "stop_frame": clip_meta["stop_frame"],
+                "created_at": datetime.utcnow().isoformat(),
+            }
+            emb_bytes = _embedding_to_bytes(clip_emb)
+            cmd = [{"AddDescriptor": {"set": dset, "properties": props}}]
+            response, _ = self._db.query(cmd, [emb_bytes])
+            _check_response(response, f"write_video_clip_descriptor(frames {clip_meta['start_frame']}-{clip_meta['stop_frame']})")
 
     def _infer_modality_from_entry(self, entry) -> str:
         """Infer the modality of an entry from its content."""
@@ -859,15 +942,10 @@ class Memory:
 
     def _ensure_descriptor_set(
         self, set_name: str, probe_embedding: np.ndarray,
-        metric: str, engine: str
+        modality: str, embedding_model: str,
+        metric: str, engine: str,
     ) -> None:
-        """Create a DescriptorSet if it doesn't exist.
-
-        Dimensions are inferred from ``probe_embedding`` (the first
-        actual embedding encountered for this modality). This is the
-        probe approach: we don't hardcode dimensions — we let the first
-        embedding tell us the right number.
-        """
+        """Create a DescriptorSet if it doesn't exist."""
         cmd = [{
             "FindDescriptorSet": {
                 "with_name": set_name,
@@ -886,13 +964,17 @@ class Memory:
                 "dimensions": dimensions,
                 "metric": metric,
                 "engine": engine,
+                "properties": {
+                    "embeddings_model": embedding_model,
+                    "modality": modality,
+                },
             }
         }]
         response, _ = self._db.query(create_cmd)
         _check_response(response, f"create DescriptorSet {set_name!r}")
         logger.debug(
-            "Created DescriptorSet %r (dims=%d metric=%s engine=%s)",
-            set_name, dimensions, metric, engine,
+            "Created DescriptorSet %r (dims=%d metric=%s engine=%s model=%s)",
+            set_name, dimensions, metric, engine, embedding_model,
         )
 
     def _ensure_descriptor_sets(self, entries: list) -> None:
@@ -900,9 +982,17 @@ class Memory:
         for entry in entries:
             if entry.embedding is not None and entry.embedding_model:
                 modality = self._infer_modality_from_entry(entry)
-                dset_name = _DSET_FOR_MODALITY.get(modality, _DSET_TEXT)
+                dset = _dset_name(modality, entry.embedding_model)
                 self._ensure_descriptor_set(
-                    dset_name, entry.embedding,
+                    dset, entry.embedding, modality, entry.embedding_model,
+                    self._cfg.processing.descriptor_metric,
+                    self._cfg.processing.descriptor_engine,
+                )
+            if entry.video_clip_embeddings and entry.embedding_model:
+                first_emb = entry.video_clip_embeddings[0][0]
+                dset = _dset_name("video", entry.embedding_model)
+                self._ensure_descriptor_set(
+                    dset, first_emb, "video", entry.embedding_model,
                     self._cfg.processing.descriptor_metric,
                     self._cfg.processing.descriptor_engine,
                 )
@@ -921,7 +1011,7 @@ class Memory:
         from aperture_nexus._embeddings import is_clip_model, get_clip_embedder
 
         for entry in entries:
-            if entry.embedding is not None:
+            if entry.embedding is not None or entry.video_clip_embeddings is not None:
                 continue   # pre-computed — nothing to do
 
             if entry.text is not None:
@@ -940,7 +1030,7 @@ class Memory:
                 raise NexusConfigError(
                     f"No embedding model configured for {modality} input. "
                     f"Set models.{modality}_embedding in aperture_nexus.json "
-                    f"(e.g. \"ViT-B-32\" for CLIP), or pass "
+                    f"(e.g. \"ViT-B/16\" for CLIP), or pass "
                     f"embedding=my_vector and embedding_model='...' to info.log(). "
                     f"Install CLIP with: pip install aperture-nexus[clip]. "
                     f"Run 'adb-nexus init' to regenerate your config."
@@ -949,7 +1039,7 @@ class Memory:
             if not is_clip_model(model):
                 raise NexusConfigError(
                     f"Automatic embedding via model={model!r} is not yet available. "
-                    f"Use a CLIP model (e.g. 'ViT-B-32') or pre-compute your "
+                    f"Use a CLIP model (e.g. 'ViT-B/16') or pre-compute your "
                     f"embedding and pass it to info.log(embedding=my_vector, "
                     f"embedding_model={model!r})."
                 )
@@ -960,12 +1050,14 @@ class Memory:
                     entry.embedding = embedder.embed_text([entry.text])[0]
                 elif modality == "image":
                     entry.embedding = embedder.embed_image(entry.image)
-                else:  # video
-                    entry.embedding = embedder.embed_video(
+                else:  # video — per-clip embeddings, not a single mean-pool
+                    entry.video_clip_embeddings = embedder.embed_video(
                         entry.video,
                         frame_interval=self._cfg.processing.video_frame_interval,
-                        max_frames=self._cfg.processing.video_max_frames,
+                        frames_per_clip=self._cfg.processing.video_frames_per_clip,
+                        max_clips=self._cfg.processing.video_max_clips,
                     )
+                    # entry.embedding stays None — written via _write_video_clip_descriptors
                 entry.embedding_model = model
             except (NexusConfigError, NexusValidationError):
                 raise
@@ -995,7 +1087,7 @@ class Memory:
                 raise NexusConfigError(
                     "No text embedding model configured for search. "
                     "Set models.text_embedding in aperture_nexus.json "
-                    "(e.g. \"ViT-B-32\"), or pass embedding_model= to "
+                    "(e.g. \"ViT-B/16\"), or pass embedding_model= to "
                     "memory.search(). Install CLIP with: "
                     "pip install aperture-nexus[clip]."
                 )
@@ -1003,7 +1095,7 @@ class Memory:
             if not is_clip_model(model):
                 raise NexusConfigError(
                     f"Automatic text embedding for search via model={model!r} "
-                    f"is not yet available. Use a CLIP model (e.g. 'ViT-B-32') "
+                    f"is not yet available. Use a CLIP model (e.g. 'ViT-B/16') "
                     f"or pass query=my_vector and modality='text'."
                 )
             embedder = get_clip_embedder(model)
@@ -1029,18 +1121,20 @@ class Memory:
         filters: dict,
         k: int,
         min_score: Optional[float],
+        embedding_model: Optional[str] = None,
     ) -> list[SearchResult]:
         """Execute a KNN search on the appropriate DescriptorSet."""
-        dset_name = _DSET_FOR_MODALITY.get(modality)
-        if dset_name is None:
+        model = embedding_model or getattr(self._cfg.models, f"{modality}_embedding", None)
+        if modality not in ("text", "image", "video"):
             raise NexusValidationError(
                 f"Unknown modality {modality!r}. "
-                f"Choose one of: {list(_DSET_FOR_MODALITY)}."
+                f"Choose one of: 'text', 'image', 'video'."
             )
+        dset = _dset_name(modality, model) if model else f"nexus_{modality}"
 
         constraints = self._build_constraints(filters)
         cmd_body: dict = {
-            "set": dset_name,
+            "set": dset,
             "k_neighbors": k,
             "results": {"all_properties": True},
             "distances": True,
@@ -1070,18 +1164,21 @@ class Memory:
             results.append(SearchResult(
                 score=score,
                 modality=modality,
-                memory_id=desc.get("memory_id", ""),
                 session_id=desc.get("session_id", ""),
                 context_id=desc.get("context_id", ""),
-                timestamp=datetime.fromisoformat(
+                user_id=desc.get("user_id"),
+                created_at=datetime.fromisoformat(
                     desc.get("created_at", datetime.utcnow().isoformat())
                 ),
-                text=desc.get("text_preview"),
+                text=desc.get("text"),
+                start_frame=desc.get("start_frame"),
+                stop_frame=desc.get("stop_frame"),
                 metadata={
                     k: v for k, v in desc.items()
                     if k not in (
-                        "memory_id", "session_id", "context_id",
-                        "created_at", "text_preview"
+                        "session_id", "context_id", "user_id",
+                        "created_at", "text", "start_frame", "stop_frame",
+                        "modality", "embedding_model",
                     )
                 },
             ))
@@ -1090,10 +1187,10 @@ class Memory:
     def _search_by_metadata(
         self, filters: dict, k: int
     ) -> list[SearchResult]:
-        """Return Memory entities matching metadata filters."""
+        """Return Context entities matching metadata filters."""
         constraints = self._build_constraints(filters)
         cmd_body: dict = {
-            "class": _CLASS_MEMORY,
+            "class": _CLASS_CONTEXT,
             "results": {"all_properties": True, "limit": k},
         }
         if constraints:
@@ -1113,18 +1210,18 @@ class Memory:
         results = []
         for ent in entities:
             results.append(SearchResult(
-                score=1.0,   # no vector score for metadata-only search
+                score=1.0,
                 modality="text",
-                memory_id=ent.get("memory_id", ""),
                 session_id=ent.get("session_id", ""),
-                context_id=ent.get("context_id", ""),
-                timestamp=datetime.fromisoformat(
+                context_id=ent.get("id", ""),
+                user_id=ent.get("user_id"),
+                created_at=datetime.fromisoformat(
                     ent.get("created_at", datetime.utcnow().isoformat())
                 ),
                 metadata={
                     k: v for k, v in ent.items()
                     if k not in (
-                        "memory_id", "session_id", "context_id", "created_at"
+                        "id", "session_id", "user_id", "created_at"
                     )
                 },
             ))
@@ -1135,7 +1232,7 @@ class Memory:
         """Convert a user-supplied filters dict to ApertureDB constraints."""
         allowed = {
             "session_id", "user_id", "organization",
-            "department", "purpose", "memory_id",
+            "department", "purpose",
         }
         constraints = {}
         for key, value in filters.items():

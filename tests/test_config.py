@@ -50,9 +50,10 @@ class TestDefaults:
         assert cfg.processing.video_clip_overlap == 0.5
         assert cfg.processing.video_frame_interval == 30
         assert cfg.processing.video_scene_detection is False
-        assert cfg.processing.video_max_frames == 100
+        assert cfg.processing.video_frames_per_clip == 10
+        assert cfg.processing.video_max_clips == 50
         assert cfg.processing.descriptor_metric == "CS"
-        assert cfg.processing.descriptor_engine == "FaissFlat"
+        assert cfg.processing.descriptor_engine == "HNSW"
 
     def test_admin_defaults(self):
         cfg = load_config(validate_deps=False)

@@ -76,7 +76,7 @@ class ModelsConfig(BaseModel):
     is called with entries that have no pre-computed embeddings.
     If you only use commit() (raw storage), omit this section.
 
-    Recommended default: CLIP (ViT-B-32)
+    Recommended default: CLIP (ViT-B/16)
     ======================================
     CLIP works across all modalities (text, image, video frames) using
     a single model and a shared embedding space. This means you can
@@ -102,9 +102,9 @@ class ModelsConfig(BaseModel):
     Example (aperture_nexus.json) — CLIP for everything:
         {
             "models": {
-                "text_embedding": "ViT-B-32",
-                "image_embedding": "ViT-B-32",
-                "video_embedding": "ViT-B-32"
+                "text_embedding": "ViT-B/16",
+                "image_embedding": "ViT-B/16",
+                "video_embedding": "ViT-B/16"
             }
         }
 
@@ -112,8 +112,8 @@ class ModelsConfig(BaseModel):
         {
             "models": {
                 "text_embedding": "text-embedding-3-small",
-                "image_embedding": "ViT-B-32",
-                "video_embedding": "ViT-B-32"
+                "image_embedding": "ViT-B/16",
+                "video_embedding": "ViT-B/16"
             }
         }
     """
@@ -233,11 +233,11 @@ class ProcessingConfig(BaseModel):
         ),
     )
     descriptor_engine: str = Field(
-        default="FaissFlat",
+        default="HNSW",
         description=(
             "Index engine for ApertureDB DescriptorSets. "
-            "'FaissFlat' = exact search (recommended for correctness). "
-            "Also supported: 'FaissIVFFlat', 'TileDBDense'."
+            "'HNSW' = approximate nearest-neighbor, best speed/recall tradeoff (default). "
+            "Also supported: 'FaissFlat' (exact, slow at scale), 'FaissIVFFlat' (IVF quantized)."
         ),
     )
 
@@ -270,12 +270,23 @@ class ProcessingConfig(BaseModel):
             "Requires pip install aperture-nexus[video]."
         ),
     )
-    video_max_frames: int = Field(
-        default=100,
+    video_frames_per_clip: int = Field(
+        default=10,
         ge=1,
         description=(
-            "Hard cap on frames extracted per video, "
-            "regardless of method."
+            "Number of sampled frames to group into one clip segment. "
+            "Combined with video_frame_interval this controls clip duration: "
+            "at frame_interval=30 and frames_per_clip=10, each clip covers "
+            "~300 original frames (~10s at 30fps). One embedding is produced "
+            "per clip."
+        ),
+    )
+    video_max_clips: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "Hard cap on the number of clip segments (and Descriptors) "
+            "produced per video."
         ),
     )
 

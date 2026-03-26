@@ -34,8 +34,8 @@ class Context:
 
     Attributes:
         principal: The authenticated identity. Required.
-        session_id: ID of an existing session. Use
-            ``generate_session_id()`` for multi-participant sessions.
+        session_id: Unique session identifier. Use
+            ``generate_session_id()`` to generate one.
         session_name: Human-readable session name. Must be unique
             within the principal's scope.
         purpose: Why this interaction is happening. Stored as
@@ -110,7 +110,7 @@ class Context:
         ):
             raise NexusValidationError(
                 "session_id must be a non-empty string. "
-                "Use memory.generate_session_id() to create one."
+                "Use generate_session_id() to create one."
             )
 
         if (

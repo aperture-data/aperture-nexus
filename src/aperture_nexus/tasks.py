@@ -44,7 +44,7 @@ class MemoryTask:
         task_id: Unique identifier for this task (UUID).
         status: Current state: ``"pending"`` | ``"processing"``
             | ``"complete"`` | ``"failed"``.
-        memory_id: The committed memory ID. Available only when
+        context_id: The committed context ID. Available only when
             ``status == "complete"``.
         completed_at: Completion timestamp. Available only when
             ``status == "complete"``.
@@ -60,7 +60,7 @@ class MemoryTask:
         await task.wait()
 
         if task.status == "complete":
-            print(f"memory_id: {task.memory_id}")
+            print(f"context_id: {task.context_id}")
         elif task.status == "failed":
             print(f"failed: {task.error_message}")
             task.retry()
@@ -68,7 +68,7 @@ class MemoryTask:
 
     task_id: str
     status: str = _PENDING
-    memory_id: Optional[str] = None
+    context_id: Optional[str] = None
     completed_at: Optional[datetime] = None
     error: Optional[Exception] = None
     error_message: Optional[str] = None
@@ -145,12 +145,12 @@ class MemoryTask:
         self.status = _PROCESSING
         logger.debug("Task %r: processing", self.task_id)
 
-    def _mark_complete(self, memory_id: str) -> None:
+    def _mark_complete(self, context_id: str) -> None:
         self.status = _COMPLETE
-        self.memory_id = memory_id
+        self.context_id = context_id
         self.completed_at = datetime.utcnow()
         logger.debug(
-            "Task %r: complete (memory_id=%r)", self.task_id, memory_id
+            "Task %r: complete (context_id=%r)", self.task_id, context_id
         )
 
     def _mark_failed(self, exc: Exception) -> None:

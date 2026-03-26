@@ -39,18 +39,17 @@ Memory     — the engine: commits, processes, connects, and searches
 
 | aperture-nexus concept | ApertureDB storage |
 |------------------------|-------------------|
-| Department | ApertureDB DB user (entity/connection/index read+write, not admin) |
-| Principal | Entity (`User` class) with hashed `api_key` + `department` property |
-| Session | Entity (`Session` class) |
-| Principal ↔ Session | Connection (`participates_in`) |
-| Context | Entity (`Context` class) with properties |
-| Information (text) | Entity + chunked text + Descriptors |
+| Principal | Entity (`NexusPrincipal` class) with hashed `api_key`, `department`, `organization` properties |
+| Session | Entity (`NexusSession` class) with `session_id`, `session_name`, `start_time`, `end_time`, `organization` |
+| Context | Entity (`NexusContext` class) with `context_id`, `session_id`, `user_id`, `purpose`, ... |
+| Session ↔ Context | Connection (`nexus_session_context`) |
+| Context ↔ Context | Connection (`nexus_link`) with `type` property |
+| Information (text, short) | `Blob` (document_type="text") + Descriptor with inline `text` property |
+| Information (text, long/chunked) | `Blob` (document_type="txt") chunks + Descriptors |
 | Information (image) | `Image` + `Descriptor` |
-| Information (video) | `Video` → `Clip` (10s default) → one `Descriptor` per clip (clip embedding, not per-frame) |
-| Information (blob) | `Blob` with `document_type` property |
-| Memory (committed) | Entity (`Memory` class) linking Context + Information |
-| Memory ↔ Memory | Connection (typed relationship, e.g. `follows`, `caused_by`) |
-| MemoryTask | Entity (`MemoryTask` class) with status tracking |
+| Information (video) | `Video` + per-clip `Descriptor`s (start_frame/stop_frame) |
+| Information (blob/document) | `Blob` with `document_type` property |
+| Pending connection (info.connect()) | Written as `nexus_link` on `commit()` |
 
 ---
 
@@ -76,9 +75,6 @@ and by operators — not in the hot path of agent code.
 admin = NexusAdmin()
 admin = NexusAdmin(config="path/to/aperture_nexus.json")
 admin = NexusAdmin(db_client=existing_admin_connector)
-
-# Create a department (one ApertureDB DB user per department)
-admin.create_department(department="support", organization="AcmeCorp")
 
 # Register a Principal — returns plaintext API key (show once)
 api_key = admin.create_principal(
@@ -115,7 +111,7 @@ memory = Memory(config="path/to/aperture_nexus.json")
 memory = Memory(db_client=existing_connector)   # inject for testing or reuse
 
 # Commit (raw store, sync, fast — no model calls)
-memory.commit(ctx, info)
+context_id = memory.commit(ctx, info)
 
 # Process and commit (model calls + store, sync)
 memory.process_and_commit(ctx, info)
@@ -134,7 +130,7 @@ results = memory.search(query="photo.jpg")
 results = memory.search(query=my_vector, modality="image")
 
 # Remove
-memory.remove(memory_id)
+memory.remove(ctx.id)
 
 # Task monitoring
 memory.pending_commits()   # list[MemoryTask]
@@ -208,7 +204,7 @@ Returned by `async_process_and_commit()`. State stored in ApertureDB.
 ```python
 task.status          # "pending" | "processing" | "complete" | "failed"
 task.is_ready()      # bool
-task.memory_id       # str — available when complete
+task.context_id      # str — available when complete
 task.completed_at    # datetime — available when complete
 task.error           # Exception — available when failed
 task.error_message   # str — human-readable, available when failed
@@ -272,7 +268,7 @@ Key sections and defaults:
         "text_chunk_unit": "characters",
         "video_clip_duration": 10.0, "video_clip_overlap": 0.5,
         "video_frame_interval": 30, "video_scene_detection": false,
-        "video_max_frames": 100
+        "video_frames_per_clip": 10, "video_max_clips": 50
     },
     "logging": { "level": "ERROR" },
     "metrics": { "enabled": false, "port": 8000, "path": "/metrics" },

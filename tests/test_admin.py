@@ -2,13 +2,12 @@
 Unit tests for aperture_nexus.admin (NexusAdmin).
 
 Tests cover:
-- create_department(): happy path, duplicate is no-op, empty name raises
 - create_principal(): happy path, returns api_key, duplicate raises,
   empty user_id raises
 - delete_principal(): happy path, non-existent raises
 - authenticate(): valid credentials return Principal, wrong key raises,
   unknown user raises, DB error raises NexusConnectionError
-- _ensure_defaults(): creates default org + dept on first call; idempotent
+- _ensure_defaults(): creates schema indexes on first call; idempotent
 
 All tests use mock_connector — no live ApertureDB required.
 """
@@ -50,59 +49,9 @@ def _ok_response(cmd_name: str = "AddEntity") -> tuple:
     return ([{cmd_name: {"status": 0}}], [])
 
 
-# ---------------------------------------------------------------------------
-# create_department()
-# ---------------------------------------------------------------------------
-
-
-class TestCreateDepartment:
-    def test_creates_department(self, mock_connector):
-        # First call: ensure_defaults (org find → add, dept find → add)
-        # Then: find dept → not found, add dept
-        mock_connector.query.side_effect = [
-            _find_response(count=0),   # find default org
-            _ok_response(),            # add default org
-            _find_response(count=0),   # find default dept
-            _ok_response(),            # add default dept
-            _find_response(count=0),   # find "support" dept
-            _ok_response(),            # add "support" dept
-        ]
-        admin = _make_admin(mock_connector)
-        admin.create_department("support", organization="AcmeCorp")
-        # 6 queries issued
-        assert mock_connector.query.call_count == 6
-
-    def test_duplicate_is_no_op(self, mock_connector):
-        mock_connector.query.side_effect = [
-            _find_response(count=1),   # find default org → exists
-            _find_response(count=1),   # find default dept → exists
-            _find_response(count=1),   # find "support" → exists
-        ]
-        admin = _make_admin(mock_connector)
-        admin.create_department("support")
-        # no AddEntity called for support
-        assert mock_connector.query.call_count == 3
-
-    def test_empty_name_raises(self, mock_connector):
-        admin = _make_admin(mock_connector)
-        with pytest.raises(NexusValidationError, match="non-empty"):
-            admin.create_department("")
-
-    def test_whitespace_name_raises(self, mock_connector):
-        admin = _make_admin(mock_connector)
-        with pytest.raises(NexusValidationError, match="non-empty"):
-            admin.create_department("   ")
-
-    def test_storage_error_raised(self, mock_connector):
-        mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-            _find_response(count=0),
-            ([{"AddEntity": {"status": -1, "info": "schema error"}}], []),
-        ]
-        admin = _make_admin(mock_connector)
-        with pytest.raises(NexusStorageError, match="schema error"):
-            admin.create_department("bad-dept")
+def _defaults_side_effects() -> list:
+    """1 CreateIndex + nothing else (no org/dept entities)."""
+    return [_ok_response("CreateIndex")]
 
 
 # ---------------------------------------------------------------------------
@@ -113,10 +62,9 @@ class TestCreateDepartment:
 class TestCreatePrincipal:
     def test_returns_api_key(self, mock_connector):
         mock_connector.query.side_effect = [
-            _find_response(count=1),   # default org exists
-            _find_response(count=1),   # default dept exists
-            _find_response(count=0),   # user doesn't exist
-            _ok_response(),            # add user
+            _ok_response("CreateIndex"),  # _ensure_defaults: 1 CreateIndex
+            _find_response(count=0),      # alice doesn't exist
+            _ok_response("AddEntity"),    # add alice
         ]
         admin = _make_admin(mock_connector)
         key = admin.create_principal("alice")
@@ -125,33 +73,11 @@ class TestCreatePrincipal:
 
     def test_stores_hash_not_plaintext(self, mock_connector):
         """The stored properties must contain api_key_hash, not api_key."""
-        captured = []
-
-        def capture(cmd, blobs=None):
-            captured.extend(cmd)
-            return _ok_response(), []
-
         mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
+            _ok_response("CreateIndex"),  # _ensure_defaults: 1 CreateIndex
             _find_response(count=0),
+            _ok_response("AddEntity"),
         ]
-        # patch the final AddEntity call
-        mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-            _find_response(count=0),
-            _ok_response(),
-        ]
-        add_calls = []
-        original = mock_connector.query.side_effect
-
-        def spy(cmd, blobs=None):
-            add_calls.append(cmd)
-            idx = mock_connector.query.call_count
-            return original[idx - 1] if idx <= len(original) else (_ok_response(), [])
-
-        mock_connector.query.side_effect = original
 
         admin = _make_admin(mock_connector)
         api_key = admin.create_principal("alice", user_name="Alice")
@@ -172,9 +98,8 @@ class TestCreatePrincipal:
 
     def test_duplicate_user_id_raises(self, mock_connector):
         mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-            _find_response(count=1),   # user already exists
+            _ok_response("CreateIndex"),  # _ensure_defaults: 1 CreateIndex
+            _find_response(count=1),      # alice already exists
         ]
         admin = _make_admin(mock_connector)
         with pytest.raises(NexusValidationError, match="already exists"):
@@ -187,10 +112,9 @@ class TestCreatePrincipal:
 
     def test_default_dept_and_org_used(self, mock_connector):
         mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-            _find_response(count=0),
-            _ok_response(),
+            _ok_response("CreateIndex"),  # _ensure_defaults: 1 CreateIndex
+            _find_response(count=0),      # bob doesn't exist
+            _ok_response("AddEntity"),    # add bob
         ]
         admin = _make_admin(mock_connector)
         admin.create_principal("bob")
@@ -301,32 +225,23 @@ class TestAuthenticate:
 
 
 class TestEnsureDefaults:
-    def test_creates_org_and_dept_when_absent(self, mock_connector):
-        mock_connector.query.side_effect = [
-            _find_response(count=0),   # org not found
-            _ok_response(),            # add org
-            _find_response(count=0),   # dept not found
-            _ok_response(),            # add dept
-        ]
+    def test_creates_schema_indexes(self, mock_connector):
+        # 1 CreateIndex for NexusUser.user_id
+        mock_connector.query.side_effect = _defaults_side_effects()
         admin = _make_admin(mock_connector)
         admin._ensure_defaults()
-        assert mock_connector.query.call_count == 4
+        assert mock_connector.query.call_count == 1
 
-    def test_skips_when_already_exist(self, mock_connector):
-        mock_connector.query.side_effect = [
-            _find_response(count=1),   # org exists
-            _find_response(count=1),   # dept exists
-        ]
+    def test_idempotent_on_first_call(self, mock_connector):
+        # Same 1 query regardless of whether index exists
+        mock_connector.query.side_effect = _defaults_side_effects()
         admin = _make_admin(mock_connector)
         admin._ensure_defaults()
-        assert mock_connector.query.call_count == 2
+        assert mock_connector.query.call_count == 1
 
     def test_idempotent_second_call(self, mock_connector):
-        mock_connector.query.side_effect = [
-            _find_response(count=1),
-            _find_response(count=1),
-        ]
+        mock_connector.query.side_effect = _defaults_side_effects()
         admin = _make_admin(mock_connector)
         admin._ensure_defaults()
         admin._ensure_defaults()   # second call — no more DB queries
-        assert mock_connector.query.call_count == 2
+        assert mock_connector.query.call_count == 1
