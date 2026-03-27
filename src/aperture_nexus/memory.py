@@ -116,8 +116,22 @@ class SearchResult:
 # ---------------------------------------------------------------------------
 
 
-def _check_response(response: list, operation: str) -> None:
-    """Raise NexusStorageError if any command in response failed."""
+def _check_response(response, operation: str) -> None:
+    """Raise NexusStorageError if any command in the response failed.
+
+    Handles both the normal list-of-dicts format and the bare-dict format
+    that ApertureDB returns for schema/parameter errors.
+    """
+    # ApertureDB returns a bare dict (not wrapped in a list) for invalid queries
+    if isinstance(response, dict):
+        status = response.get("status", -1)
+        if status != 0:
+            raise NexusStorageError(
+                f"{operation} failed (status={status}): "
+                f"{response.get('info', 'no details')}. "
+                f"Check your ApertureDB connection and schema."
+            )
+        return
     for item in response:
         for cmd_name, body in item.items():
             status = body.get("status", -1) if isinstance(body, dict) else -1
@@ -137,12 +151,14 @@ def _entity_exists(db, entity_class: str, constraints: dict) -> bool:
     """Return True if at least one entity matching constraints exists."""
     cmd = [{
         "FindEntity": {
-            "class": entity_class,
+            "with_class": entity_class,
             "constraints": constraints,
             "results": {"count": True},
         }
     }]
     response, _ = db.query(cmd)
+    if isinstance(response, dict):
+        return False  # error response — entity does not exist
     body = response[0].get("FindEntity", {})
     return body.get("count", 0) > 0
 
@@ -352,7 +368,7 @@ class Memory:
 
         cmd = [{
             "FindEntity": {
-                "class": _CLASS_USER,
+                "with_class": _CLASS_USER,
                 "constraints": {"user_id": ["==", user_id]},
                 "results": {"all_properties": True},
             }
@@ -365,6 +381,11 @@ class Memory:
                 f"Run 'adb-nexus validate' to check your connection."
             ) from e
 
+        if isinstance(response, dict):
+            raise NexusConnectionError(
+                f"ApertureDB returned an unexpected response during authentication. "
+                f"Run 'adb-nexus validate' to check your connection."
+            )
         body = response[0].get("FindEntity", {})
         entities = body.get("entities", [])
 
@@ -703,7 +724,7 @@ class Memory:
         cmd = [
             {
                 "FindEntity": {
-                    "class": _CLASS_CONTEXT,
+                    "with_class": _CLASS_CONTEXT,
                     "constraints": {"id": ["==", src_id]},
                     "_ref": 1,
                     "results": {"count": True},
@@ -711,7 +732,7 @@ class Memory:
             },
             {
                 "FindEntity": {
-                    "class": _CLASS_CONTEXT,
+                    "with_class": _CLASS_CONTEXT,
                     "constraints": {"id": ["==", dst_id]},
                     "_ref": 2,
                     "results": {"count": True},
@@ -720,8 +741,8 @@ class Memory:
             {
                 "AddConnection": {
                     "class": _CONN_LINK,
-                    "_src_ref": 1,
-                    "_dst_ref": 2,
+                    "src": 1,
+                    "dst": 2,
                     "properties": conn_props,
                 }
             },
@@ -759,7 +780,7 @@ class Memory:
             )
         cmd = [{
             "DeleteEntity": {
-                "class": _CLASS_CONTEXT,
+                "with_class": _CLASS_CONTEXT,
                 "constraints": {"id": ["==", context_id]},
             }
         }]
@@ -890,7 +911,7 @@ class Memory:
             conn_cmd = [
                 {
                     "FindEntity": {
-                        "class": _CLASS_SESSION,
+                        "with_class": _CLASS_SESSION,
                         "constraints": {"session_id": ["==", session_id]},
                         "_ref": 1,
                         "results": {"count": True},
@@ -898,7 +919,7 @@ class Memory:
                 },
                 {
                     "FindEntity": {
-                        "class": _CLASS_CONTEXT,
+                        "with_class": _CLASS_CONTEXT,
                         "constraints": {"id": ["==", ctx.id]},
                         "_ref": 2,
                         "results": {"count": True},
@@ -907,8 +928,8 @@ class Memory:
                 {
                     "AddConnection": {
                         "class": _CONN_SESSION_CONTEXT,
-                        "_src_ref": 1,
-                        "_dst_ref": 2,
+                        "src": 1,
+                        "dst": 2,
                         "properties": {"created_at": datetime.utcnow().isoformat()},
                     }
                 },
@@ -1285,7 +1306,7 @@ class Memory:
         """Return Context entities matching metadata filters."""
         constraints = self._build_constraints(filters)
         cmd_body: dict = {
-            "class": _CLASS_CONTEXT,
+            "with_class": _CLASS_CONTEXT,
             "results": {"all_properties": True, "limit": k},
         }
         if constraints:
@@ -1299,6 +1320,8 @@ class Memory:
                 f"ApertureDB metadata search failed: {e}."
             ) from e
 
+        if isinstance(response, dict):
+            return []
         body = response[0].get("FindEntity", {})
         entities = body.get("entities", [])
 
