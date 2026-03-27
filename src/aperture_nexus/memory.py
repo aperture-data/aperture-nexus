@@ -1269,12 +1269,13 @@ class Memory:
             ) from e
 
         body = response[0].get("FindDescriptor", {})
-        descriptors = body.get("descriptors", [])
-        distances = body.get("distances", [])
+        # ApertureDB returns descriptors under "entities"; distance is
+        # embedded as "_distance" on each entity (not a separate list).
+        descriptors = body.get("entities", [])
 
         results = []
-        for i, desc in enumerate(descriptors):
-            score = float(distances[i]) if i < len(distances) else 0.0
+        for desc in descriptors:
+            score = float(desc.get("_distance", 0.0))
             if min_score is not None and score < min_score:
                 continue
             results.append(SearchResult(

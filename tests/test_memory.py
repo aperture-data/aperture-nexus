@@ -61,11 +61,17 @@ def _find_descriptor_set_response(count: int = 0) -> tuple:
 def _find_descriptor_response(
     descriptors: list | None = None, distances: list | None = None
 ) -> tuple:
+    # ApertureDB returns descriptors under "entities"; distance is
+    # the "_distance" property on each entity, not a separate list.
     body: dict = {"status": 0}
     if descriptors is not None:
-        body["descriptors"] = descriptors
-    if distances is not None:
-        body["distances"] = distances
+        entities = []
+        for i, d in enumerate(descriptors):
+            ent = dict(d)
+            if distances is not None and i < len(distances):
+                ent["_distance"] = distances[i]
+            entities.append(ent)
+        body["entities"] = entities
     return ([{"FindDescriptor": body}], [])
 
 
