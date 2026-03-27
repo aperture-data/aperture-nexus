@@ -1056,6 +1056,13 @@ class Memory:
                 elif modality == "image":
                     entry.embedding = embedder.embed_image(entry.image)
                 else:  # video — per-clip embeddings, not a single mean-pool
+                    logger.warning(
+                        "Video embedding is using CLIP frame-by-frame extraction, "
+                        "which is slow for long videos. For faster and more accurate "
+                        "video embeddings, configure a dedicated video model in "
+                        "models.vlm (e.g. a video-native VLM) and pass "
+                        "embedding_model= to info.log()."
+                    )
                     entry.video_clip_embeddings = embedder.embed_video(
                         entry.video,
                         frame_interval=self._cfg.processing.video_frame_interval,
