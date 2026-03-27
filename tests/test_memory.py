@@ -13,6 +13,8 @@ Tests cover:
 - connect(): happy path; empty relationship raises
 - remove(): happy path; empty context_id raises
 - pending_commits() / failed_commits(): task list filtering
+- authenticate(): valid credentials return Principal, wrong key raises,
+  unknown user raises, DB error raises NexusConnectionError
 - stats(): raises NexusConfigError when prometheus not installed
 - _resolve_session_id(): uses session_id if set; derives from session_name
 - _build_constraints(): filters known keys, drops unknown keys
@@ -28,9 +30,12 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+from aperture_nexus.admin import _hash_key
+from aperture_nexus.auth import Principal
 from aperture_nexus.exceptions import (
     NexusConfigError,
     NexusConnectionError,
+    NexusPermissionError,
     NexusStorageError,
     NexusValidationError,
 )
@@ -933,3 +938,66 @@ class TestSearchResult:
         assert sr.score == 0.95
         assert sr.text is None
         assert sr.metadata == {}
+
+
+# ---------------------------------------------------------------------------
+# authenticate()
+# ---------------------------------------------------------------------------
+
+
+class TestAuthenticate:
+    def test_valid_credentials_return_principal(self, mock_connector):
+        api_key = "test-key-12345"
+        record = {
+            "user_id": "alice",
+            "user_name": "Alice Chen",
+            "department": "support",
+            "organization": "AcmeCorp",
+            "api_key_hash": _hash_key(api_key),
+        }
+        mock_connector.query.return_value = _find_response(
+            count=1, entities=[record]
+        )
+        memory = Memory(db_client=mock_connector)
+        principal = memory.authenticate("alice", api_key)
+        assert isinstance(principal, Principal)
+        assert principal.user_id == "alice"
+        assert principal.user_name == "Alice Chen"
+        assert principal.department == "support"
+        assert principal.organization == "AcmeCorp"
+
+    def test_wrong_api_key_raises(self, mock_connector):
+        record = {
+            "user_id": "alice",
+            "api_key_hash": _hash_key("correct-key"),
+        }
+        mock_connector.query.return_value = _find_response(
+            count=1, entities=[record]
+        )
+        memory = Memory(db_client=mock_connector)
+        with pytest.raises(NexusPermissionError, match="Invalid credentials"):
+            memory.authenticate("alice", "wrong-key")
+
+    def test_unknown_user_raises(self, mock_connector):
+        mock_connector.query.return_value = _find_response(
+            count=0, entities=[]
+        )
+        memory = Memory(db_client=mock_connector)
+        with pytest.raises(NexusPermissionError, match="does not exist"):
+            memory.authenticate("ghost", "any-key")
+
+    def test_db_error_raises_connection_error(self, mock_connector):
+        mock_connector.query.side_effect = ConnectionError("timeout")
+        memory = Memory(db_client=mock_connector)
+        with pytest.raises(NexusConnectionError, match="query failed"):
+            memory.authenticate("alice", "key")
+
+    def test_empty_user_id_raises(self, mock_connector):
+        memory = Memory(db_client=mock_connector)
+        with pytest.raises(NexusValidationError):
+            memory.authenticate("", "key")
+
+    def test_empty_api_key_raises(self, mock_connector):
+        memory = Memory(db_client=mock_connector)
+        with pytest.raises(NexusValidationError):
+            memory.authenticate("alice", "")

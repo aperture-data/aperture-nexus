@@ -34,6 +34,7 @@ DescriptorSet names: nexus_{modality}__{model_name}  (model name used verbatim)
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import logging
 import uuid
@@ -46,15 +47,20 @@ import numpy as np
 from aperture_nexus._client import get_connector
 from aperture_nexus.config import load_config
 from aperture_nexus.context import Context
+from aperture_nexus.auth import Principal, validate_credentials
 from aperture_nexus.exceptions import (
     NexusConfigError,
     NexusConnectionError,
+    NexusPermissionError,
     NexusProcessingError,
     NexusStorageError,
     NexusValidationError,
 )
 from aperture_nexus.information import Information
 from aperture_nexus.tasks import MemoryTask
+
+# ApertureDB entity class for user principals (shared with admin.py)
+_CLASS_USER = "NexusUser"
 
 logger = logging.getLogger(__name__)
 
@@ -216,9 +222,10 @@ def _dset_name(modality: str, model: str) -> str:
 class Memory:
     """Storage and retrieval engine for aperture-nexus.
 
-    The only component that commits and searches memories in ApertureDB.
-    Memory never authenticates — it receives an already-authenticated
-    ``Principal`` via the ``Context`` passed to each operation.
+    The primary runtime interface. Handles authentication, commit,
+    search, and connection operations. Requires regular (non-admin)
+    ApertureDB credentials — admin credentials are never needed at
+    session time.
 
     Calling ``commit()`` multiple times on the same ``Context`` and
     ``Information`` buffer is the standard pattern for mid-session
@@ -239,9 +246,14 @@ class Memory:
         NexusConfigError: If the config file is invalid.
 
     Example:
+        import os
         from aperture_nexus import Memory, Context, Information
 
         memory = Memory()
+        principal = memory.authenticate(
+            user_id="alice",
+            api_key=os.environ["NEXUS_API_KEY"],
+        )
         ctx = Context(principal=principal, session_name="support-001")
         info = Information(context_id=ctx.id)
         info.log(text="Customer says order #4821 never arrived")
@@ -299,6 +311,85 @@ class Memory:
                         )
             logger.debug("Ensured index on %s.%s", cls, prop)
         self._schema_ensured = True
+
+    # ------------------------------------------------------------------
+    # authenticate()
+    # ------------------------------------------------------------------
+
+    def authenticate(self, user_id: str, api_key: str) -> Principal:
+        """Validate credentials and return an authenticated Principal.
+
+        Looks up the ``NexusUser`` entity for ``user_id`` and compares
+        the SHA-256 hash of ``api_key`` against the stored hash. Requires
+        only regular (non-admin) ApertureDB credentials.
+
+        In normal use, ``api_key`` comes from the ``NEXUS_API_KEY``
+        environment variable written to ``.env`` by ``adb-nexus init``.
+
+        Args:
+            user_id: The user's unique identifier.
+            api_key: The API key issued at setup time via
+                ``adb-nexus init`` or ``NexusAdmin.create_principal()``.
+
+        Returns:
+            An authenticated ``Principal`` ready to be attached to a
+            ``Context``.
+
+        Raises:
+            NexusPermissionError: If credentials are invalid or the
+                user does not exist.
+            NexusConnectionError: If ApertureDB is unreachable.
+
+        Example:
+            import os
+            principal = memory.authenticate(
+                user_id="alice",
+                api_key=os.environ["NEXUS_API_KEY"],
+            )
+            ctx = Context(principal=principal, session_name="s-001")
+        """
+        user_id = validate_credentials(user_id, api_key)
+
+        cmd = [{
+            "FindEntity": {
+                "class": _CLASS_USER,
+                "constraints": {"user_id": ["==", user_id]},
+                "results": {"all_properties": True},
+            }
+        }]
+        try:
+            response, _ = self._db.query(cmd)
+        except Exception as e:
+            raise NexusConnectionError(
+                f"ApertureDB query failed during authentication: {e}. "
+                f"Run 'adb-nexus validate' to check your connection."
+            ) from e
+
+        body = response[0].get("FindEntity", {})
+        entities = body.get("entities", [])
+
+        if not entities:
+            raise NexusPermissionError(
+                f"Authentication failed for user_id={user_id!r}. "
+                f"User does not exist or credentials are invalid."
+            )
+
+        record = entities[0]
+        stored_hash = record.get("api_key_hash", "")
+        if stored_hash != hashlib.sha256(api_key.encode()).hexdigest():
+            raise NexusPermissionError(
+                f"Authentication failed for user_id={user_id!r}. "
+                f"Invalid credentials."
+            )
+
+        principal = Principal(
+            user_id=record["user_id"],
+            user_name=record.get("user_name"),
+            department=record.get("department"),
+            organization=record.get("organization"),
+        )
+        logger.debug("Authenticated principal %r", user_id)
+        return principal
 
     # ------------------------------------------------------------------
     # commit()

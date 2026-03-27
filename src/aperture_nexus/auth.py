@@ -43,8 +43,8 @@ class Principal:
             metadata and search filtering.
 
     Example:
-        principal = admin.authenticate(
-            user_id="alice@example.com", api_key="..."
+        principal = memory.authenticate(
+            user_id="alice@example.com", api_key=os.environ["NEXUS_API_KEY"]
         )
         ctx = Context(principal=principal, session_name="support-001")
 
@@ -72,7 +72,7 @@ class Principal:
 def validate_credentials(user_id: str, api_key: str) -> str:
     """Validate authentication inputs and return the normalized user_id.
 
-    Called internally by ``NexusAdmin.authenticate()`` before any DB interaction.
+    Called internally by ``Memory.authenticate()`` before any DB interaction.
     Validates that both fields are non-empty after stripping whitespace, and
     returns the stripped ``user_id`` so the caller uses a consistent value.
 

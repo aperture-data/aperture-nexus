@@ -3,16 +3,18 @@ aperture-nexus: The Unified KMC (Knowledge, Memory, Context) Engine
 for Agentic State.
 
 Quickstart:
-    >>> from aperture_nexus import NexusAdmin, Memory, Context, Information
+    >>> import os
+    >>> from aperture_nexus import Memory, Context, Information
     >>> from aperture_nexus import generate_session_id
-    >>> admin = NexusAdmin()
-    >>> principal = admin.authenticate(user_id="alice", api_key="...")
+    >>> memory = Memory()
+    >>> principal = memory.authenticate(
+    ...     user_id="alice", api_key=os.environ["NEXUS_API_KEY"]
+    ... )
     >>> ctx = Context(
     ...     principal=principal, session_name="my-session", purpose="..."
     ... )
     >>> info = Information(context_id=ctx.id)
     >>> info.log(text="Hello, world")
-    >>> memory = Memory()
     >>> memory.commit(ctx, info)
 """
 
