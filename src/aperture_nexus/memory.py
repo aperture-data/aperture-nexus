@@ -1061,7 +1061,6 @@ class Memory:
                         entry.video,
                         frame_interval=self._cfg.processing.video_frame_interval,
                         frames_per_clip=self._cfg.processing.video_frames_per_clip,
-                        max_clips=self._cfg.processing.video_max_clips,
                     )
                     # entry.embedding stays None — written via _write_video_clip_descriptors
                 entry.embedding_model = model

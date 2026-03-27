@@ -267,8 +267,8 @@ Key sections and defaults:
         "text_chunk_size": 2000, "text_chunk_overlap": 200,
         "text_chunk_unit": "characters",
         "video_clip_duration": 10.0, "video_clip_overlap": 0.5,
-        "video_frame_interval": 30, "video_scene_detection": false,
-        "video_frames_per_clip": 10, "video_max_clips": 50
+        "video_frame_interval": 30,
+        "video_frames_per_clip": 10
     },
     "logging": { "level": "ERROR" },
     "metrics": { "enabled": false, "port": 8000, "path": "/metrics" },
@@ -306,7 +306,7 @@ Requires `pip install aperture-nexus[metrics]`. Prometheus-compatible. Uses user
 
 | Extra | Installs | Required for |
 |-------|----------|-------------|
-| `[video]` | `scenedetect[opencv]` | `video_scene_detection: true` |
+| `[video]` | `opencv-python` | video frame extraction for embedding |
 | `[tokens]` | `tiktoken` | `text_chunk_unit: "tokens"` |
 | `[metrics]` | `prometheus-client` | metrics export |
 | `[ui]` | `fastapi`, `uvicorn`, `jinja2`, `python-multipart` | web UI and REST API |

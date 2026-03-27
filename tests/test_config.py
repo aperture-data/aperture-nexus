@@ -49,9 +49,7 @@ class TestDefaults:
         assert cfg.processing.video_clip_duration == 10.0
         assert cfg.processing.video_clip_overlap == 0.5
         assert cfg.processing.video_frame_interval == 30
-        assert cfg.processing.video_scene_detection is False
         assert cfg.processing.video_frames_per_clip == 10
-        assert cfg.processing.video_max_clips == 50
         assert cfg.processing.descriptor_metric == "CS"
         assert cfg.processing.descriptor_engine == "HNSW"
 
@@ -308,24 +306,6 @@ class TestValidation:
 
 
 class TestOptionalDeps:
-    def test_scene_detection_missing_dep_raises(self, tmp_path, monkeypatch):
-        config_file = tmp_path / "aperture_nexus.json"
-        config_file.write_text(json.dumps({
-            "processing": {"video_scene_detection": True}
-        }))
-
-        monkeypatch.setitem(__builtins__ if isinstance(__builtins__, dict)
-                            else vars(__builtins__), "scenedetect", None)
-
-        # Simulate missing import by patching the import inside validate_deps
-        import unittest.mock as mock
-        with mock.patch.dict("sys.modules", {"scenedetect": None}):
-            with pytest.raises(
-                NexusConfigError,
-                match="pip install aperture-nexus\\[video\\]",
-            ):
-                load_config(path=config_file, validate_deps=True)
-
     def test_tokens_missing_dep_raises(self, tmp_path, monkeypatch):
         config_file = tmp_path / "aperture_nexus.json"
         config_file.write_text(json.dumps({
@@ -367,11 +347,11 @@ class TestOptionalDeps:
     def test_validate_deps_false_skips_checks(self, tmp_path):
         config_file = tmp_path / "aperture_nexus.json"
         config_file.write_text(json.dumps({
-            "processing": {"video_scene_detection": True}
+            "processing": {"text_chunk_unit": "tokens"}
         }))
 
         import unittest.mock as mock
-        with mock.patch.dict("sys.modules", {"scenedetect": None}):
+        with mock.patch.dict("sys.modules", {"tiktoken": None}):
             # Should not raise — dependency check skipped
             cfg = load_config(path=config_file, validate_deps=False)
-            assert cfg.processing.video_scene_detection is True
+            assert cfg.processing.text_chunk_unit == "tokens"

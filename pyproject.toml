@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 # Core dependencies — kept minimal intentionally.
-# Install extras for additional capabilities: pip install aperture-nexus[video,metrics,ui]
+# Install extras for additional capabilities: pip install aperture-nexus[video,metrics,ui,clip]
 dependencies = [
     "aperturedb>=0.4.55",
     "numpy>=1.24",
@@ -38,9 +38,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Video scene detection (requires OpenCV internally via pyscenedetect)
+# Video frame extraction for CLIP embedding
 video = [
-    "scenedetect[opencv]>=0.6",
+    "opencv-python>=4.9",
 ]
 
 # Token-based text chunking

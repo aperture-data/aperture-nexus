@@ -178,7 +178,6 @@ class ClipEmbedder:
         video,
         frame_interval: int = 30,
         frames_per_clip: int = 10,
-        max_clips: int = 50,
     ) -> list[tuple[np.ndarray, dict]]:
         """Embed a video as a list of per-clip embeddings.
 
@@ -197,7 +196,6 @@ class ClipEmbedder:
                 segment. Default 10 means 10 sampled frames per clip.
                 At frame_interval=30 and frames_per_clip=10, each clip covers
                 ~300 original frames (~10 seconds at 30 fps).
-            max_clips: Hard cap on number of clips returned.
 
         Returns:
             List of ``(embedding, metadata)`` tuples, one per clip segment.
@@ -258,8 +256,6 @@ class ClipEmbedder:
         # Group sampled frames into clip segments
         results: list[tuple[np.ndarray, dict]] = []
         for clip_idx in range(0, len(sampled), frames_per_clip):
-            if len(results) >= max_clips:
-                break
             clip_frames = sampled[clip_idx: clip_idx + frames_per_clip]
             start_frame = clip_frames[0][0]
             stop_frame = clip_frames[-1][0]

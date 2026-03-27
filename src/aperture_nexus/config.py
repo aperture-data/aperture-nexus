@@ -259,15 +259,8 @@ class ProcessingConfig(BaseModel):
         default=30,
         ge=1,
         description=(
-            "Extract one frame every N frames when scene detection "
-            "is disabled. At 30fps this extracts ~1 frame per second."
-        ),
-    )
-    video_scene_detection: bool = Field(
-        default=False,
-        description=(
-            "Extract frames at scene boundaries instead of fixed intervals. "
-            "Requires pip install aperture-nexus[video]."
+            "Sample one frame every N video frames. "
+            "At 30fps this extracts ~1 frame per second."
         ),
     )
     video_frames_per_clip: int = Field(
@@ -279,14 +272,6 @@ class ProcessingConfig(BaseModel):
             "at frame_interval=30 and frames_per_clip=10, each clip covers "
             "~300 original frames (~10s at 30fps). One embedding is produced "
             "per clip."
-        ),
-    )
-    video_max_clips: int = Field(
-        default=50,
-        ge=1,
-        description=(
-            "Hard cap on the number of clip segments (and Descriptors) "
-            "produced per video."
         ),
     )
 
@@ -591,16 +576,6 @@ def _validate_optional_deps(config: NexusConfig) -> None:
     Args:
         config: The fully loaded and validated config.
     """
-    if config.processing.video_scene_detection:
-        try:
-            import scenedetect  # noqa: F401
-        except ImportError:
-            raise NexusConfigError(
-                "processing.video_scene_detection is enabled but PySceneDetect "
-                "is not installed. "
-                "Install it with: pip install aperture-nexus[video]"
-            )
-
     if config.processing.text_chunk_unit == "tokens":
         try:
             import tiktoken  # noqa: F401

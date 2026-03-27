@@ -92,27 +92,16 @@
                     "default": 0.5
                 },
                 "video_frame_interval": {
-                    "description": "Extract one frame every N frames when scene detection is disabled.",
+                    "description": "Sample one frame every N video frames. At 30fps this extracts ~1 frame per second.",
                     "type": "integer",
                     "minimum": 1,
                     "default": 30
-                },
-                "video_scene_detection": {
-                    "description": "Extract frames at scene boundaries instead of fixed intervals. Requires aperture-nexus[video].",
-                    "type": "boolean",
-                    "default": false
                 },
                 "video_frames_per_clip": {
                     "description": "Number of sampled frames to group into one clip segment. At frame_interval=30 and frames_per_clip=10, each clip covers ~300 original frames (~10s at 30fps). One embedding is produced per clip.",
                     "type": "integer",
                     "minimum": 1,
                     "default": 10
-                },
-                "video_max_clips": {
-                    "description": "Hard cap on the number of clip segments (and Descriptors) produced per video.",
-                    "type": "integer",
-                    "minimum": 1,
-                    "default": 50
                 }
             }
         },
