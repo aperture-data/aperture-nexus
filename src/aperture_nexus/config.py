@@ -48,6 +48,7 @@ ENV_CONFIG_PATH = "APERTURE_NEXUS_CONFIG"
 # These take precedence over anything in the config file.
 ENV_LOG_LEVEL = "APERTURE_NEXUS_LOG_LEVEL"
 ENV_UI_API_KEY = "APERTURE_NEXUS_UI_API_KEY"
+ENV_NEXUS_API_KEY = "NEXUS_API_KEY"
 
 def _default_search_paths() -> list[Path]:
     """
