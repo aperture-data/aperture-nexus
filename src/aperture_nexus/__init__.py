@@ -39,6 +39,7 @@ __all__ = [
     "Information",
     "NexusAdmin",
     "SearchResult",
+    "MemoryEntry",
     "MemoryTask",
     # Utilities
     "generate_session_id",
@@ -83,6 +84,9 @@ def __getattr__(name: str):
     if name == "SearchResult":
         from aperture_nexus.memory import SearchResult
         return SearchResult
+    if name == "MemoryEntry":
+        from aperture_nexus.memory import MemoryEntry
+        return MemoryEntry
     if name == "Context":
         from aperture_nexus.context import Context
         return Context

@@ -39,7 +39,7 @@ from aperture_nexus.exceptions import (
     NexusStorageError,
     NexusValidationError,
 )
-from aperture_nexus.memory import Memory, SearchResult
+from aperture_nexus.memory import Memory, MemoryEntry, SearchResult
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +781,192 @@ class TestRemove:
         memory = _make_memory(mock_connector)
         with pytest.raises(NexusStorageError, match="not found"):
             memory.remove("ghost-id")
+
+
+# ---------------------------------------------------------------------------
+# retrieve()
+# ---------------------------------------------------------------------------
+
+
+def _find_blob_response(entities: list, blobs: list) -> tuple:
+    """Mock FindBlob response with blobs_start=0."""
+    body = {
+        "status": 0,
+        "returned": len(entities),
+        "blobs_start": 0,
+        "entities": entities,
+    }
+    return ([{"FindBlob": body}], blobs)
+
+
+def _find_image_response(entities: list, blobs: list) -> tuple:
+    """Mock FindImage response with blobs_start=0."""
+    body = {
+        "status": 0,
+        "returned": len(entities),
+        "blobs_start": 0,
+        "entities": entities,
+    }
+    return ([{"FindImage": body}], blobs)
+
+
+def _find_video_response(entities: list, blobs: list) -> tuple:
+    """Mock FindVideo response with blobs_start=0."""
+    body = {
+        "status": 0,
+        "returned": len(entities),
+        "blobs_start": 0,
+        "entities": entities,
+    }
+    return ([{"FindVideo": body}], blobs)
+
+
+def _empty_find_response(cmd_name: str) -> tuple:
+    """Mock empty FindBlob/FindImage/FindVideo response."""
+    body = {"status": 0, "returned": 0, "blobs_start": 0, "entities": []}
+    return ([{cmd_name: body}], [])
+
+
+class TestRetrieve:
+    def test_empty_context_id_raises(self, mock_connector):
+        memory = _make_memory(mock_connector)
+        with pytest.raises(NexusValidationError, match="non-empty"):
+            memory.retrieve("")
+
+    def test_whitespace_context_id_raises(self, mock_connector):
+        memory = _make_memory(mock_connector)
+        with pytest.raises(NexusValidationError, match="non-empty"):
+            memory.retrieve("   ")
+
+    def test_retrieves_text_entry(self, mock_connector):
+        text_bytes = b"hello world"
+        entities = [{
+            "_blob_index": 0,
+            "_uniqueid": "1.2.3",
+            "context_id": "ctx-1",
+            "session_id": "sess-1",
+            "document_type": "text",
+            "created_at": "2024-01-01T00:00:00",
+        }]
+        mock_connector.query.side_effect = [
+            _find_blob_response(entities, [text_bytes]),
+            _empty_find_response("FindImage"),
+            _empty_find_response("FindVideo"),
+        ]
+        memory = _make_memory(mock_connector)
+        entries = memory.retrieve("ctx-1")
+        assert len(entries) == 1
+        assert entries[0].modality == "text"
+        assert entries[0].text == "hello world"
+        assert entries[0].data is None
+        assert entries[0].session_id == "sess-1"
+
+    def test_retrieves_blob_entry(self, mock_connector):
+        blob_bytes = b"%PDF-1.4 fake"
+        entities = [{
+            "_blob_index": 0,
+            "_uniqueid": "1.2.4",
+            "context_id": "ctx-2",
+            "session_id": "sess-2",
+            "document_type": "pdf",
+            "created_at": "2024-01-01T00:00:00",
+        }]
+        mock_connector.query.side_effect = [
+            _find_blob_response(entities, [blob_bytes]),
+            _empty_find_response("FindImage"),
+            _empty_find_response("FindVideo"),
+        ]
+        memory = _make_memory(mock_connector)
+        entries = memory.retrieve("ctx-2")
+        assert len(entries) == 1
+        assert entries[0].modality == "blob"
+        assert entries[0].data == blob_bytes
+        assert entries[0].document_type == "pdf"
+        assert entries[0].text is None
+
+    def test_retrieves_image_entry(self, mock_connector):
+        img_bytes = b"\x89PNG\r\n"
+        entities = [{
+            "_blob_index": 0,
+            "_uniqueid": "2.1.0",
+            "context_id": "ctx-3",
+            "session_id": "sess-3",
+            "created_at": "2024-01-01T00:00:00",
+        }]
+        mock_connector.query.side_effect = [
+            _empty_find_response("FindBlob"),
+            _find_image_response(entities, [img_bytes]),
+            _empty_find_response("FindVideo"),
+        ]
+        memory = _make_memory(mock_connector)
+        entries = memory.retrieve("ctx-3")
+        assert len(entries) == 1
+        assert entries[0].modality == "image"
+        assert entries[0].data == img_bytes
+        assert entries[0].text is None
+
+    def test_retrieves_video_entry(self, mock_connector):
+        vid_bytes = b"\x00\x00\x00 ftyp"
+        entities = [{
+            "_blob_index": 0,
+            "_uniqueid": "5.1.0",
+            "context_id": "ctx-4",
+            "session_id": "sess-4",
+            "created_at": "2024-01-01T00:00:00",
+        }]
+        mock_connector.query.side_effect = [
+            _empty_find_response("FindBlob"),
+            _empty_find_response("FindImage"),
+            _find_video_response(entities, [vid_bytes]),
+        ]
+        memory = _make_memory(mock_connector)
+        entries = memory.retrieve("ctx-4")
+        assert len(entries) == 1
+        assert entries[0].modality == "video"
+        assert entries[0].data == vid_bytes
+
+    def test_retrieves_mixed_modalities(self, mock_connector):
+        txt_ent = [{
+            "_blob_index": 0,
+            "_uniqueid": "1.2.5",
+            "context_id": "ctx-5",
+            "session_id": "sess-5",
+            "document_type": "text",
+            "created_at": "2024-01-01T00:00:00",
+        }]
+        img_ent = [{
+            "_blob_index": 0,
+            "_uniqueid": "2.2.0",
+            "context_id": "ctx-5",
+            "session_id": "sess-5",
+            "created_at": "2024-01-01T00:00:00",
+        }]
+        mock_connector.query.side_effect = [
+            _find_blob_response(txt_ent, [b"mixed text"]),
+            _find_image_response(img_ent, [b"\x89PNG"]),
+            _empty_find_response("FindVideo"),
+        ]
+        memory = _make_memory(mock_connector)
+        entries = memory.retrieve("ctx-5")
+        assert len(entries) == 2
+        modalities = {e.modality for e in entries}
+        assert modalities == {"text", "image"}
+
+    def test_empty_context_returns_empty_list(self, mock_connector):
+        mock_connector.query.side_effect = [
+            _empty_find_response("FindBlob"),
+            _empty_find_response("FindImage"),
+            _empty_find_response("FindVideo"),
+        ]
+        memory = _make_memory(mock_connector)
+        entries = memory.retrieve("ctx-empty")
+        assert entries == []
+
+    def test_db_error_raises_connection_error(self, mock_connector):
+        mock_connector.query.side_effect = ConnectionError("timeout")
+        memory = _make_memory(mock_connector)
+        with pytest.raises(NexusConnectionError, match="blob retrieval failed"):
+            memory.retrieve("ctx-boom")
 
 
 # ---------------------------------------------------------------------------

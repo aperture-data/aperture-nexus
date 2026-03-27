@@ -80,6 +80,35 @@ _CONN_LINK = "nexus_link"                         # Context → Context
 
 
 @dataclass
+class MemoryEntry:
+    """One content item returned by Memory.retrieve().
+
+    Attributes:
+        modality: ``"text"``, ``"image"``, ``"video"``, or ``"blob"``.
+        context_id: Context the entry was committed under.
+        session_id: Session the entry was committed under.
+        created_at: When the entry was committed.
+        text: Decoded text content (modality ``"text"`` only).
+        data: Raw bytes (modality ``"image"``, ``"video"``,
+            or ``"blob"`` only).
+        document_type: File-type hint for blobs (e.g. ``"pdf"``,
+            ``"mp3"``). ``None`` for non-blob modalities.
+        properties: All other properties stored on the entry.
+    """
+
+    modality: str
+    context_id: str
+    session_id: str
+    created_at: datetime
+
+    text: Optional[str] = None
+    data: Optional[bytes] = None
+    document_type: Optional[str] = None
+
+    properties: dict = field(default_factory=dict)
+
+
+@dataclass
 class SearchResult:
     """One result from Memory.search().
 
@@ -789,6 +818,185 @@ class Memory:
         logger.debug("Removed context_id=%r", context_id)
 
     # ------------------------------------------------------------------
+    # retrieve()
+    # ------------------------------------------------------------------
+
+    def retrieve(self, context_id: str) -> list[MemoryEntry]:
+        """Retrieve all content stored under a context_id.
+
+        Fetches every text, image, video, and blob entry that was
+        committed under the given context_id, returning the actual
+        content bytes alongside metadata.
+
+        Text entries are decoded to ``str`` in the ``text`` field.
+        Image, video, and blob entries are returned as raw ``bytes``
+        in the ``data`` field.
+
+        Args:
+            context_id: The context ID returned by ``commit()``.
+
+        Returns:
+            List of ``MemoryEntry``, one per stored content item.
+            Order within each modality matches insertion order.
+
+        Raises:
+            NexusValidationError: If ``context_id`` is empty.
+            NexusConnectionError: If ApertureDB is unreachable.
+
+        Example:
+            context_id = memory.commit(ctx, info)
+            entries = memory.retrieve(context_id)
+            for entry in entries:
+                if entry.modality == "text":
+                    print(entry.text)
+                elif entry.modality == "image":
+                    with open("out.png", "wb") as f:
+                        f.write(entry.data)
+        """
+        if not isinstance(context_id, str) or not context_id.strip():
+            raise NexusValidationError(
+                "context_id must be a non-empty string."
+            )
+        constraints = {"context_id": ["==", context_id]}
+        entries: list[MemoryEntry] = []
+        entries.extend(self._retrieve_blobs(constraints, context_id))
+        entries.extend(self._retrieve_images(constraints, context_id))
+        entries.extend(self._retrieve_videos(constraints, context_id))
+        logger.debug(
+            "Retrieved %d entries for context_id=%r",
+            len(entries), context_id,
+        )
+        return entries
+
+    def _retrieve_blobs(
+        self, constraints: dict, context_id: str
+    ) -> list[MemoryEntry]:
+        """Fetch Blob entries (text and raw blobs) for a context."""
+        cmd = [{"FindBlob": {
+            "constraints": constraints,
+            "blobs": True,
+            "results": {"all_properties": True},
+        }}]
+        try:
+            response, blobs = self._db.query(cmd)
+        except Exception as e:
+            raise NexusConnectionError(
+                f"ApertureDB blob retrieval failed: {e}."
+            ) from e
+        if isinstance(response, dict):
+            return []
+        body = response[0].get("FindBlob", {})
+        blob_start = body.get("blobs_start", 0)
+        entries = []
+        for ent in body.get("entities", []):
+            idx = blob_start + ent.get("_blob_index", 0)
+            raw = blobs[idx] if idx < len(blobs) else None
+            doc_type = ent.get("document_type", "")
+            created_at = datetime.fromisoformat(
+                ent.get("created_at", datetime.utcnow().isoformat())
+            )
+            props = {
+                k: v for k, v in ent.items()
+                if not k.startswith("_")
+            }
+            if doc_type == "text":
+                entries.append(MemoryEntry(
+                    modality="text",
+                    context_id=context_id,
+                    session_id=ent.get("session_id", ""),
+                    created_at=created_at,
+                    text=raw.decode("utf-8") if raw else None,
+                    properties=props,
+                ))
+            else:
+                entries.append(MemoryEntry(
+                    modality="blob",
+                    context_id=context_id,
+                    session_id=ent.get("session_id", ""),
+                    created_at=created_at,
+                    data=raw,
+                    document_type=doc_type or None,
+                    properties=props,
+                ))
+        return entries
+
+    def _retrieve_images(
+        self, constraints: dict, context_id: str
+    ) -> list[MemoryEntry]:
+        """Fetch Image entries for a context."""
+        cmd = [{"FindImage": {
+            "constraints": constraints,
+            "blobs": True,
+            "results": {"all_properties": True},
+        }}]
+        try:
+            response, blobs = self._db.query(cmd)
+        except Exception as e:
+            raise NexusConnectionError(
+                f"ApertureDB image retrieval failed: {e}."
+            ) from e
+        if isinstance(response, dict):
+            return []
+        body = response[0].get("FindImage", {})
+        blob_start = body.get("blobs_start", 0)
+        entries = []
+        for ent in body.get("entities", []):
+            idx = blob_start + ent.get("_blob_index", 0)
+            raw = blobs[idx] if idx < len(blobs) else None
+            entries.append(MemoryEntry(
+                modality="image",
+                context_id=context_id,
+                session_id=ent.get("session_id", ""),
+                created_at=datetime.fromisoformat(
+                    ent.get("created_at", datetime.utcnow().isoformat())
+                ),
+                data=raw,
+                properties={
+                    k: v for k, v in ent.items()
+                    if not k.startswith("_")
+                },
+            ))
+        return entries
+
+    def _retrieve_videos(
+        self, constraints: dict, context_id: str
+    ) -> list[MemoryEntry]:
+        """Fetch Video entries for a context."""
+        cmd = [{"FindVideo": {
+            "constraints": constraints,
+            "blobs": True,
+            "results": {"all_properties": True},
+        }}]
+        try:
+            response, blobs = self._db.query(cmd)
+        except Exception as e:
+            raise NexusConnectionError(
+                f"ApertureDB video retrieval failed: {e}."
+            ) from e
+        if isinstance(response, dict):
+            return []
+        body = response[0].get("FindVideo", {})
+        blob_start = body.get("blobs_start", 0)
+        entries = []
+        for ent in body.get("entities", []):
+            idx = blob_start + ent.get("_blob_index", 0)
+            raw = blobs[idx] if idx < len(blobs) else None
+            entries.append(MemoryEntry(
+                modality="video",
+                context_id=context_id,
+                session_id=ent.get("session_id", ""),
+                created_at=datetime.fromisoformat(
+                    ent.get("created_at", datetime.utcnow().isoformat())
+                ),
+                data=raw,
+                properties={
+                    k: v for k, v in ent.items()
+                    if not k.startswith("_")
+                },
+            ))
+        return entries
+
+    # ------------------------------------------------------------------
     # Task monitoring
     # ------------------------------------------------------------------
 
@@ -1223,7 +1431,9 @@ class Memory:
                 raise NexusProcessingError(
                     f"CLIP text embedding for search failed: {e}."
                 ) from e
-            return vector, "text"
+            # Use the caller's modality if provided — enables cross-modal
+            # search (text query → image or video DescriptorSet).
+            return vector, modality or "text"
 
         raise NexusValidationError(
             f"Unsupported query type: {type(query).__name__!r}. "

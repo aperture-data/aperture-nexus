@@ -1,18 +1,23 @@
 """
 multimodal_smoke_test.py — full-stack test for aperture-nexus.
 
-Exercises every storage and retrieval path against a live
-ApertureDB instance:
+Exercises every storage, retrieval, and search path against a
+live ApertureDB instance:
 
-  1. Text via commit()             — raw storage, no embeddings
-  2. Image via commit()            — PNG bytes stored as Image
-  3. Blob via commit()             — arbitrary bytes
-  4. Text via process_and_commit() — CLIP text embedding + search
-  5. Image via process_and_commit()— CLIP image embedding + search
-  6. Video via process_and_commit()— per-clip CLIP embeddings
-  7. Pre-computed embedding        — pass vector directly, no model
-  8. connect()                     — link two contexts
-  9. remove()                      — delete a context
+  1.  Text via commit()             — raw, no embedding
+  2.  Image via commit()            — PNG bytes as ApertureDB Image
+  3.  Blob via commit()             — arbitrary bytes
+  4.  Text via process_and_commit() — CLIP embedding + vector search
+  5.  Image via process_and_commit()— CLIP embedding + vector search
+  6.  Video via process_and_commit()— per-clip CLIP + vector search
+  7.  Pre-computed embedding        — pass vector directly, no model
+  8.  retrieve() — text             — bytes decode to original string
+  9.  retrieve() — image            — bytes are valid PNG
+  10. retrieve() — blob             — bytes match original
+  11. retrieve() — video            — non-empty bytes returned
+  12. Metadata search               — session_id filter across modalities
+  13. connect()                     — link two contexts
+  14. remove()                      — delete context, verify absent
 
 Prerequisites:
     pip install aperture-nexus[clip,video]
@@ -73,7 +78,7 @@ def _png_bytes(color: tuple = (100, 149, 237), size: int = 32) -> bytes:
 
 
 def _mp4_bytes() -> bytes:
-    """Minimal synthetic MP4 via OpenCV — 90 frames, 30 fps."""
+    """Minimal synthetic MP4 via OpenCV — 90 frames at 30 fps."""
     import cv2
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     tmp.close()
@@ -90,6 +95,10 @@ def _mp4_bytes() -> bytes:
         data = f.read()
     os.unlink(tmp.name)
     return data
+
+
+def _is_valid_png(data: bytes) -> bool:
+    return data[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +155,7 @@ except Exception as e:
     sys.exit(1)
 
 try:
-    memory_raw = Memory()   # no models — for commit() tests
+    memory_raw = Memory()               # no models — for commit() tests
     memory_clip = Memory(config=_cfg_path)  # CLIP — for process_and_commit()
     principal = memory_raw.authenticate(user_id=uid, api_key=api_key)
     print(f"  Authenticated as: {principal.user_name}")
@@ -162,6 +171,7 @@ except Exception as e:
 
 section("1. Text  —  commit() (raw, no embedding)")
 
+TEXT_CONTENT = "ApertureDB is a multimodal vector database."
 sid_text = f"smoke-text-{uuid.uuid4().hex[:8]}"
 ctx1 = Context(
     principal=principal,
@@ -169,7 +179,7 @@ ctx1 = Context(
     purpose="text raw storage test",
 )
 info = Information(context_id=ctx1.id)
-info.log(text="ApertureDB is a multimodal vector database.")
+info.log(text=TEXT_CONTENT)
 info.log(text="aperture-nexus adds a memory layer on top.")
 cid1 = None
 
@@ -180,26 +190,13 @@ try:
 except Exception as e:
     check("commit() text", False, str(e))
 
-try:
-    results = memory_raw.search(filters={"session_id": sid_text})
-    check(
-        "metadata search finds committed text",
-        len(results) >= 1,
-        f"got {len(results)}",
-    )
-    check(
-        "result has correct session_id",
-        all(r.session_id == sid_text for r in results),
-    )
-except Exception as e:
-    check("metadata search after text commit", False, str(e))
-
 # ---------------------------------------------------------------------------
 # 2. Image via commit() — PNG bytes stored as ApertureDB Image
 # ---------------------------------------------------------------------------
 
 section("2. Image  —  commit() (raw bytes)")
 
+BLUE_PNG = _png_bytes(color=(30, 100, 200))
 sid_img = f"smoke-img-{uuid.uuid4().hex[:8]}"
 ctx2 = Context(
     principal=principal,
@@ -207,7 +204,7 @@ ctx2 = Context(
     purpose="image raw storage test",
 )
 info = Information(context_id=ctx2.id)
-info.log(image=_png_bytes(color=(220, 50, 50)))
+info.log(image=BLUE_PNG)
 cid2 = None
 
 try:
@@ -222,6 +219,7 @@ except Exception as e:
 
 section("3. Blob  —  commit() (arbitrary bytes)")
 
+BLOB_CONTENT = b"%PDF-1.4 this is a fake pdf document"
 sid_blob = f"smoke-blob-{uuid.uuid4().hex[:8]}"
 ctx3 = Context(
     principal=principal,
@@ -229,7 +227,7 @@ ctx3 = Context(
     purpose="blob raw storage test",
 )
 info = Information(context_id=ctx3.id)
-info.log(blob=b"%PDF-1.4 fake pdf content", document_type="pdf")
+info.log(blob=BLOB_CONTENT, document_type="pdf")
 cid3 = None
 
 try:
@@ -272,7 +270,7 @@ if cid4:
             k=5,
         )
         check(
-            "vector text search returns results",
+            "text vector search returns results",
             len(results) >= 1,
             f"got {len(results)}",
         )
@@ -281,18 +279,19 @@ if cid4:
             bool(results) and results[0].score > 0,
         )
         check(
-            "committed session appears in results",
+            "committed text session in results",
             any(r.session_id == sid_clip_text for r in results),
         )
     except Exception as e:
-        check("vector text search", False, str(e))
+        check("text vector search", False, str(e))
 
 # ---------------------------------------------------------------------------
-# 5. Image via process_and_commit() — CLIP image embedding
+# 5. Image via process_and_commit() — CLIP + vector search
 # ---------------------------------------------------------------------------
 
-section("5. Image  —  process_and_commit() + CLIP")
+section("5. Image  —  process_and_commit() + CLIP + vector search")
 
+RED_PNG = _png_bytes(color=(220, 50, 50))
 sid_clip_img = f"smoke-clipimg-{uuid.uuid4().hex[:8]}"
 ctx5 = Context(
     principal=principal,
@@ -300,7 +299,7 @@ ctx5 = Context(
     purpose="CLIP image embedding test",
 )
 info = Information(context_id=ctx5.id)
-info.log(image=_png_bytes(color=(30, 100, 200)))
+info.log(image=RED_PNG)
 cid5 = None
 
 try:
@@ -315,7 +314,7 @@ except Exception as e:
 if cid5:
     try:
         results = memory_clip.search(
-            query="blue square",
+            query="red square image",
             modality="image",
             k=5,
         )
@@ -324,14 +323,18 @@ if cid5:
             len(results) >= 1,
             f"got {len(results)}",
         )
+        check(
+            "committed image session in results",
+            any(r.session_id == sid_clip_img for r in results),
+        )
     except Exception as e:
         check("text→image cross-modal search", False, str(e))
 
 # ---------------------------------------------------------------------------
-# 6. Video via process_and_commit() — per-clip CLIP embeddings
+# 6. Video via process_and_commit() — per-clip CLIP + vector search
 # ---------------------------------------------------------------------------
 
-section("6. Video  —  process_and_commit() + per-clip CLIP")
+section("6. Video  —  process_and_commit() + per-clip CLIP + search")
 
 sid_video = f"smoke-video-{uuid.uuid4().hex[:8]}"
 ctx6 = Context(
@@ -352,6 +355,29 @@ try:
     )
 except Exception as e:
     check("process_and_commit() video", False, str(e))
+
+if cid6:
+    try:
+        results = memory_clip.search(
+            query="motion over time",
+            modality="video",
+            k=5,
+        )
+        check(
+            "text→video search returns results",
+            len(results) >= 1,
+            f"got {len(results)}",
+        )
+        check(
+            "committed video session in results",
+            any(r.session_id == sid_video for r in results),
+        )
+        check(
+            "video result has start_frame",
+            any(r.start_frame is not None for r in results),
+        )
+    except Exception as e:
+        check("text→video search", False, str(e))
 
 # ---------------------------------------------------------------------------
 # 7. Pre-computed embedding — pass vector directly, skip model call
@@ -376,7 +402,6 @@ info.log(
 cid7 = None
 
 try:
-    # process_and_commit() should detect pre-computed and skip model call
     cid7 = memory_raw.process_and_commit(ctx7, info)
     check(
         "process_and_commit() with pre-computed embedding",
@@ -397,10 +422,133 @@ except Exception as e:
     check("pre-computed embedding round-trip", False, str(e))
 
 # ---------------------------------------------------------------------------
-# 8. connect() — link two contexts
+# 8-11. retrieve() — verify actual content bytes round-trip
 # ---------------------------------------------------------------------------
 
-section("8. connect()  —  link two contexts")
+section("8. retrieve()  —  text content round-trip")
+
+if cid1:
+    try:
+        entries = memory_raw.retrieve(cid1)
+        text_entries = [e for e in entries if e.modality == "text"]
+        check(
+            "retrieve() returns text entries",
+            len(text_entries) >= 1,
+            f"got {len(text_entries)} text entries",
+        )
+        texts = [e.text for e in text_entries]
+        check(
+            "original text content matches",
+            TEXT_CONTENT in texts,
+            f"got: {texts}",
+        )
+    except Exception as e:
+        check("retrieve() text", False, str(e))
+else:
+    print(f"{SKIP}  retrieve() text — commit() failed earlier")
+
+section("9. retrieve()  —  image bytes round-trip")
+
+if cid2:
+    try:
+        entries = memory_raw.retrieve(cid2)
+        img_entries = [e for e in entries if e.modality == "image"]
+        check(
+            "retrieve() returns image entries",
+            len(img_entries) >= 1,
+            f"got {len(img_entries)} image entries",
+        )
+        check(
+            "image bytes are valid PNG",
+            bool(img_entries) and _is_valid_png(img_entries[0].data),
+        )
+        check(
+            "image bytes match what was stored",
+            bool(img_entries) and img_entries[0].data == BLUE_PNG,
+        )
+    except Exception as e:
+        check("retrieve() image", False, str(e))
+else:
+    print(f"{SKIP}  retrieve() image — commit() failed earlier")
+
+section("10. retrieve()  —  blob bytes round-trip")
+
+if cid3:
+    try:
+        entries = memory_raw.retrieve(cid3)
+        blob_entries = [e for e in entries if e.modality == "blob"]
+        check(
+            "retrieve() returns blob entries",
+            len(blob_entries) >= 1,
+            f"got {len(blob_entries)} blob entries",
+        )
+        check(
+            "blob bytes match what was stored",
+            bool(blob_entries) and blob_entries[0].data == BLOB_CONTENT,
+        )
+        check(
+            "blob document_type preserved",
+            bool(blob_entries) and blob_entries[0].document_type == "pdf",
+        )
+    except Exception as e:
+        check("retrieve() blob", False, str(e))
+else:
+    print(f"{SKIP}  retrieve() blob — commit() failed earlier")
+
+section("11. retrieve()  —  video bytes round-trip")
+
+if cid6:
+    try:
+        entries = memory_clip.retrieve(cid6)
+        vid_entries = [e for e in entries if e.modality == "video"]
+        check(
+            "retrieve() returns video entries",
+            len(vid_entries) >= 1,
+            f"got {len(vid_entries)} video entries",
+        )
+        check(
+            "video bytes are non-empty",
+            bool(vid_entries) and len(vid_entries[0].data) > 0,
+        )
+    except Exception as e:
+        check("retrieve() video", False, str(e))
+else:
+    print(f"{SKIP}  retrieve() video — commit() failed earlier")
+
+# ---------------------------------------------------------------------------
+# 12. Metadata search — session_id filter across all modalities
+# ---------------------------------------------------------------------------
+
+section("12. Metadata search  —  session_id filter, all modalities")
+
+for label, sid, cid in [
+    ("text",  sid_text,      cid1),
+    ("image", sid_img,       cid2),
+    ("blob",  sid_blob,      cid3),
+    ("video", sid_video,     cid6),
+]:
+    if not cid:
+        print(f"{SKIP}  metadata search ({label}) — commit() failed")
+        continue
+    try:
+        results = memory_raw.search(filters={"session_id": sid})
+        check(
+            f"metadata search finds {label} context",
+            len(results) >= 1,
+            f"got {len(results)}",
+        )
+        check(
+            f"metadata result has correct session_id ({label})",
+            all(r.session_id == sid for r in results),
+        )
+    except Exception as e:
+        check(f"metadata search ({label})", False, str(e))
+
+# ---------------------------------------------------------------------------
+# 13. connect() — link two contexts
+# ---------------------------------------------------------------------------
+
+section("13. connect()  —  link two contexts")
 
 if cid1 and cid4:
     try:
@@ -412,18 +560,16 @@ else:
     print(f"{SKIP}  connect() — prior contexts unavailable")
 
 # ---------------------------------------------------------------------------
-# 9. remove() — delete a context
+# 14. remove() — delete a context and verify it is gone
 # ---------------------------------------------------------------------------
 
-section("9. remove()  —  delete a context")
+section("14. remove()  —  delete a context")
 
 if cid3:
     try:
         memory_raw.remove(cid3)
         check("remove() blob context succeeds", True)
-        results = memory_raw.search(
-            filters={"session_id": sid_blob}
-        )
+        results = memory_raw.search(filters={"session_id": sid_blob})
         check(
             "removed context absent from metadata search",
             len(results) == 0,
