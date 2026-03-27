@@ -296,6 +296,10 @@ class NexusAdmin:
                 f"Principal {user_id!r} does not exist."
             )
 
+        logger.warning(
+            "rotate_key() has not been validated against a live "
+            "ApertureDB instance. Use with caution."
+        )
         new_key = secrets.token_urlsafe(32)
         cmd = [{
             "UpdateEntity": {

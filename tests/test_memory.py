@@ -1009,11 +1009,10 @@ class TestTaskMonitoring:
 
 
 class TestStats:
-    def test_raises_config_error_when_prometheus_missing(self, mock_connector):
+    def test_raises_not_implemented(self, mock_connector):
         memory = _make_memory(mock_connector)
-        with patch.dict("sys.modules", {"prometheus_client": None}):
-            with pytest.raises(NexusConfigError, match="metrics support"):
-                memory.stats()
+        with pytest.raises(NexusConfigError, match="not yet implemented"):
+            memory.stats()
 
 
 # ---------------------------------------------------------------------------

@@ -615,6 +615,10 @@ class Memory:
 
         task._retry_fn = _retry
         asyncio.ensure_future(_run())
+        logger.warning(
+            "async_process_and_commit() has not been validated "
+            "against a live ApertureDB instance. Use with caution."
+        )
         logger.debug("Queued async task %r", task_id)
         return task
 
@@ -1050,15 +1054,11 @@ class Memory:
         Raises:
             NexusConfigError: If metrics are not installed.
         """
-        try:
-            import prometheus_client  # noqa: F401
-        except ImportError:
-            raise NexusConfigError(
-                "memory.stats() requires metrics support. "
-                "Install it with: pip install aperture-nexus[metrics]"
-            )
-        # Placeholder — full implementation in metrics PR
-        return {"scope": scope, "commits_total": 0}
+        raise NexusConfigError(
+            "memory.stats() is not yet implemented. "
+            "Full metrics support is planned for a future release. "
+            "Install: pip install aperture-nexus[metrics]"
+        )
 
     # ------------------------------------------------------------------
     # Internal: session and context management
