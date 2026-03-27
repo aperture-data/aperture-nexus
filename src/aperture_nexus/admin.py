@@ -56,8 +56,22 @@ def _hash_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
 
-def _check_response(response: list, operation: str) -> None:
-    """Raise NexusStorageError if any command in the response failed."""
+def _check_response(response, operation: str) -> None:
+    """Raise NexusStorageError if any command in the response failed.
+
+    Handles both the normal list-of-dicts format and the bare-dict format
+    that ApertureDB returns for schema/parameter errors.
+    """
+    # ApertureDB returns a bare dict (not wrapped in a list) for invalid queries
+    if isinstance(response, dict):
+        status = response.get("status", -1)
+        if status != 0:
+            raise NexusStorageError(
+                f"{operation} failed (status={status}): "
+                f"{response.get('info', 'no details')}. "
+                f"Check your ApertureDB connection and schema."
+            )
+        return
     for item in response:
         for cmd_name, body in item.items():
             status = body.get("status", -1) if isinstance(body, dict) else -1
@@ -77,12 +91,14 @@ def _entity_exists(db, entity_class: str, constraints: dict) -> bool:
     """Return True if at least one entity matching constraints exists."""
     cmd = [{
         "FindEntity": {
-            "class": entity_class,
+            "with_class": entity_class,
             "constraints": constraints,
             "results": {"count": True},
         }
     }]
     response, _ = db.query(cmd)
+    if isinstance(response, dict):
+        return False  # error response — entity does not exist
     body = response[0].get("FindEntity", {})
     return body.get("count", 0) > 0
 
@@ -239,7 +255,7 @@ class NexusAdmin:
 
         cmd = [{
             "DeleteEntity": {
-                "class": _CLASS_USER,
+                "with_class": _CLASS_USER,
                 "constraints": {"user_id": ["==", user_id]},
             }
         }]
@@ -283,7 +299,7 @@ class NexusAdmin:
         new_key = secrets.token_urlsafe(32)
         cmd = [{
             "UpdateEntity": {
-                "class": _CLASS_USER,
+                "with_class": _CLASS_USER,
                 "constraints": {"user_id": ["==", user_id]},
                 "properties": {"api_key_hash": _hash_key(new_key)},
             }
