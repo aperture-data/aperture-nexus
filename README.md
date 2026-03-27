@@ -8,11 +8,20 @@ aperture-nexus gives AI agents and applications a persistent, searchable memory 
 
 ## Quickstart
 
+```bash
+# One-time setup — creates your principal and writes NEXUS_API_KEY to .env
+adb-nexus init
+```
+
 ```python
+import os
 from aperture_nexus import Memory, Context, Information
 
 memory = Memory()
-principal = memory.authenticate(user_id="alice", api_key="...")
+principal = memory.authenticate(
+    user_id="alice",
+    api_key=os.environ["NEXUS_API_KEY"],
+)
 
 ctx = Context(
     principal=principal,
@@ -132,6 +141,62 @@ adb-nexus ui --host 0.0.0.0 --port 8080   # launch for network access
 - Credentials via environment — never hardcoded in config or source
 - UI binds to `127.0.0.1` by default — network access requires an explicit `api_key`
 - `.env` is automatically added to `.gitignore` by `adb-nexus init`
+
+---
+
+## Enterprise design
+
+aperture-nexus is designed for deployment at any scale — from a single
+developer's Claude session to a multi-team organization.
+
+### Credential separation
+
+Admin credentials (ApertureDB `APERTUREDB_KEY`) are isolated to one place:
+`adb-nexus init`. Everything else — application code, AI agent sessions,
+search queries — uses only:
+
+- **Regular ApertureDB credentials** — connection to the DB
+- **`NEXUS_API_KEY`** — user-level credential written to `.env` by `init`
+
+No application code ever needs admin credentials. A compromised session
+cannot create or delete principals.
+
+### Authentication flow
+
+```
+┌─────────────────────┐        ┌──────────────────────┐
+│   adb-nexus init    │        │   Application / Agent │
+│  (admin creds only) │        │  (regular creds only) │
+│                     │        │                       │
+│  create_principal() │        │  memory.authenticate()│
+│  → NEXUS_API_KEY    │──.env─▶│  → Principal          │
+│    written to .env  │        │  → Context            │
+└─────────────────────┘        │  → memory.commit()    │
+                                └──────────────────────┘
+```
+
+### Key rotation
+
+If a principal's key needs to be replaced (new device, suspected exposure),
+an admin rotates it — no DB schema changes, no session disruption:
+
+```python
+from aperture_nexus import NexusAdmin
+
+admin = NexusAdmin()  # requires admin ApertureDB credentials
+new_key = admin.rotate_key(user_id="alice")
+# Deliver new_key to alice; update her .env
+```
+
+The previous key is invalidated immediately. All existing memories are
+retained — rotation affects authentication only, not stored data.
+
+### Multi-user and multi-tenant
+
+Each principal has `user_id`, `department`, and `organization` properties
+stamped on every stored object. This is the foundation for the v2
+permissions model (Personal / Project / Team / Company retrieval scoping)
+without requiring any schema migration.
 
 ---
 
