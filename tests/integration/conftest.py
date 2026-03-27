@@ -213,14 +213,16 @@ def nexus_admin(adb_config_name):
 
 
 @pytest.fixture(scope="session")
-def test_principal(nexus_admin):
+def test_principal(nexus_admin, adb_config_name):
     """Create a test principal once for the session; delete it on teardown."""
+    from aperture_nexus.memory import Memory
     user_id = f"test-user-{uuid.uuid4().hex[:8]}"
     api_key = nexus_admin.create_principal(
         user_id=user_id,
         user_name="Integration Test User",
     )
-    principal = nexus_admin.authenticate(user_id=user_id, api_key=api_key)
+    # authenticate via Memory — no admin credentials needed at session time
+    principal = Memory().authenticate(user_id=user_id, api_key=api_key)
     yield principal
     try:
         nexus_admin.delete_principal(user_id=user_id)

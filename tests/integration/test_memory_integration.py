@@ -123,7 +123,6 @@ class TestVectorSearch:
         # Search with the same vector — should be top hit
         results = memory_engine.search(query=vec, modality="text", k=5)
         assert len(results) >= 1
-        memory_ids = [r.memory_id for r in results]
         # The memory we just committed should appear
         assert any(r.session_id == sid for r in results)
 
@@ -176,23 +175,36 @@ class TestRemove:
 
 @pytest.mark.integration
 class TestAdminPipeline:
-    def test_full_auth_pipeline(self, nexus_admin):
-        """create_principal → authenticate → principal has correct fields."""
+    def test_full_auth_pipeline(self, nexus_admin, memory_engine):
+        """create_principal → Memory.authenticate() → principal has correct fields."""
         uid = f"auth-test-{uuid.uuid4().hex[:8]}"
         api_key = nexus_admin.create_principal(
             user_id=uid, user_name="Auth Test User"
         )
         assert isinstance(api_key, str) and len(api_key) > 20
-        principal = nexus_admin.authenticate(user_id=uid, api_key=api_key)
+        principal = memory_engine.authenticate(user_id=uid, api_key=api_key)
         assert principal.user_id == uid
         assert principal.user_name == "Auth Test User"
         # Cleanup
         nexus_admin.delete_principal(uid)
 
-    def test_delete_principal_prevents_auth(self, nexus_admin):
+    def test_rotate_key_invalidates_old_key(self, nexus_admin, memory_engine):
+        from aperture_nexus.exceptions import NexusPermissionError
+        uid = f"rotate-test-{uuid.uuid4().hex[:8]}"
+        old_key = nexus_admin.create_principal(user_id=uid)
+        new_key = nexus_admin.rotate_key(user_id=uid)
+        # old key no longer works
+        with pytest.raises(NexusPermissionError):
+            memory_engine.authenticate(user_id=uid, api_key=old_key)
+        # new key works
+        principal = memory_engine.authenticate(user_id=uid, api_key=new_key)
+        assert principal.user_id == uid
+        nexus_admin.delete_principal(uid)
+
+    def test_delete_principal_prevents_auth(self, nexus_admin, memory_engine):
         from aperture_nexus.exceptions import NexusPermissionError
         uid = f"del-test-{uuid.uuid4().hex[:8]}"
         api_key = nexus_admin.create_principal(user_id=uid)
         nexus_admin.delete_principal(uid)
         with pytest.raises(NexusPermissionError):
-            nexus_admin.authenticate(user_id=uid, api_key=api_key)
+            memory_engine.authenticate(user_id=uid, api_key=api_key)
