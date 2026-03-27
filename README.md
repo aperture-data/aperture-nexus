@@ -45,12 +45,20 @@ pip install aperture-nexus
 Optional features:
 
 ```bash
-pip install aperture-nexus[video]    # video scene detection
+pip install aperture-nexus[video]    # video frame extraction (opencv-python)
+pip install aperture-nexus[clip]     # CLIP embeddings for text and images
 pip install aperture-nexus[tokens]   # token-based text chunking
 pip install aperture-nexus[metrics]  # Prometheus metrics export
 pip install aperture-nexus[ui]       # web UI and REST API
 pip install aperture-nexus[all]      # everything
 ```
+
+> **Video embedding performance:** The built-in video embedder extracts frames
+> with CLIP, which is slow for anything beyond short clips — each frame is
+> embedded individually. For production workloads, pass a pre-computed embedding
+> directly via `info.log(video=..., embedding=my_vector, embedding_model="...")`,
+> or use `memory.commit()` (raw storage, no embedding) and add a dedicated video
+> model later.
 
 ---
 
