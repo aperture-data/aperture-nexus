@@ -5,8 +5,7 @@ Tests cover:
 - create_principal(): happy path, returns api_key, duplicate raises,
   empty user_id raises
 - delete_principal(): happy path, non-existent raises
-- authenticate(): valid credentials return Principal, wrong key raises,
-  unknown user raises, DB error raises NexusConnectionError
+- rotate_key(): happy path, non-existent raises, empty user_id raises
 - _ensure_defaults(): creates schema indexes on first call; idempotent
 
 All tests use mock_connector — no live ApertureDB required.
@@ -16,10 +15,7 @@ import pytest
 from unittest.mock import MagicMock, call, patch
 
 from aperture_nexus.admin import NexusAdmin, _hash_key
-from aperture_nexus.auth import Principal
 from aperture_nexus.exceptions import (
-    NexusConnectionError,
-    NexusPermissionError,
     NexusStorageError,
     NexusValidationError,
 )
@@ -157,66 +153,44 @@ class TestDeletePrincipal:
 
 
 # ---------------------------------------------------------------------------
-# authenticate()
+# rotate_key()
 # ---------------------------------------------------------------------------
 
 
-class TestAuthenticate:
-    def test_valid_credentials_return_principal(self, mock_connector):
-        api_key = "test-key-12345"
-        record = {
-            "user_id": "alice",
-            "user_name": "Alice Chen",
-            "department": "support",
-            "organization": "AcmeCorp",
-            "api_key_hash": _hash_key(api_key),
-        }
-        mock_connector.query.return_value = _find_response(
-            count=1, entities=[record]
-        )
+class TestRotateKey:
+    def test_rotate_key_returns_new_key(self, mock_connector):
+        # exists check → True, then UpdateEntity → ok
+        mock_connector.query.side_effect = [
+            _find_response(count=1),
+            _ok_response("UpdateEntity"),
+        ]
         admin = _make_admin(mock_connector)
-        principal = admin.authenticate("alice", api_key)
-        assert isinstance(principal, Principal)
-        assert principal.user_id == "alice"
-        assert principal.user_name == "Alice Chen"
-        assert principal.department == "support"
-        assert principal.organization == "AcmeCorp"
+        new_key = admin.rotate_key("alice")
+        assert isinstance(new_key, str)
+        assert len(new_key) > 0
 
-    def test_wrong_api_key_raises(self, mock_connector):
-        record = {
-            "user_id": "alice",
-            "api_key_hash": _hash_key("correct-key"),
-        }
-        mock_connector.query.return_value = _find_response(
-            count=1, entities=[record]
-        )
+    def test_rotate_key_new_key_differs_each_call(self, mock_connector):
+        mock_connector.query.side_effect = [
+            _find_response(count=1),
+            _ok_response("UpdateEntity"),
+            _find_response(count=1),
+            _ok_response("UpdateEntity"),
+        ]
         admin = _make_admin(mock_connector)
-        with pytest.raises(NexusPermissionError, match="Invalid credentials"):
-            admin.authenticate("alice", "wrong-key")
+        key1 = admin.rotate_key("alice")
+        key2 = admin.rotate_key("alice")
+        assert key1 != key2
 
-    def test_unknown_user_raises(self, mock_connector):
-        mock_connector.query.return_value = _find_response(
-            count=0, entities=[]
-        )
+    def test_rotate_key_nonexistent_raises(self, mock_connector):
+        mock_connector.query.return_value = _find_response(count=0)
         admin = _make_admin(mock_connector)
-        with pytest.raises(NexusPermissionError, match="does not exist"):
-            admin.authenticate("ghost", "any-key")
+        with pytest.raises(NexusValidationError, match="does not exist"):
+            admin.rotate_key("ghost")
 
-    def test_db_error_raises_connection_error(self, mock_connector):
-        mock_connector.query.side_effect = ConnectionError("timeout")
-        admin = _make_admin(mock_connector)
-        with pytest.raises(NexusConnectionError, match="query failed"):
-            admin.authenticate("alice", "key")
-
-    def test_empty_user_id_raises(self, mock_connector):
+    def test_rotate_key_empty_user_id_raises(self, mock_connector):
         admin = _make_admin(mock_connector)
         with pytest.raises(NexusValidationError):
-            admin.authenticate("", "key")
-
-    def test_empty_api_key_raises(self, mock_connector):
-        admin = _make_admin(mock_connector)
-        with pytest.raises(NexusValidationError):
-            admin.authenticate("alice", "")
+            admin.rotate_key("")
 
 
 # ---------------------------------------------------------------------------

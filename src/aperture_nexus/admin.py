@@ -1,23 +1,22 @@
 """
-NexusAdmin — identity authority for aperture-nexus.
+NexusAdmin — management interface for aperture-nexus.
 
-NexusAdmin manages Principals. It is the only component that creates
-app-level identity records. Memory never authenticates — it receives
-an already-authenticated Principal via Context and trusts it.
+NexusAdmin handles system-level operations: principal provisioning,
+cleanup, and maintenance. It requires admin-level ApertureDB credentials
+and is intended to be used by operators, not by application code.
 
-Usage pattern:
-    # Setup (once per deployment)
+In normal use, NexusAdmin is driven entirely through the CLI:
+    adb-nexus init   # creates principal, writes NEXUS_API_KEY to .env
+
+Application code authenticates via Memory.authenticate(), which needs
+only regular (non-admin) ApertureDB credentials and the NEXUS_API_KEY
+from .env — no NexusAdmin involvement at session time.
+
+NexusAdmin is also importable for programmatic administration:
     admin = NexusAdmin()
-    api_key = admin.create_principal(
-        user_id="alice",
-        user_name="Alice Chen",
-        department="engineering",
-        organization="AcmeCorp",
-    )
-    # Deliver api_key to alice out-of-band (not logged, not stored)
-
-    # Per-session (at session start)
-    principal = admin.authenticate(user_id="alice", api_key="...")
+    api_key = admin.create_principal(user_id="alice", ...)
+    admin.rotate_key(user_id="alice")
+    admin.delete_principal(user_id="alice")
 
 ApertureDB entity classes used here:
     NexusUser — app-level Principal records (hashed api_key)
@@ -31,11 +30,9 @@ import secrets
 from typing import Optional
 
 from aperture_nexus._client import get_connector
-from aperture_nexus.auth import Principal, validate_credentials
+from aperture_nexus.auth import validate_credentials
 from aperture_nexus.config import load_config
 from aperture_nexus.exceptions import (
-    NexusConnectionError,
-    NexusPermissionError,
     NexusStorageError,
     NexusValidationError,
 )
@@ -91,15 +88,17 @@ def _entity_exists(db, entity_class: str, constraints: dict) -> bool:
 
 
 class NexusAdmin:
-    """Identity authority for aperture-nexus.
+    """Management interface for aperture-nexus system operations.
 
-    Creates and manages departments (ApertureDB DB users) and app-level
-    Principals (stored as ``NexusUser`` entities with hashed credentials).
-    Requires admin-level ApertureDB credentials.
+    Handles principal provisioning, key rotation, cleanup, and other
+    administrative tasks. Requires admin-level ApertureDB credentials.
+    Not used in application hot paths — see ``Memory.authenticate()``
+    for session-time credential verification.
 
-    On first use, ``NexusAdmin`` ensures the default organization and
-    department exist in ApertureDB (configurable via ``aperture_nexus.json``
-    under ``admin.default_organization`` and ``admin.default_department``).
+    In the common single-user case, ``adb-nexus init`` drives this
+    automatically. Use ``NexusAdmin`` directly for programmatic
+    multi-user administration (enterprise deployments, scripted
+    provisioning, automated cleanup).
 
     Args:
         config: Path to ``aperture_nexus.json``. Discovered automatically
@@ -120,7 +119,8 @@ class NexusAdmin:
             department="engineering",
             organization="AcmeCorp",
         )
-        principal = admin.authenticate(user_id="alice", api_key=api_key)
+        # Deliver api_key to alice securely (e.g. write to her .env).
+        # To issue a replacement key: admin.rotate_key(user_id="alice")
     """
 
     def __init__(
@@ -174,7 +174,8 @@ class NexusAdmin:
                 department="engineering",
                 organization="AcmeCorp",
             )
-            # Deliver api_key to alice — it cannot be recovered later
+            # Deliver api_key to alice securely (e.g. write to .env).
+            # To issue a replacement: admin.rotate_key(user_id="alice")
         """
         user_id = validate_credentials(user_id, "placeholder")
         self._ensure_defaults()
@@ -246,73 +247,51 @@ class NexusAdmin:
         _check_response(response, f"delete_principal({user_id!r})")
         logger.debug("Deleted principal %r", user_id)
 
-    def authenticate(self, user_id: str, api_key: str) -> Principal:
-        """Validate credentials and return an authenticated Principal.
+    def rotate_key(self, user_id: str) -> str:
+        """Issue a replacement API key for an existing Principal.
 
-        Looks up the ``NexusUser`` entity for ``user_id`` and compares
-        the SHA-256 hash of ``api_key`` against the stored hash.
+        Generates a new random key, replaces the stored hash, and
+        returns the new plaintext key. The previous key is immediately
+        invalidated. Identity verification of the user is the caller's
+        responsibility (out-of-band).
 
         Args:
-            user_id: The user's unique identifier.
-            api_key: The API key issued by ``create_principal()``.
+            user_id: The user_id of the Principal whose key to rotate.
 
         Returns:
-            An authenticated ``Principal`` ready to be attached to a
-            ``Context``.
+            The new plaintext API key. Deliver securely; store in .env.
 
         Raises:
-            NexusPermissionError: If credentials are invalid or the
-                user does not exist.
-            NexusConnectionError: If ApertureDB is unreachable.
+            NexusValidationError: If user_id is empty or does not exist.
+            NexusStorageError: If ApertureDB rejects the update.
 
         Example:
-            principal = admin.authenticate(
-                user_id="alice", api_key="..."
-            )
-            ctx = Context(principal=principal, session_name="s-001")
+            new_key = admin.rotate_key(user_id="alice")
+            # Deliver new_key to alice securely; update her .env.
         """
-        user_id = validate_credentials(user_id, api_key)
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise NexusValidationError(
+                "user_id must be a non-empty string."
+            )
+        if not _entity_exists(
+            self._db, _CLASS_USER, {"user_id": ["==", user_id]}
+        ):
+            raise NexusValidationError(
+                f"Principal {user_id!r} does not exist."
+            )
 
+        new_key = secrets.token_urlsafe(32)
         cmd = [{
-            "FindEntity": {
+            "UpdateEntity": {
                 "class": _CLASS_USER,
                 "constraints": {"user_id": ["==", user_id]},
-                "results": {"all_properties": True},
+                "properties": {"api_key_hash": _hash_key(new_key)},
             }
         }]
-        try:
-            response, _ = self._db.query(cmd)
-        except Exception as e:
-            raise NexusConnectionError(
-                f"ApertureDB query failed during authentication: {e}. "
-                f"Run 'adb-nexus validate' to check your connection."
-            ) from e
-
-        body = response[0].get("FindEntity", {})
-        entities = body.get("entities", [])
-
-        if not entities:
-            raise NexusPermissionError(
-                f"Authentication failed for user_id={user_id!r}. "
-                f"User does not exist or credentials are invalid."
-            )
-
-        record = entities[0]
-        stored_hash = record.get("api_key_hash", "")
-        if stored_hash != _hash_key(api_key):
-            raise NexusPermissionError(
-                f"Authentication failed for user_id={user_id!r}. "
-                f"Invalid credentials."
-            )
-
-        principal = Principal(
-            user_id=record["user_id"],
-            user_name=record.get("user_name"),
-            department=record.get("department"),
-            organization=record.get("organization"),
-        )
-        logger.debug("Authenticated principal %r", user_id)
-        return principal
+        response, _ = self._db.query(cmd)
+        _check_response(response, f"rotate_key({user_id!r})")
+        logger.debug("Rotated key for principal %r", user_id)
+        return new_key
 
     # ------------------------------------------------------------------
     # Internal helpers
