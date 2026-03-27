@@ -52,9 +52,7 @@ No root access is required for any of these paths.
         "video_clip_duration": 10.0,
         "video_clip_overlap": 0.5,
         "video_frame_interval": 30,
-        "video_scene_detection": false,
-        "video_frames_per_clip": 10,
-        "video_max_clips": 50
+        "video_frames_per_clip": 10
     },
     "logging": {
         "level": "ERROR"
@@ -129,12 +127,10 @@ Videos are split into clip segments. Each segment gets one embedding (mean of CL
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `video_clip_duration` | `10.0` | Target clip duration in seconds. Informational — actual duration is determined by `video_frame_interval × video_frames_per_clip / fps`. |
+| `video_clip_duration` | `10.0` | Duration of each clip in seconds. Adjust to match your embedding model's expected input length. |
 | `video_clip_overlap` | `0.5` | Overlap between consecutive clips in seconds. |
 | `video_frame_interval` | `30` | Sample one frame every N frames. At 30fps: ~1 frame/sec. |
-| `video_scene_detection` | `false` | Use scene boundaries instead of fixed intervals. Requires `pip install aperture-nexus[video]`. |
 | `video_frames_per_clip` | `10` | Number of sampled frames to group into one clip segment. At `frame_interval=30` and `frames_per_clip=10`, each clip covers ~300 original frames (~10s at 30fps). |
-| `video_max_clips` | `50` | Hard cap on the number of clip segments (and Descriptors) produced per video. |
 
 ---
 
