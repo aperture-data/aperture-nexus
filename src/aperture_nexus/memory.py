@@ -25,10 +25,10 @@ Multimodal content storage:
     Blob  → AddBlob   (document_type stamped, context_id/session_id stamped)
     Embedding → AddDescriptor in per-modality+model DescriptorSet
 
-DescriptorSet names: nexus_{modality}__{sanitized_model_name}
+DescriptorSet names: nexus_{modality}__{model_name}  (model name used verbatim)
     e.g. nexus_text__text-embedding-3-small
-         nexus_image__ViT-B_16
-         nexus_video__ViT-B_16
+         nexus_image__ViT-B/16
+         nexus_video__ViT-B/16
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -202,11 +201,11 @@ def _embedding_to_bytes(embedding: np.ndarray) -> bytes:
 def _dset_name(modality: str, model: str) -> str:
     """Return the DescriptorSet name for a given modality and model.
 
-    Names are stable: same modality + model always gives the same name.
-    Slashes, spaces, and other non-alphanumeric chars become underscores.
+    The model name is used verbatim — no sanitization. Invalid characters
+    (double-quotes, backslashes, control chars) are rejected at log() time
+    by _validate_embedding() so they never reach here.
     """
-    safe_model = re.sub(r"[^a-zA-Z0-9_-]", "_", model)
-    return f"nexus_{modality}__{safe_model}"
+    return f"nexus_{modality}__{model}"
 
 
 # ---------------------------------------------------------------------------
