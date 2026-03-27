@@ -454,7 +454,25 @@ def _validate_embedding(
         raise NexusValidationError(
             "embedding_model is required when embedding is provided. "
             "Provide the name of the model that produced the embedding "
-            "(e.g. 'clip-vit-base-patch32')."
+            "(e.g. 'ViT-B/16', 'text-embedding-3-small')."
         )
 
-    return embedding, embedding_model
+    if not isinstance(embedding_model, str) or not embedding_model.strip():
+        raise NexusValidationError(
+            "embedding_model must be a non-empty string."
+        )
+
+    if any(c in embedding_model for c in ('"', "\\")):
+        raise NexusValidationError(
+            f"embedding_model {embedding_model!r} contains a character that is "
+            "not valid in an ApertureDB DescriptorSet name. "
+            'Remove double-quotes and backslashes (e.g. use "ViT-B/16" not "ViT-B\\"16").'
+        )
+
+    if any(ord(c) < 32 for c in embedding_model):
+        raise NexusValidationError(
+            f"embedding_model {embedding_model!r} contains a control character. "
+            "Use a plain printable string (e.g. 'ViT-B/16')."
+        )
+
+    return embedding, embedding_model.strip()

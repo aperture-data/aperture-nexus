@@ -309,6 +309,31 @@ class TestLogEmbedding:
                  embedding_model="my-model")
         assert info._entries[0].embedding is emb
 
+    def test_embedding_model_slash_accepted(self):
+        """Standard OpenCLIP names like ViT-B/16 must pass through unchanged."""
+        info = Information(context_id="c")
+        emb = _embedding()
+        info.log(image=_rgb_array(), embedding=emb, embedding_model="ViT-B/16")
+        assert info._entries[0].embedding_model == "ViT-B/16"
+
+    def test_embedding_model_double_quote_raises(self):
+        info = Information(context_id="c")
+        with pytest.raises(NexusValidationError, match="not valid"):
+            info.log(image=_rgb_array(), embedding=_embedding(),
+                     embedding_model='bad"name')
+
+    def test_embedding_model_backslash_raises(self):
+        info = Information(context_id="c")
+        with pytest.raises(NexusValidationError, match="not valid"):
+            info.log(image=_rgb_array(), embedding=_embedding(),
+                     embedding_model="bad\\name")
+
+    def test_embedding_model_control_char_raises(self):
+        info = Information(context_id="c")
+        with pytest.raises(NexusValidationError, match="control character"):
+            info.log(image=_rgb_array(), embedding=_embedding(),
+                     embedding_model="bad\x00name")
+
 
 # ---------------------------------------------------------------------------
 # log() — combined modalities and general
