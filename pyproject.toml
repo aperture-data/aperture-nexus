@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aperture-nexus"
 version = "0.1.0"
-description = "The Unified KMC (Knowledge, Memory, Context) Engine for Agentic State"
+description = "The cognition engine for enterprise AI — establish context, capture multimodal knowledge, and commit to memory for retrieval."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"

@@ -1,6 +1,9 @@
 """
-aperture-nexus: The Unified KMC (Knowledge, Memory, Context) Engine
-for Agentic State.
+aperture-nexus: The Cognition Engine for Enterprise AI.
+
+Enables enterprise AI agents to establish relations for context,
+capture knowledge across text, images, video, and documents, and
+commit it to memory for search and retrieval when needed.
 
 Quickstart:
     >>> import os

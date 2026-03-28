@@ -2,9 +2,18 @@
 
 ## What This Is
 
-**The Unified KMC (Knowledge, Memory, Context) Engine for Agentic State.**
+**The Cognition Engine for Enterprise AI.**
 
-aperture-nexus is a multimodal memory and cognition framework that uses **ApertureDB** as its storage and query backend, leveraging ApertureDB's vector search, knowledge graph, and multimodal data capabilities.
+aperture-nexus enables enterprise AI agents to establish relations for
+context, capture knowledge across text, images, video, and documents,
+and commit it to memory for search and retrieval. It uses **ApertureDB**
+as its storage and query backend, leveraging ApertureDB's vector search,
+knowledge graph, and multimodal data capabilities.
+
+The three building blocks — **Knowledge** (what was captured),
+**Memory** (the engine that stores and retrieves it), and **Context**
+(who did what, in which session, and why) — together form the KMC
+model and a complete cognition layer for enterprise deployments.
 
 ---
 
