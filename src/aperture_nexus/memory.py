@@ -72,6 +72,7 @@ _CLASS_CONTEXT = "NexusContext"
 _CONN_SESSION_CONTEXT = "nexus_session_context"  # Session → Context
 _CONN_ENTRY = "nexus_entry"                       # Context → Blob/Image/Video
 _CONN_LINK = "nexus_link"                         # Context → Context
+_CONN_DESCRIPTOR = "nexus_descriptor"             # Descriptor → Blob/Image/Video
 
 
 # ---------------------------------------------------------------------------
@@ -1233,10 +1234,8 @@ class Memory:
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = [
                     {"AddBlob": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {
-                        "set": dset, "properties": desc_props,
-                        "link": {"ref": 1},
-                    }},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
                 ]
                 response, _ = self._db.query(cmd, [text_bytes, emb_bytes])
                 _check_response(response, "write_text_entry+descriptor")
@@ -1256,10 +1255,8 @@ class Memory:
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = [
                     {"AddImage": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {
-                        "set": dset, "properties": desc_props,
-                        "link": {"ref": 1},
-                    }},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
                 ]
                 response, _ = self._db.query(cmd, [image_bytes, emb_bytes])
                 _check_response(response, "write_image_entry+descriptor")
@@ -1281,10 +1278,8 @@ class Memory:
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = [
                     {"AddVideo": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {
-                        "set": dset, "properties": desc_props,
-                        "link": {"ref": 1},
-                    }},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
                 ]
                 response, _ = self._db.query(cmd, [video_bytes, emb_bytes])
                 _check_response(response, "write_video_entry+descriptor")
@@ -1303,10 +1298,8 @@ class Memory:
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = [
                     {"AddBlob": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {
-                        "set": dset, "properties": desc_props,
-                        "link": {"ref": 1},
-                    }},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
                 ]
                 response, _ = self._db.query(cmd, [entry.blob, emb_bytes])
                 _check_response(response, "write_blob_entry+descriptor")
