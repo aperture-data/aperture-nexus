@@ -791,18 +791,20 @@ class Memory:
     # ------------------------------------------------------------------
 
     def remove(self, context_id: str) -> None:
-        """Remove a committed context from ApertureDB.
+        """Remove a committed context and all its associated content.
 
-        Deletes the ``NexusContext`` entity. Associated blobs, images,
-        videos, and descriptors retain their ``context_id`` property and
-        can be cleaned up separately by filtering on ``context_id``.
+        Deletes blobs, images, videos, and descriptors carrying this
+        ``context_id``, then removes the ``NexusContext`` entity. The
+        delete is not transactional — if ApertureDB rejects a
+        sub-operation a ``NexusStorageError`` is raised and remaining
+        steps are skipped.
 
         Args:
             context_id: The context ID returned by ``commit()``.
 
         Raises:
             NexusValidationError: If ``context_id`` is empty.
-            NexusStorageError: If ApertureDB rejects the delete.
+            NexusStorageError: If ApertureDB rejects any delete.
 
         Example:
             memory.remove(ctx.id)
@@ -811,15 +813,47 @@ class Memory:
             raise NexusValidationError(
                 "context_id must be a non-empty string."
             )
-        cmd = [{
-            "DeleteEntity": {
-                "with_class": _CLASS_CONTEXT,
-                "constraints": {"id": ["==", context_id]},
-            }
-        }]
+        constraints = {"context_id": ["==", context_id]}
+        for cmd_name in ("DeleteBlob", "DeleteImage", "DeleteVideo"):
+            cmd = [{cmd_name: {"constraints": constraints}}]
+            response, _ = self._db.query(cmd)
+            _check_response(
+                response, f"remove/{cmd_name}({context_id!r})"
+            )
+        for set_name in self._list_nexus_descriptor_sets():
+            cmd = [{"DeleteDescriptor": {
+                "set": set_name,
+                "constraints": constraints,
+            }}]
+            response, _ = self._db.query(cmd)
+            _check_response(
+                response,
+                f"remove/DeleteDescriptor[{set_name}]"
+                f"({context_id!r})",
+            )
+        cmd = [{"DeleteEntity": {
+            "with_class": _CLASS_CONTEXT,
+            "constraints": {"id": ["==", context_id]},
+        }}]
         response, _ = self._db.query(cmd)
         _check_response(response, f"remove({context_id!r})")
         logger.debug("Removed context_id=%r", context_id)
+
+    def _list_nexus_descriptor_sets(self) -> list[str]:
+        """Return names of all nexus DescriptorSets in ApertureDB."""
+        cmd = [{"FindDescriptorSet": {
+            "results": {"list": ["_name"]},
+        }}]
+        response, _ = self._db.query(cmd)
+        if isinstance(response, dict):
+            return []
+        body = response[0].get("FindDescriptorSet", {})
+        return [
+            e["_name"]
+            for e in body.get("entities", [])
+            if isinstance(e.get("_name"), str)
+            and e["_name"].startswith("nexus_")
+        ]
 
     # ------------------------------------------------------------------
     # retrieve()

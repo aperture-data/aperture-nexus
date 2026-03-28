@@ -755,14 +755,53 @@ class TestConnect:
 # ---------------------------------------------------------------------------
 
 
+def _ok_response(cmd_name: str) -> tuple:
+    return ([{cmd_name: {"status": 0, "count": 0}}], [])
+
+
+def _find_dset_response(names: list[str]) -> tuple:
+    entities = [{"_name": n} for n in names]
+    body = {"status": 0, "returned": len(entities), "entities": entities}
+    return ([{"FindDescriptorSet": body}], [])
+
+
 class TestRemove:
+    def _cascade_side_effect(self, dset_names: list[str]):
+        """
+        Build side_effect matching the actual remove() call sequence:
+          DeleteBlob, DeleteImage, DeleteVideo,
+          FindDescriptorSet,
+          DeleteDescriptor × len(dset_names),
+          DeleteEntity.
+        """
+        responses = [
+            _ok_response("DeleteBlob"),
+            _ok_response("DeleteImage"),
+            _ok_response("DeleteVideo"),
+            _find_dset_response(dset_names),
+        ]
+        for _ in dset_names:
+            responses.append(_ok_response("DeleteDescriptor"))
+        responses.append(_ok_response("DeleteEntity"))
+        return responses
+
     def test_removes_existing_context(self, mock_connector):
-        mock_connector.query.return_value = (
-            [{"DeleteEntity": {"status": 0}}], []
-        )
+        mock_connector.query.side_effect = self._cascade_side_effect([])
         memory = _make_memory(mock_connector)
         memory.remove("ctx-xyz")
-        assert mock_connector.query.call_count == 1
+        # FindDescriptorSet + 3 deletes + DeleteEntity = 5 calls
+        assert mock_connector.query.call_count == 5
+
+    def test_cascades_content_and_descriptors(self, mock_connector):
+        dset_names = ["nexus_text__ViT-B/16", "nexus_image__ViT-B/16"]
+        mock_connector.query.side_effect = (
+            self._cascade_side_effect(dset_names)
+        )
+        memory = _make_memory(mock_connector)
+        memory.remove("ctx-abc")
+        # FindDescriptorSet + 3 content deletes + 2 descriptor deletes
+        # + DeleteEntity = 7 calls
+        assert mock_connector.query.call_count == 7
 
     def test_empty_context_id_raises(self, mock_connector):
         memory = _make_memory(mock_connector)
@@ -775,11 +814,12 @@ class TestRemove:
             memory.remove("   ")
 
     def test_storage_error_propagated(self, mock_connector):
-        mock_connector.query.return_value = (
-            [{"DeleteEntity": {"status": -1, "info": "not found"}}], []
-        )
+        mock_connector.query.side_effect = [
+            _find_dset_response([]),
+            ([{"DeleteBlob": {"status": -1, "info": "gone"}}], []),
+        ]
         memory = _make_memory(mock_connector)
-        with pytest.raises(NexusStorageError, match="not found"):
+        with pytest.raises(NexusStorageError, match="gone"):
             memory.remove("ghost-id")
 
 

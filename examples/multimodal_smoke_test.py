@@ -18,6 +18,7 @@ live ApertureDB instance:
   12. Metadata search               — session_id filter across modalities
   13. connect()                     — link two contexts
   14. remove()                      — delete context, verify absent
+  15. Cleanup                       — remove all contexts, verify DB clean
 
 Prerequisites:
     pip install aperture-nexus[clip,video]
@@ -581,10 +582,54 @@ else:
     print(f"{SKIP}  remove() — blob context unavailable")
 
 # ---------------------------------------------------------------------------
-# Cleanup
+# Cleanup — remove all contexts, verify DB is clean
 # ---------------------------------------------------------------------------
 
-section("Cleanup")
+section("Cleanup  —  remove all contexts, verify DB empty")
+
+# cid3 was already removed in section 14.
+# Remove all remaining contexts and verify each is gone.
+remaining = [
+    ("text",     cid1, sid_text,      memory_raw),
+    ("image",    cid2, sid_img,       memory_raw),
+    ("cliptext", cid4, sid_clip_text, memory_clip),
+    ("clipimg",  cid5, sid_clip_img,  memory_clip),
+    ("video",    cid6, sid_video,     memory_clip),
+    ("precomp",  cid7, sid_precomp,   memory_raw),
+]
+
+for label, cid, sid, mem in remaining:
+    if not cid:
+        print(f"{SKIP}  cleanup ({label}) — context was never created")
+        continue
+    try:
+        mem.remove(cid)
+        check(f"remove() {label} context", True)
+    except Exception as e:
+        check(f"remove() {label} context", False, str(e))
+        continue
+
+    try:
+        entries = mem.retrieve(cid)
+        check(
+            f"retrieve() empty after remove ({label})",
+            len(entries) == 0,
+            f"still got {len(entries)} entries",
+        )
+    except Exception as e:
+        check(f"retrieve() after remove ({label})", False, str(e))
+
+    try:
+        results = memory_raw.search(filters={"session_id": sid})
+        check(
+            f"metadata search empty after remove ({label})",
+            len(results) == 0,
+            f"still found {len(results)} results",
+        )
+    except Exception as e:
+        check(
+            f"metadata search after remove ({label})", False, str(e)
+        )
 
 os.unlink(_cfg_path)
 
