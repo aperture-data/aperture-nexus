@@ -164,7 +164,9 @@ def _check_response(response, operation: str) -> None:
     for item in response:
         for cmd_name, body in item.items():
             status = body.get("status", -1) if isinstance(body, dict) else -1
-            if status != 0:
+            # status=0: success; status=2: "object already exists" (expected
+            # from AddEntity/AddDescriptorSet with if_not_found — not an error)
+            if status not in (0, 2):
                 info = (
                     body.get("info", "no details")
                     if isinstance(body, dict)
@@ -334,7 +336,7 @@ class Memory:
             return
         indexes = [
             (_CLASS_SESSION, "session_id"),
-            (_CLASS_CONTEXT, "id"),
+            (_CLASS_CONTEXT, "nexus_ctx_id"),
             (_CLASS_CONTEXT, "session_id"),
             (_CLASS_CONTEXT, "user_id"),
         ]
@@ -758,7 +760,7 @@ class Memory:
             {
                 "FindEntity": {
                     "with_class": _CLASS_CONTEXT,
-                    "constraints": {"id": ["==", src_id]},
+                    "constraints": {"nexus_ctx_id": ["==", src_id]},
                     "_ref": 1,
                     "results": {"count": True},
                 }
@@ -766,7 +768,7 @@ class Memory:
             {
                 "FindEntity": {
                     "with_class": _CLASS_CONTEXT,
-                    "constraints": {"id": ["==", dst_id]},
+                    "constraints": {"nexus_ctx_id": ["==", dst_id]},
                     "_ref": 2,
                     "results": {"count": True},
                 }
@@ -833,7 +835,7 @@ class Memory:
             )
         cmd = [{"DeleteEntity": {
             "with_class": _CLASS_CONTEXT,
-            "constraints": {"id": ["==", context_id]},
+            "constraints": {"nexus_ctx_id": ["==", context_id]},
         }}]
         response, _ = self._db.query(cmd)
         _check_response(response, f"remove({context_id!r})")
@@ -1132,7 +1134,7 @@ class Memory:
     def _ensure_context(self, ctx: Context, session_id: str) -> None:
         """Create a NexusContext entity and connect it to its session."""
         props: dict = {
-            "id": ctx.id,
+            "nexus_ctx_id": ctx.id,
             "session_id": session_id,
             "user_id": ctx.principal.user_id,
             "created_at": datetime.utcnow().isoformat(),
@@ -1144,7 +1146,7 @@ class Memory:
         cmd = [{"AddEntity": {
             "class": _CLASS_CONTEXT,
             "properties": props,
-            "if_not_found": {"id": ["==", ctx.id]},
+            "if_not_found": {"nexus_ctx_id": ["==", ctx.id]},
         }}]
         response, _ = self._db.query(cmd)
         _check_response(response, "ensure_context")
@@ -1162,7 +1164,7 @@ class Memory:
                 {
                     "FindEntity": {
                         "with_class": _CLASS_CONTEXT,
-                        "constraints": {"id": ["==", ctx.id]},
+                        "constraints": {"nexus_ctx_id": ["==", ctx.id]},
                         "_ref": 2,
                         "results": {"count": True},
                     }
@@ -1512,7 +1514,13 @@ class Memory:
                 f"ApertureDB search query failed: {e}."
             ) from e
 
+        # ApertureDB may return a bare dict (not a list) when the descriptor
+        # set does not exist or the query is malformed.  Treat it as empty.
+        if not isinstance(response, list) or not response:
+            return []
         body = response[0].get("FindDescriptor", {})
+        if body.get("status", 0) != 0:
+            return []
         # ApertureDB returns descriptors under "entities"; distance is
         # embedded as "_distance" on each entity (not a separate list).
         descriptors = body.get("entities", [])
@@ -1576,7 +1584,7 @@ class Memory:
                 score=1.0,
                 modality="text",
                 session_id=ent.get("session_id", ""),
-                context_id=ent.get("id", ""),
+                context_id=ent.get("nexus_ctx_id", ""),
                 user_id=ent.get("user_id"),
                 created_at=datetime.fromisoformat(
                     ent.get("created_at", datetime.utcnow().isoformat())
@@ -1584,7 +1592,7 @@ class Memory:
                 metadata={
                     k: v for k, v in ent.items()
                     if k not in (
-                        "id", "session_id", "user_id", "created_at"
+                        "nexus_ctx_id", "session_id", "user_id", "created_at"
                     )
                 },
             ))

@@ -594,7 +594,7 @@ class TestSearch:
     def test_metadata_only_search(self, mock_connector):
         entities = [
             {
-                "id": "m-1",
+                "nexus_ctx_id": "m-1",
                 "session_id": "s-1",
                 "created_at": "2024-01-01T00:00:00",
                 "user_id": "alice",

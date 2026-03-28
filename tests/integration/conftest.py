@@ -64,6 +64,35 @@ def _wait_for_port(host: str, port: int, timeout: float = 90.0) -> None:
     )
 
 
+def _wait_for_aperturedb(host: str, port: int, timeout: float = 90.0) -> None:
+    """Poll until ApertureDB accepts authenticated queries or timeout expires.
+
+    The TCP port opens before ApertureDB finishes internal initialisation.
+    This probe retries the actual auth handshake so callers do not need
+    an arbitrary sleep after _wait_for_port.
+    """
+    from aperturedb.Connector import Connector
+
+    deadline = time.monotonic() + timeout
+    last_exc = None
+    while time.monotonic() < deadline:
+        try:
+            c = Connector(
+                host=host, port=port,
+                user="admin", password="admin",
+                use_ssl=False,
+            )
+            c.query([{"GetStatus": {}}])
+            return
+        except Exception as exc:
+            last_exc = exc
+            time.sleep(1.0)
+    raise TimeoutError(
+        f"ApertureDB at {host}:{port} did not become ready within "
+        f"{timeout:.0f}s. Last error: {last_exc}"
+    )
+
+
 def _adb_config_path(as_global: bool = True):
     """Return the Path to the adb config JSON file."""
     from aperturedb.cli.configure import _config_file_path
@@ -78,7 +107,7 @@ def _load_configs(config_path):
     try:
         from aperturedb.cli.configure import get_configurations
         return get_configurations(str(config_path))
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
         return {}, None
 
 
@@ -115,20 +144,16 @@ def aperturedb_container():
         DockerContainer("aperturedata/aperturedb-community:latest")
         .with_env("ADB_MASTER_KEY", "admin")
         .with_env("ADB_FORCE_SSL", "false")
-        .with_env("ADB_PORT", "55553")
-        .with_exposed_ports(55553)
+        .with_exposed_ports(55555)
     ) as container:
         host = container.get_container_host_ip()
-        port = int(container.get_exposed_port(55553))
+        port = int(container.get_exposed_port(55555))
 
         try:
             _wait_for_port(host, port, timeout=90.0)
+            _wait_for_aperturedb(host, port, timeout=90.0)
         except TimeoutError as exc:
             pytest.fail(str(exc))
-
-        # Brief pause for ApertureDB to finish internal initialisation
-        # after the TCP port is open.
-        time.sleep(3.0)
 
         yield {"host": host, "port": port, "user": "admin", "password": "admin"}
 

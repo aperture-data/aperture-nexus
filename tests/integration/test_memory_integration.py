@@ -68,13 +68,15 @@ class TestCommitAndRetrieve:
         assert isinstance(mid, str)
 
     def test_multiple_commits_same_context(self, memory_engine, test_principal):
+        """Multiple commits to the same context all return the same context_id."""
         ctx = Context(principal=test_principal, session_id=_unique_sid())
         info = Information(context_id=ctx.id)
         info.log(text="first message")
         mid1 = memory_engine.commit(ctx, info)
         info.log(text="second message")
         mid2 = memory_engine.commit(ctx, info)
-        assert mid1 != mid2
+        # commit() returns context_id — same context, same ID both times
+        assert mid1 == mid2 == ctx.id
 
     def test_empty_info_raises(self, memory_engine, test_principal):
         ctx = Context(principal=test_principal, session_id=_unique_sid())
@@ -120,8 +122,11 @@ class TestVectorSearch:
         info.log(text="vector search test", embedding=vec, embedding_model="test-model")
         memory_engine.commit(ctx, info)
 
-        # Search with the same vector — should be top hit
-        results = memory_engine.search(query=vec, modality="text", k=5)
+        # Search with the same vector — must specify the same embedding_model
+        # used at commit time so search looks in the right DescriptorSet.
+        results = memory_engine.search(
+            query=vec, modality="text", k=5, embedding_model="test-model"
+        )
         assert len(results) >= 1
         # The memory we just committed should appear
         assert any(r.session_id == sid for r in results)
