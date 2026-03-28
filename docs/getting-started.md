@@ -58,14 +58,16 @@ The simplest option is an encoded ApertureDB key:
 export APERTUREDB_KEY="adbp_..."
 ```
 
-Or create a `.env` file (copy from the example and edit):
+Or create a `.env` file for the local Docker Compose setup — the
+example file has the right defaults and works without any changes:
 
 ```bash
 cp .env.example .env
-# Edit .env with your ApertureDB host, port, user, and password
 ```
 
-For the local Docker Compose setup, the default credentials work without any changes.
+For a remote ApertureDB instance, replace the `APERTUREDB_JSON` value
+with your host, port, and credentials, or use `APERTUREDB_KEY` if you
+have an encoded key from `adb config`.
 
 Then run the setup wizard to generate your config file:
 
