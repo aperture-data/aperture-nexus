@@ -93,7 +93,7 @@ class NexusConnectionError(NexusError):
     Example:
         >>> memory = Memory()
         NexusConnectionError: Could not connect to ApertureDB at
-        localhost:55555. Verify ApertureDB is running and your credentials
+        localhost:55556. Verify ApertureDB is running and your credentials
         are correct. Run 'adb-nexus validate' to test your connection.
     """
 

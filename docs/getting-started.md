@@ -47,11 +47,6 @@ bash setup.sh
 
 ApertureDB is ready when you see it accept connections — `adb-nexus validate` will confirm this in step 4.
 
-> **Mac users:** If port 55555 conflicts with AirPlay or another service, start on a different port:
-> ```bash
-> APERTUREDB_PORT=15555 docker compose up -d
-> ```
-> Then add `APERTUREDB_PORT=15555` to your `.env` file.
 
 ---
 

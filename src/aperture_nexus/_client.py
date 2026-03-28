@@ -176,7 +176,7 @@ def connection_description(connector: Connector) -> str:
 
     Example:
         desc = connection_description(connector)
-        # "localhost:55555 (ssl)" or "db.internal:55555 (tcp)"
+        # "localhost:55556 (ssl)" or "db.internal:55555 (tcp)"
     """
     try:
         config = connector.config
