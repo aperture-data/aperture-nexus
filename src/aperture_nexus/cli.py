@@ -226,7 +226,13 @@ def ui(
 
 
 def _write_env_key(env_path: Path, key: str, value: str) -> None:
-    """Write or update a single key in a .env file."""
+    """Write or update a single key in a .env file.
+
+    Preserves all existing lines and comments. Updates the key in-place
+    if it already exists; appends it otherwise. Uses an atomic
+    write (temp file + rename) so a crash mid-write cannot corrupt
+    the existing file.
+    """
     lines: list[str] = []
     if env_path.exists():
         lines = env_path.read_text().splitlines()
@@ -241,7 +247,10 @@ def _write_env_key(env_path: Path, key: str, value: str) -> None:
     if not updated:
         lines.append(f"{key}={value}")
 
-    env_path.write_text("\n".join(lines) + "\n")
+    content = "\n".join(lines) + "\n"
+    tmp = env_path.with_suffix(".env.tmp")
+    tmp.write_text(content)
+    tmp.replace(env_path)
 
 
 def _check_gitignore(env_path: Path) -> None:
