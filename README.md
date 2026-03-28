@@ -173,7 +173,7 @@ default (the container listens on `55555` internally).
 > (`aperturedata/aperturedb-community`) is licensed for evaluation and
 > development only — no production use. See the
 > [ApertureDB community edition license](https://www.aperturedata.io/docker-license)
-> and [contact ApertureData](https://aperturedata.io/contact) for
+> and [contact ApertureData](https://www.aperturedata.io/contact-us) for
 > production licensing.
 
 ---
@@ -301,7 +301,7 @@ without requiring any schema migration.
 
 aperture-nexus is released under the [MIT License](LICENSE).
 
-> **Note:** This license covers aperture-nexus only. ApertureDB is licensed separately — see the [community edition license](https://www.aperturedata.io/docker-license) and [contact ApertureData](https://aperturedata.io/contact) for production use.
+> **Note:** This license covers aperture-nexus only. ApertureDB is licensed separately — see the [community edition license](https://www.aperturedata.io/docker-license) and [contact ApertureData](https://www.aperturedata.io/contact-us) for production use.
 
 ---
 

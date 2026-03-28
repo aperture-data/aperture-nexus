@@ -6,7 +6,7 @@
 # IMPORTANT: The ApertureDB community edition image is licensed for
 # evaluation and development only — no production or commercial use.
 # See: https://www.aperturedata.io/docker-license
-# For production licensing: https://aperturedata.io/contact
+# For production licensing: https://www.aperturedata.io/contact-us
 #
 # Two web interfaces are available after startup:
 #   http://localhost:8087  — ApertureDB Web UI (raw database objects:
