@@ -191,33 +191,13 @@ def ui(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8000, "--port"),
 ) -> None:
-    """Launch the web UI and REST API (requires aperture-nexus[ui])."""
-    try:
-        import uvicorn  # noqa: F401
-    except ImportError:
-        typer.echo(
-            "The web UI requires aperture-nexus[ui]. "
-            "Install it with: pip install aperture-nexus[ui]",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    if host != "127.0.0.1" and not os.environ.get("APERTURE_NEXUS_UI_API_KEY"):
-        typer.echo(
-            "Error: APERTURE_NEXUS_UI_API_KEY must be set when "
-            "binding to a non-localhost address.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    typer.echo(f"Starting aperture-nexus UI at http://{host}:{port}")
-    import uvicorn
-    uvicorn.run(
-        "aperture_nexus.ui:app",
-        host=host,
-        port=port,
-        log_level="info",
+    """Launch the web UI and REST API (not yet available)."""
+    typer.echo(
+        "The web UI is not yet available. "
+        "It is planned for a future release.",
+        err=True,
     )
+    raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------

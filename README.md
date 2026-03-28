@@ -68,7 +68,6 @@ pip install aperture-nexus[video]    # video frame extraction (opencv-python)
 pip install aperture-nexus[clip]     # CLIP embeddings for text and images
 pip install aperture-nexus[tokens]   # token-based text chunking
 pip install aperture-nexus[metrics]  # Prometheus metrics export
-pip install aperture-nexus[ui]       # web UI and REST API
 pip install aperture-nexus[all]      # everything
 ```
 
@@ -226,8 +225,6 @@ adb-nexus init                             # interactive setup wizard
 adb-nexus init --defaults                  # non-interactive, all defaults
 adb-nexus validate                         # test connection and config
 adb-nexus validate --config path/to/x.json
-adb-nexus ui                               # launch web UI (local only)
-adb-nexus ui --host 0.0.0.0 --port 8080   # launch for network access
 ```
 
 ---
