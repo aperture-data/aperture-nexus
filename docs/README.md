@@ -36,7 +36,7 @@ For installation and CLI reference, see the [main README](../README.md).
 
 ---
 
-## Quick orientation
+## Quick Orientation
 
 aperture-nexus is built around three objects that work together:
 

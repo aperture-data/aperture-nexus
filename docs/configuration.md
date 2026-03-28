@@ -111,7 +111,7 @@ Controls how aperture-nexus processes and stores multimodal data.
 | `retry_attempts` | `3` | Retry attempts for failed DB writes before raising `NexusStorageError`. Set to `0` to disable. |
 | `retry_interval` | `1.0` | Seconds between retry attempts. |
 
-### Text chunking
+### Text Chunking
 
 Long text is chunked automatically before embedding. Tune chunk size to your embedding model's context window.
 
@@ -121,7 +121,7 @@ Long text is chunked automatically before embedding. Tune chunk size to your emb
 | `text_chunk_overlap` | `200` | Overlap between consecutive chunks. Must be less than `text_chunk_size`. |
 | `text_chunk_unit` | `"characters"` | `"characters"` (default, no extra deps) or `"tokens"` (requires `pip install aperture-nexus[tokens]`). |
 
-### Video processing
+### Video Processing
 
 Videos are split into clip segments. Each segment gets one embedding (mean of CLIP frame embeddings within that segment) stored as one `Descriptor` in ApertureDB with `start_frame`/`stop_frame` metadata. This preserves temporal structure: a text query finds the specific segment of a video that matches, not just whether the video matches at all.
 
@@ -196,7 +196,7 @@ adb-nexus ui --host 0.0.0.0 --port 8080
 
 ---
 
-## Environment variable overrides
+## Environment Variable Overrides
 
 Environment variables always take precedence over the config file.
 
@@ -213,7 +213,7 @@ Environment variables always take precedence over the config file.
 
 ---
 
-## IDE autocomplete
+## IDE Autocomplete
 
 `adb-nexus init` also generates `aperture_nexus.schema.json`. To activate JSON Schema validation and autocomplete in VS Code, add to `.vscode/settings.json`:
 

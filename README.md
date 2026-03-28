@@ -86,7 +86,7 @@ pip install aperture-nexus[all]      # everything
 Models are only needed for `process_and_commit()`. If you use `commit()` for
 raw storage — or supply pre-computed embeddings — you can skip this section.
 
-### CLIP — one model for text, images, and video
+### CLIP — One Model for Text, Images, and Video
 
 CLIP works across all modalities in a shared embedding space: a text query
 can find images, and an image query can find text. It is the simplest
@@ -119,7 +119,7 @@ Two limitations to keep in mind:
   queries is lower than purpose-built text models such as BGE-M3 or
   `text-embedding-3-small`.
 
-### Dedicated text model + CLIP for images and video
+### Dedicated Text Model + CLIP for Images and Video
 
 For workloads that mix document retrieval with image search, use a dedicated
 text model alongside CLIP for images and video:
@@ -138,7 +138,7 @@ text model alongside CLIP for images and video:
 > DescriptorSets. Cross-modal search (text query → image results) requires
 > a shared embedding space — CLIP provides this; separate models do not.
 
-### Pre-computed embeddings
+### Pre-Computed Embeddings
 
 Skip model configuration by supplying embeddings directly at log time:
 
@@ -178,7 +178,7 @@ default (the container listens on `55555` internally).
 
 ---
 
-## Environment variables
+## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -241,12 +241,12 @@ adb-nexus ui --host 0.0.0.0 --port 8080   # launch for network access
 
 ---
 
-## Enterprise design
+## Enterprise Design
 
 aperture-nexus is designed for deployment at any scale — from a single
 developer's Claude session to a multi-team organization.
 
-### Credential separation
+### Credential Separation
 
 Admin credentials (ApertureDB `APERTUREDB_KEY`) are isolated to one place:
 `adb-nexus init`. Everything else — application code, AI agent sessions,
@@ -258,7 +258,7 @@ search queries — uses only:
 No application code ever needs admin credentials. A compromised session
 cannot create or delete principals.
 
-### Authentication flow
+### Authentication Flow
 
 ```
 ┌─────────────────────┐        ┌──────────────────────┐
@@ -272,7 +272,7 @@ cannot create or delete principals.
                                 └──────────────────────┘
 ```
 
-### Key rotation
+### Key Rotation
 
 If a principal's key needs to be replaced (new device, suspected exposure),
 an admin rotates it — no DB schema changes, no session disruption:
@@ -288,7 +288,7 @@ new_key = admin.rotate_key(user_id="alice")
 The previous key is invalidated immediately. All existing memories are
 retained — rotation affects authentication only, not stored data.
 
-### Multi-user and multi-tenant
+### Multi-User and Multi-Tenant
 
 Each principal has `user_id`, `department`, and `organization` properties
 stamped on every stored object. This is the foundation for the v2
