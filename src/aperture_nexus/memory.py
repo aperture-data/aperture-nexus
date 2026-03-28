@@ -201,7 +201,14 @@ def _to_image_bytes(image: Any) -> bytes:
     if isinstance(image, bytes):
         return image
     if isinstance(image, str):
-        # file path (URL already validated to not reach here)
+        # URL must be checked BEFORE the generic file-path branch so that
+        # http/https strings are downloaded rather than treated as local paths.
+        if image.startswith("http://") or image.startswith("https://"):
+            import requests
+            resp = requests.get(image, timeout=30)
+            resp.raise_for_status()
+            return resp.content
+        # file path
         with open(image, "rb") as f:
             return f.read()
     if isinstance(image, PILImage.Image):
@@ -216,14 +223,6 @@ def _to_image_bytes(image: Any) -> bytes:
         buf = io.BytesIO()
         pil.save(buf, format="PNG")
         return buf.getvalue()
-    # URL
-    if isinstance(image, str) and (
-        image.startswith("http://") or image.startswith("https://")
-    ):
-        import requests
-        resp = requests.get(image, timeout=30)
-        resp.raise_for_status()
-        return resp.content
     raise NexusValidationError(
         f"Cannot convert image type {type(image).__name__!r} to bytes."
     )
