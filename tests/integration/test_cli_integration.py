@@ -10,6 +10,9 @@ Run with:
 """
 
 import os
+import shutil
+import subprocess
+import sys
 import uuid
 
 import pytest
@@ -156,6 +159,52 @@ class TestInitPrincipalIsUsable:
     def teardown_method(self, method):
         """Best-effort cleanup: nothing to do — testcontainers tears down the DB."""
         pass
+
+
+# ---------------------------------------------------------------------------
+# init: --config path override
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Installed entry point
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+class TestInstalledEntryPoint:
+    def test_adb_nexus_binary_is_on_path(self):
+        """The adb-nexus binary is discoverable on PATH."""
+        assert shutil.which("adb-nexus") is not None, (
+            "adb-nexus not found on PATH. "
+            "Install with: pip install -e . (or pip install aperture-nexus)"
+        )
+
+    def test_adb_nexus_help_exits_zero(self):
+        """adb-nexus --help exits 0 via the real shell entry point."""
+        result = subprocess.run(
+            ["adb-nexus", "--help"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "init" in result.stdout
+        assert "validate" in result.stdout
+
+    def test_adb_nexus_init_defaults_exits_zero(self, adb_config_name, tmp_path):
+        """adb-nexus init --defaults succeeds as a real subprocess."""
+        config_file = tmp_path / "aperture_nexus.json"
+        env_file = tmp_path / ".env"
+        env = {**os.environ, "USER": _uid()}
+        result = subprocess.run(
+            [
+                "adb-nexus", "init", "--defaults",
+                "--config", str(config_file),
+                "--env-file", str(env_file),
+            ],
+            capture_output=True, text=True, env=env,
+        )
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert config_file.exists()
+        assert env_file.exists()
+        assert f"{ENV_NEXUS_API_KEY}=" in env_file.read_text()
 
 
 # ---------------------------------------------------------------------------
