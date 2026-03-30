@@ -155,15 +155,7 @@ class ClipEmbedder:
         if isinstance(image, bytes):
             pil = PILImage.open(io.BytesIO(image)).convert("RGB")
         elif isinstance(image, str):
-            if image.startswith(("http://", "https://")):
-                import urllib.request
-                req = urllib.request.Request(
-                    image, headers={"User-Agent": "aperture-nexus/1.0"}
-                )
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    pil = PILImage.open(io.BytesIO(resp.read())).convert("RGB")
-            else:
-                pil = PILImage.open(image).convert("RGB")
+            pil = PILImage.open(image).convert("RGB")
         elif isinstance(image, np.ndarray):
             pil = PILImage.fromarray(
                 image if image.dtype == np.uint8 else (image * 255).astype(np.uint8)
