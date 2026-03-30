@@ -213,3 +213,170 @@ class TestAdminPipeline:
         nexus_admin.delete_principal(uid)
         with pytest.raises(NexusPermissionError):
             memory_engine.authenticate(user_id=uid, api_key=api_key)
+
+# ---------------------------------------------------------------------------
+# CLIP process_and_commit — text search, image commit, metadata search
+# ---------------------------------------------------------------------------
+
+_CLIP_MODEL = "ViT-B-32"
+
+
+@pytest.fixture()
+def clip_memory(adb_config_name):
+    """Memory instance configured with a CLIP model for all three modalities."""
+    from aperture_nexus.memory import Memory
+    m = Memory()
+    m._cfg.models.text_embedding = _CLIP_MODEL
+    m._cfg.models.image_embedding = _CLIP_MODEL
+    m._cfg.models.video_embedding = _CLIP_MODEL
+    return m
+
+
+@pytest.mark.integration
+class TestClipTextSearch:
+    """process_and_commit with text entries — CLIP text embeddings."""
+
+    def test_process_and_commit_text_returns_context_id(
+        self, clip_memory, test_principal
+    ):
+        ctx = Context(principal=test_principal, session_id=_unique_sid())
+        info = Information(context_id=ctx.id)
+        info.log(text="ApertureDB is a multimodal vector database.")
+        mid = clip_memory.process_and_commit(ctx, info)
+        assert isinstance(mid, str) and len(mid) > 10
+
+    def test_text_search_finds_committed_entry(self, clip_memory, test_principal):
+        """A text committed via CLIP is retrievable by vector search."""
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(text="The quick brown fox jumps over the lazy dog.")
+        clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search(
+            query="quick fox jumping", modality="text",
+            embedding_model=_CLIP_MODEL, k=5,
+        )
+        assert any(r.session_id == sid for r in results), (
+            f"Committed session {sid!r} not found in search results: "
+            + str([r.session_id for r in results])
+        )
+
+    def test_text_search_result_has_inline_text(self, clip_memory, test_principal):
+        """Short text is stored inline on the Descriptor and returned in results."""
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(text="inline text entry for CLIP")
+        clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search(
+            query="inline text", modality="text",
+            embedding_model=_CLIP_MODEL, k=5,
+        )
+        matching = [r for r in results if r.session_id == sid]
+        assert matching, "Committed entry not found"
+        assert matching[0].text == "inline text entry for CLIP"
+
+
+@pytest.mark.integration
+class TestClipImageSearch:
+    """process_and_commit with image entries — CLIP image embeddings."""
+
+    @staticmethod
+    def _make_png(color: tuple = (255, 0, 0)) -> bytes:
+        import io
+        from PIL import Image as PILImage
+        img = PILImage.new("RGB", (16, 16), color=color)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_image_commit_succeeds(self, clip_memory, test_principal):
+        ctx = Context(principal=test_principal, session_id=_unique_sid())
+        info = Information(context_id=ctx.id)
+        info.log(image=self._make_png())
+        mid = clip_memory.process_and_commit(ctx, info)
+        assert isinstance(mid, str)
+
+    def test_image_search_finds_committed_image(self, clip_memory, test_principal):
+        """An image committed via CLIP is retrievable by image vector search."""
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        img_bytes = self._make_png(color=(0, 128, 255))
+        info.log(image=img_bytes)
+        clip_memory.process_and_commit(ctx, info)
+
+        # Search with the same image bytes — should find itself
+        from aperture_nexus._embeddings import get_clip_embedder
+        embedder = get_clip_embedder(_CLIP_MODEL)
+        query_vec = embedder.embed_image(img_bytes)
+
+        results = clip_memory.search(
+            query=query_vec, modality="image",
+            embedding_model=_CLIP_MODEL, k=5,
+        )
+        assert any(r.session_id == sid for r in results), (
+            f"Committed image session {sid!r} not in results: "
+            + str([r.session_id for r in results])
+        )
+
+    def test_image_result_has_image_modality(self, clip_memory, test_principal):
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(image=self._make_png())
+        clip_memory.process_and_commit(ctx, info)
+
+        from aperture_nexus._embeddings import get_clip_embedder
+        embedder = get_clip_embedder(_CLIP_MODEL)
+        query_vec = embedder.embed_image(self._make_png())
+
+        results = clip_memory.search(
+            query=query_vec, modality="image",
+            embedding_model=_CLIP_MODEL, k=5,
+        )
+        matching = [r for r in results if r.session_id == sid]
+        assert matching
+        assert matching[0].modality == "image"
+
+
+@pytest.mark.integration
+class TestMetadataSearchContentEntities:
+    """_search_by_metadata returns Blob/Image/Video entities, not NexusContext."""
+
+    def test_metadata_search_finds_text_blob(self, clip_memory, test_principal):
+        """A committed text entry is found by session_id metadata filter."""
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(text="metadata search test entry")
+        clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search(filters={"session_id": sid})
+        assert len(results) >= 1
+        assert all(r.session_id == sid for r in results)
+
+    def test_metadata_search_finds_image(self, clip_memory, test_principal):
+        """A committed image entry is found by session_id metadata filter."""
+        import io
+        from PIL import Image as PILImage
+        img = PILImage.new("RGB", (8, 8), color=(0, 255, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(image=buf.getvalue())
+        clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search(filters={"session_id": sid})
+        assert len(results) >= 1
+        matching = [r for r in results if r.session_id == sid]
+        assert any(r.modality == "image" for r in matching)
+
+    def test_metadata_search_unknown_session_returns_empty(self, clip_memory):
+        results = clip_memory.search(filters={"session_id": "no-such-session-xyz"})
+        assert results == []
