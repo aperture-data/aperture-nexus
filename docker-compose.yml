@@ -1,7 +1,7 @@
 # aperture-nexus + ApertureDB — local development stack
 #
-# Starts ApertureDB community edition, the Lenz HTTP gateway, and the
-# ApertureDB Web UI so you can inspect your data through a browser.
+# Starts ApertureDB community edition and sets up the environment
+# for aperture-nexus to connect to it.
 #
 # IMPORTANT: The ApertureDB community edition image is licensed for
 # evaluation and development only — no production or commercial use.
@@ -19,21 +19,19 @@
 #   docker compose down          # stop (data preserved)
 #   docker compose down -v       # stop and delete all data
 #
-# Override host ports without editing this file:
-#   APERTUREDB_PORT=12345 WEBUI_PORT=9090 docker compose up -d
-#
-# The ApertureDB TCP endpoint used by the adb CLI and aperture-nexus is
-# exposed through Lenz (the HTTP/TCP gateway), not directly.  Configure
-# your adb client to point at localhost:${APERTUREDB_PORT:-55556}.
-
-name: aperture-nexus-local
+# Override the host port without editing this file:
+#   APERTUREDB_PORT=12345 docker compose up -d
 
 services:
 
   aperturedb:
     image: aperturedata/aperturedb-community:latest
     restart: unless-stopped
-    # No direct host port — access is through lenz (TCP) or nginx (HTTP).
+    ports:
+      # HOST_PORT:CONTAINER_PORT
+      # Change APERTUREDB_PORT env var to use a different host port.
+      # The container always listens on 55555 internally.
+      - "${APERTUREDB_PORT:-55556}:55555"
     environment:
       ADB_MASTER_KEY: "${APERTUREDB_PASSWORD:-admin}"
       ADB_FORCE_SSL: "false"
@@ -47,58 +45,6 @@ services:
       timeout: 2s
       retries: 30
       start_period: 5s
-
-  lenz:
-    image: aperturedata/lenz:latest
-    depends_on:
-      aperturedb:
-        condition: service_healthy
-    restart: unless-stopped
-    ports:
-      # TCP endpoint for the adb CLI and aperture-nexus SDK.
-      # Change APERTUREDB_PORT env var to use a different host port.
-      - "${APERTUREDB_PORT:-55556}:55551"
-    environment:
-      LNZ_TCP_PORT: 55551
-      LNZ_HTTP_PORT: 8080
-      # ApertureDB always listens on 55555 internally.
-      LNZ_ADB_BACKENDS: '["aperturedb:55555"]'
-      LNZ_REPLICAS: 1
-      LNZ_ADB_MAX_CONCURRENCY: 48
-      LNZ_FORCE_SSL: "false"
-
-  webui:
-    image: aperturedata/aperturedata-platform-web-private:latest
-    restart: unless-stopped
-    depends_on:
-      - lenz
-
-  nginx:
-    image: nginx
-    restart: unless-stopped
-    depends_on:
-      - webui
-      - lenz
-    ports:
-      # ApertureDB Web UI — change WEBUI_PORT to use a different host port.
-      - "${WEBUI_PORT:-8087}:80"
-    configs:
-      - source: nginx.conf
-        target: /etc/nginx/conf.d/default.conf
-
-configs:
-  nginx.conf:
-    content: |
-      server {
-        listen 80;
-        client_max_body_size 256m;
-        location / {
-          proxy_pass http://webui;
-        }
-        location /api/ {
-          proxy_pass http://lenz:8080;
-        }
-      }
 
 volumes:
   aperturedb_data:
