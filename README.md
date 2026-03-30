@@ -161,12 +161,16 @@ aperture-nexus requires a running ApertureDB instance.
 **Quickest option — Docker Compose:**
 
 ```bash
-docker compose up -d
+ADB_PORT=55556 DB_TCP_CN=localhost DB_HTTP_CN=localhost docker compose up --detach
 ```
 
-Data persists across restarts. ApertureDB web UI is available at
-`http://localhost:8087`. aperture-nexus connects on port `55556` by
-default (the container listens on `55555` internally).
+Data persists across restarts. aperture-nexus connects on port `55556`
+by default.
+
+**ApertureDB Web UI** is available at `http://localhost:8087` after startup.
+Use it to inspect what is stored in ApertureDB — entities, connections,
+descriptors, images — which is a useful way to verify that memories were
+committed correctly.
 
 > **Community edition note:** The Docker image
 > (`aperturedata/aperturedb-community`) is licensed for evaluation and
