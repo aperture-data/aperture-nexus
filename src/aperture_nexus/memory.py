@@ -72,6 +72,7 @@ _CLASS_CONTEXT = "NexusContext"
 _CONN_SESSION_CONTEXT = "nexus_session_context"  # Session → Context
 _CONN_ENTRY = "nexus_entry"                       # Context → Blob/Image/Video
 _CONN_LINK = "nexus_link"                         # Context → Context
+_CONN_DESCRIPTOR = "nexus_descriptor"             # Descriptor → Blob/Image/Video
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +202,13 @@ def _to_image_bytes(image: Any) -> bytes:
     if isinstance(image, bytes):
         return image
     if isinstance(image, str):
-        # file path (URL already validated to not reach here)
+        # URL must be checked before the file-path branch so that http/https
+        # strings are downloaded rather than treated as local paths.
+        if image.startswith("http://") or image.startswith("https://"):
+            import requests
+            resp = requests.get(image, timeout=30)
+            resp.raise_for_status()
+            return resp.content
         with open(image, "rb") as f:
             return f.read()
     if isinstance(image, PILImage.Image):
@@ -216,14 +223,6 @@ def _to_image_bytes(image: Any) -> bytes:
         buf = io.BytesIO()
         pil.save(buf, format="PNG")
         return buf.getvalue()
-    # URL
-    if isinstance(image, str) and (
-        image.startswith("http://") or image.startswith("https://")
-    ):
-        import requests
-        resp = requests.get(image, timeout=30)
-        resp.raise_for_status()
-        return resp.content
     raise NexusValidationError(
         f"Cannot convert image type {type(image).__name__!r} to bytes."
     )
@@ -492,6 +491,11 @@ class Memory:
             self._ensure_session(ctx, session_id)
             self._ensure_context(ctx, session_id)
 
+            # Ensure all required DescriptorSets exist before writing.
+            # Must happen after embeddings are generated (process_and_commit)
+            # and before any AddDescriptor in _write_entry.
+            self._ensure_descriptor_sets(entries)
+
             # Write each content entry
             for entry in entries:
                 self._write_entry(entry, ctx, session_id)
@@ -560,7 +564,6 @@ class Memory:
             context_id = memory.process_and_commit(ctx, info)
         """
         self._generate_missing_embeddings(info._entries)
-        self._ensure_descriptor_sets(info._entries)
         return self.commit(ctx, info)
 
     # ------------------------------------------------------------------
@@ -1182,65 +1185,10 @@ class Memory:
             _check_response(response, "nexus_session_context")
             self._ensured_contexts.add(ctx.id)
 
-    def _write_entry(self, entry, ctx: Context, session_id: str) -> None:
-        """Write one _LogEntry to ApertureDB."""
-        common_props = {
-            "context_id": ctx.id,
-            "session_id": session_id,
-            "user_id": ctx.principal.user_id,
-            "created_at": datetime.utcnow().isoformat(),
-        }
-        if entry.metadata:
-            common_props.update(entry.metadata)
-
-        if entry.text is not None:
-            text_bytes = entry.text.encode("utf-8")
-            props = dict(common_props, document_type="text")
-            if len(entry.text) <= 2000:
-                # Short text: also store inline on Descriptor (done in _write_descriptor)
-                props["text_preview"] = entry.text[:500]
-            cmd = [{"AddBlob": {"properties": props}}]
-            response, _ = self._db.query(cmd, [text_bytes])
-            _check_response(response, "write_text_entry")
-
-        if entry.image is not None:
-            image_bytes = _to_image_bytes(entry.image)
-            props = dict(common_props)
-            cmd = [{"AddImage": {"properties": props}}]
-            response, _ = self._db.query(cmd, [image_bytes])
-            _check_response(response, "write_image_entry")
-
-        if entry.video is not None:
-            video_bytes = _to_video_bytes(entry.video)
-            props = dict(common_props)
-            cmd = [{"AddVideo": {"properties": props}}]
-            response, _ = self._db.query(cmd, [video_bytes])
-            _check_response(response, "write_video_entry")
-
-        if entry.blob is not None:
-            props = dict(common_props,
-                         document_type=entry.document_type or "")
-            cmd = [{"AddBlob": {"properties": props}}]
-            response, _ = self._db.query(cmd, [entry.blob])
-            _check_response(response, "write_blob_entry")
-
-        if entry.embedding is not None and entry.embedding_model:
-            self._write_descriptor(entry, ctx, session_id)
-
-        if entry.video_clip_embeddings is not None and entry.embedding_model:
-            self._write_video_clip_descriptors(entry, ctx, session_id)
-
-    def _write_descriptor(self, entry, ctx: Context, session_id: str) -> None:
-        """Write a pre-computed embedding as an ApertureDB Descriptor."""
-        modality = self._infer_modality_from_entry(entry)
-        dset = _dset_name(modality, entry.embedding_model)
-
-        self._ensure_descriptor_set(
-            dset, entry.embedding, modality, entry.embedding_model,
-            self._cfg.processing.descriptor_metric,
-            self._cfg.processing.descriptor_engine,
-        )
-
+    def _descriptor_props(
+        self, entry, ctx: Context, session_id: str, modality: str
+    ) -> dict:
+        """Build the properties dict for an AddDescriptor command."""
         props: dict = {
             "context_id": ctx.id,
             "session_id": session_id,
@@ -1251,13 +1199,127 @@ class Memory:
         }
         if entry.metadata:
             props.update(entry.metadata)
+        # Store short text inline on the Descriptor for search result hydration
         if entry.text and len(entry.text) <= 2000:
-            props["text"] = entry.text   # inline for short text
+            props["text"] = entry.text
+        return props
 
-        emb_bytes = _embedding_to_bytes(entry.embedding)
-        cmd = [{"AddDescriptor": {"set": dset, "properties": props}}]
-        response, _ = self._db.query(cmd, [emb_bytes])
-        _check_response(response, f"write_descriptor({dset})")
+    def _write_entry(self, entry, ctx: Context, session_id: str) -> None:
+        """Write one _LogEntry to ApertureDB.
+
+        Each content object (Blob, Image, Video) and its Descriptor are
+        written in a single atomic transaction using ``_ref`` /
+        ``AddConnection``. This ensures the Descriptor is always
+        connected to its source entity — without the connection the
+        Descriptor is an orphan and cannot be traced back to the original
+        content.
+        """
+        common_props = {
+            "context_id": ctx.id,
+            "session_id": session_id,
+            "user_id": ctx.principal.user_id,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        # Include principal org/dept so content entities can be filtered by them
+        if ctx.principal.organization:
+            common_props["organization"] = ctx.principal.organization
+        if ctx.principal.department:
+            common_props["department"] = ctx.principal.department
+        if entry.metadata:
+            common_props.update(entry.metadata)
+
+        has_emb = entry.embedding is not None and entry.embedding_model
+
+        # ---- Text blob -------------------------------------------------------
+        if entry.text is not None:
+            text_bytes = entry.text.encode("utf-8")
+            props = dict(common_props, document_type="text")
+            if len(entry.text) <= 2000:
+                props["text_preview"] = entry.text[:500]
+
+            if has_emb:
+                dset = _dset_name("text", entry.embedding_model)
+                desc_props = self._descriptor_props(entry, ctx, session_id, "text")
+                emb_bytes = _embedding_to_bytes(entry.embedding)
+                cmd = [
+                    {"AddBlob": {"properties": props, "_ref": 1}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
+                ]
+                response, _ = self._db.query(cmd, [text_bytes, emb_bytes])
+                _check_response(response, "write_text_entry+descriptor")
+            else:
+                cmd = [{"AddBlob": {"properties": props}}]
+                response, _ = self._db.query(cmd, [text_bytes])
+                _check_response(response, "write_text_entry")
+
+        # ---- Image -----------------------------------------------------------
+        if entry.image is not None:
+            image_bytes = _to_image_bytes(entry.image)
+            props = dict(common_props)
+
+            if has_emb:
+                dset = _dset_name("image", entry.embedding_model)
+                desc_props = self._descriptor_props(entry, ctx, session_id, "image")
+                emb_bytes = _embedding_to_bytes(entry.embedding)
+                cmd = [
+                    {"AddImage": {"properties": props, "_ref": 1}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
+                ]
+                response, _ = self._db.query(cmd, [image_bytes, emb_bytes])
+                _check_response(response, "write_image_entry+descriptor")
+            else:
+                cmd = [{"AddImage": {"properties": props}}]
+                response, _ = self._db.query(cmd, [image_bytes])
+                _check_response(response, "write_image_entry")
+
+        # ---- Video -----------------------------------------------------------
+        if entry.video is not None:
+            video_bytes = _to_video_bytes(entry.video)
+            props = dict(common_props)
+            # Video clip embeddings (one descriptor per segment) are handled
+            # below; a single-vector embedding on a video entry is unusual
+            # but supported.
+            if has_emb and entry.video_clip_embeddings is None:
+                dset = _dset_name("video", entry.embedding_model)
+                desc_props = self._descriptor_props(entry, ctx, session_id, "video")
+                emb_bytes = _embedding_to_bytes(entry.embedding)
+                cmd = [
+                    {"AddVideo": {"properties": props, "_ref": 1}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
+                ]
+                response, _ = self._db.query(cmd, [video_bytes, emb_bytes])
+                _check_response(response, "write_video_entry+descriptor")
+            else:
+                cmd = [{"AddVideo": {"properties": props}}]
+                response, _ = self._db.query(cmd, [video_bytes])
+                _check_response(response, "write_video_entry")
+
+        # ---- Raw blob --------------------------------------------------------
+        if entry.blob is not None:
+            props = dict(common_props, document_type=entry.document_type or "")
+
+            if has_emb:
+                dset = _dset_name("text", entry.embedding_model)
+                desc_props = self._descriptor_props(entry, ctx, session_id, "text")
+                emb_bytes = _embedding_to_bytes(entry.embedding)
+                cmd = [
+                    {"AddBlob": {"properties": props, "_ref": 1}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
+                ]
+                response, _ = self._db.query(cmd, [entry.blob, emb_bytes])
+                _check_response(response, "write_blob_entry+descriptor")
+            else:
+                cmd = [{"AddBlob": {"properties": props}}]
+                response, _ = self._db.query(cmd, [entry.blob])
+                _check_response(response, "write_blob_entry")
+
+        # ---- Per-clip video descriptors --------------------------------------
+        if entry.video_clip_embeddings is not None and entry.embedding_model:
+            self._write_video_clip_descriptors(entry, ctx, session_id)
 
     def _write_video_clip_descriptors(
         self, entry, ctx: Context, session_id: str
@@ -1375,15 +1437,18 @@ class Memory:
             if entry.embedding is not None or entry.video_clip_embeddings is not None:
                 continue   # pre-computed — nothing to do
 
-            if entry.text is not None:
-                modality = "text"
-                model = self._cfg.models.text_embedding
-            elif entry.image is not None:
+            # Image takes priority over text so that combined text+image
+            # entries are indexed in the image DescriptorSet rather than
+            # silently receiving only a text descriptor.
+            if entry.image is not None:
                 modality = "image"
                 model = self._cfg.models.image_embedding
             elif entry.video is not None:
                 modality = "video"
                 model = self._cfg.models.video_embedding
+            elif entry.text is not None:
+                modality = "text"
+                model = self._cfg.models.text_embedding
             else:
                 continue   # blob-only — no embedding needed
 
@@ -1556,16 +1621,26 @@ class Memory:
     def _search_by_metadata(
         self, filters: dict, k: int
     ) -> list[SearchResult]:
-        """Return Context entities matching metadata filters."""
-        constraints = self._build_constraints(filters)
-        cmd_body: dict = {
-            "with_class": _CLASS_CONTEXT,
-            "results": {"all_properties": True, "limit": k},
-        }
-        if constraints:
-            cmd_body["constraints"] = constraints
+        """Return content entities (Blob, Image, Video) matching metadata filters.
 
-        cmd = [{"FindEntity": cmd_body}]
+        Searches all three content entity types in a single multi-command
+        query and combines the results. Blob results are returned with
+        modality ``"text"`` (for text blobs) or ``"blob"`` (for raw blobs).
+        """
+        constraints = self._build_constraints(filters)
+        results_limit = {"all_properties": True, "limit": k}
+
+        def _body():
+            b: dict = {"results": results_limit}
+            if constraints:
+                b["constraints"] = constraints
+            return b
+
+        cmd = [
+            {"FindBlob": _body()},
+            {"FindImage": _body()},
+            {"FindVideo": _body()},
+        ]
         try:
             response, _ = self._db.query(cmd)
         except Exception as e:
@@ -1575,28 +1650,40 @@ class Memory:
 
         if isinstance(response, dict):
             return []
-        body = response[0].get("FindEntity", {})
-        entities = body.get("entities", [])
 
         results = []
-        for ent in entities:
-            results.append(SearchResult(
-                score=1.0,
-                modality="text",
-                session_id=ent.get("session_id", ""),
-                context_id=ent.get("nexus_ctx_id", ""),
-                user_id=ent.get("user_id"),
-                created_at=datetime.fromisoformat(
-                    ent.get("created_at", datetime.utcnow().isoformat())
-                ),
-                metadata={
-                    k: v for k, v in ent.items()
-                    if k not in (
-                        "nexus_ctx_id", "session_id", "user_id", "created_at"
-                    )
-                },
-            ))
-        return results
+        entity_types = [
+            ("FindBlob", None),    # modality derived from document_type
+            ("FindImage", "image"),
+            ("FindVideo", "video"),
+        ]
+        for resp_item, (cmd_name, fixed_modality) in zip(response, entity_types):
+            body = resp_item.get(cmd_name, {})
+            for ent in body.get("entities", []):
+                if fixed_modality is None:
+                    doc_type = ent.get("document_type", "")
+                    modality = "text" if doc_type == "text" else "blob"
+                else:
+                    modality = fixed_modality
+                results.append(SearchResult(
+                    score=1.0,
+                    modality=modality,
+                    session_id=ent.get("session_id", ""),
+                    context_id=ent.get("context_id", ""),
+                    user_id=ent.get("user_id"),
+                    created_at=datetime.fromisoformat(
+                        ent.get("created_at", datetime.utcnow().isoformat())
+                    ),
+                    text=ent.get("text_preview") or ent.get("text"),
+                    metadata={
+                        k: v for k, v in ent.items()
+                        if k not in (
+                            "context_id", "session_id", "user_id", "created_at",
+                            "text_preview", "text", "document_type",
+                        )
+                    },
+                ))
+        return results[:k]
 
     @staticmethod
     def _build_constraints(filters: dict) -> dict:

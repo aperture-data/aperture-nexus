@@ -79,6 +79,26 @@ def _ok_response(cmd_name: str = "AddEntity") -> tuple:
     return ([{cmd_name: {"status": 0}}], [])
 
 
+def _ok_atomic_write_response(content_cmd: str = "AddBlob") -> tuple:
+    """Response for a 3-command atomic content+descriptor+connection batch."""
+    return ([
+        {content_cmd: {"status": 0}},
+        {"AddDescriptor": {"status": 0}},
+        {"AddConnection": {"status": 0}},
+    ], [])
+
+
+def _metadata_search_response(
+    blob_entities=None, image_entities=None, video_entities=None
+) -> tuple:
+    """Response for a FindBlob+FindImage+FindVideo multi-command metadata search."""
+    return ([
+        {"FindBlob": {"status": 0, "entities": blob_entities or []}},
+        {"FindImage": {"status": 0, "entities": image_entities or []}},
+        {"FindVideo": {"status": 0, "entities": video_entities or []}},
+    ], [])
+
+
 def _make_memory(mock_connector):
     m = Memory(db_client=mock_connector)
     m._schema_ensured = True  # skip CreateIndex calls in unit tests
@@ -277,13 +297,14 @@ class TestCommit:
 
 class TestCommitWithDescriptors:
     def test_writes_descriptor_for_precomputed_embedding(self, mock_connector):
+        # New atomic write: commit() calls _ensure_descriptor_sets first,
+        # then _write_entry does [AddBlob + AddDescriptor + AddConnection] atomically.
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),                  # ensure_session
             _ok_response("AddEntity"),                  # ensure_context
             _ok_conn_response(),                        # nexus_session_context connection
-            _ok_response("AddBlob"),                    # text blob
-            _find_descriptor_set_response(count=1),     # dset exists
-            _ok_response("AddDescriptor"),              # write descriptor
+            _find_descriptor_set_response(count=1),     # _ensure_descriptor_sets (dset exists)
+            _ok_atomic_write_response("AddBlob"),       # [AddBlob+AddDescriptor+AddConnection]
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -291,17 +312,18 @@ class TestCommitWithDescriptors:
         vec = np.ones(128, dtype=np.float32)
         info.log(text="hello", embedding=vec, embedding_model="test-model")
         memory.commit(ctx, info)
-        assert mock_connector.query.call_count == 6
+        assert mock_connector.query.call_count == 5
 
     def test_creates_descriptor_set_on_first_use(self, mock_connector):
+        # _ensure_descriptor_sets (inside commit) creates the dset before the
+        # atomic [AddBlob + AddDescriptor + AddConnection] write.
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),                  # ensure_session
             _ok_response("AddEntity"),                  # ensure_context
             _ok_conn_response(),                        # nexus_session_context connection
-            _ok_response("AddBlob"),                    # text blob
-            _find_descriptor_set_response(count=0),     # dset not found
+            _find_descriptor_set_response(count=0),     # _ensure_descriptor_sets: not found
             _ok_response("AddDescriptorSet"),           # create dset
-            _ok_response("AddDescriptor"),              # write descriptor
+            _ok_atomic_write_response("AddBlob"),       # [AddBlob+AddDescriptor+AddConnection]
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -309,7 +331,7 @@ class TestCommitWithDescriptors:
         vec = np.ones(64, dtype=np.float32)
         info.log(text="hello", embedding=vec, embedding_model="test-model")
         memory.commit(ctx, info)
-        assert mock_connector.query.call_count == 7
+        assert mock_connector.query.call_count == 6
 
 
 # ---------------------------------------------------------------------------
@@ -329,16 +351,14 @@ class TestProcessAndCommit:
             memory.process_and_commit(ctx, info)
 
     def test_uses_precomputed_embedding_without_model(self, mock_connector):
-        # process_and_commit calls _ensure_descriptor_sets BEFORE commit(),
-        # so the FindDescriptorSet comes first, then the commit sequence.
+        # process_and_commit generates embeddings then calls commit(), which
+        # calls _ensure_descriptor_sets internally before the atomic write.
         mock_connector.query.side_effect = [
-            _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets
             _ok_response("AddEntity"),                # ensure_session
             _ok_response("AddEntity"),                # ensure_context
             _ok_conn_response(),                      # nexus_session_context connection
-            _ok_response("AddBlob"),                  # text blob
-            _find_descriptor_set_response(count=1),  # _write_descriptor dset check
-            _ok_response("AddDescriptor"),            # write descriptor
+            _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets (in commit)
+            _ok_atomic_write_response("AddBlob"),     # [AddBlob+AddDescriptor+AddConnection]
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -385,11 +405,14 @@ class TestVideoClipEmbeddings:
         #   4. _write_video_clip_descriptors → FindDescriptorSet + AddDescriptor × 2
         clip1 = np.ones(128, dtype=np.float32)
         clip2 = np.zeros(128, dtype=np.float32) + 0.5
+        # _ensure_descriptor_sets is now called inside commit(), after
+        # ensure_context. Video clips: AddVideo is separate (not atomic)
+        # because the descriptor is per-clip, not for the whole video.
         mock_connector.query.side_effect = [
-            _find_descriptor_set_response(count=1),   # _ensure_descriptor_sets
             _ok_response("AddEntity"),                 # ensure_session (if_not_found)
             _ok_response("AddEntity"),                 # ensure_context (if_not_found)
             _ok_conn_response(),                       # nexus_session_context connection
+            _find_descriptor_set_response(count=1),   # _ensure_descriptor_sets (in commit)
             _ok_response("AddVideo"),                  # video blob
             _find_descriptor_set_response(count=1),   # _write_video_clip_descriptors dset check
             _ok_response("AddDescriptor"),             # clip 1
@@ -456,17 +479,15 @@ class TestVideoClipEmbeddings:
         assert props["modality"] == "video"
 
     def test_single_precomputed_video_embedding_still_works(self, mock_connector):
-        # A caller who passes embedding= directly still gets one Descriptor
-        # (the existing code path — not the per-clip path).
+        # A caller who passes embedding= directly gets an atomic
+        # [AddVideo + AddDescriptor + AddConnection] write.
         vec = np.ones(128, dtype=np.float32)
         mock_connector.query.side_effect = [
-            _find_descriptor_set_response(count=1),   # _ensure_descriptor_sets
             _ok_response("AddEntity"),                 # ensure_session (if_not_found)
             _ok_response("AddEntity"),                 # ensure_context (if_not_found)
             _ok_conn_response(),                       # nexus_session_context connection
-            _ok_response("AddVideo"),
-            _find_descriptor_set_response(count=1),
-            _ok_response("AddDescriptor"),
+            _find_descriptor_set_response(count=1),   # _ensure_descriptor_sets (in commit)
+            _ok_atomic_write_response("AddVideo"),     # [AddVideo+AddDescriptor+AddConnection]
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -476,6 +497,7 @@ class TestVideoClipEmbeddings:
         mid = memory.process_and_commit(ctx, info)
         assert isinstance(mid, str)
 
+        # The atomic batch contains AddDescriptor — counts as one descriptor write
         descriptor_calls = [
             call
             for call in mock_connector.query.call_args_list
@@ -496,9 +518,8 @@ class TestAsyncProcessAndCommit:
             _ok_response("AddEntity"),                # ensure_session (if_not_found)
             _ok_response("AddEntity"),                # ensure_context (if_not_found)
             _ok_conn_response(),                      # nexus_session_context connection
-            _ok_response("AddBlob"),
-            _find_descriptor_set_response(count=1),
-            _ok_response("AddDescriptor"),
+            _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets (in commit)
+            _ok_atomic_write_response("AddBlob"),    # [AddBlob+AddDescriptor+AddConnection]
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -514,9 +535,8 @@ class TestAsyncProcessAndCommit:
             _ok_response("AddEntity"),                # ensure_session (if_not_found)
             _ok_response("AddEntity"),                # ensure_context (if_not_found)
             _ok_conn_response(),                      # nexus_session_context connection
-            _ok_response("AddBlob"),
-            _find_descriptor_set_response(count=1),
-            _ok_response("AddDescriptor"),
+            _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets (in commit)
+            _ok_atomic_write_response("AddBlob"),    # [AddBlob+AddDescriptor+AddConnection]
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -592,22 +612,26 @@ class TestSearch:
             memory.search(query=vec, modality="audio")
 
     def test_metadata_only_search(self, mock_connector):
-        entities = [
+        # Metadata search queries FindBlob+FindImage+FindVideo in one batch.
+        # Content entities use "context_id" (not "nexus_ctx_id").
+        blob_entities = [
             {
-                "nexus_ctx_id": "m-1",
+                "context_id": "m-1",
                 "session_id": "s-1",
                 "created_at": "2024-01-01T00:00:00",
                 "user_id": "alice",
+                "document_type": "text",
             }
         ]
-        mock_connector.query.return_value = (
-            [{"FindEntity": {"status": 0, "entities": entities}}], []
+        mock_connector.query.return_value = _metadata_search_response(
+            blob_entities=blob_entities
         )
         memory = _make_memory(mock_connector)
         results = memory.search(filters={"session_id": "s-1"})
         assert len(results) == 1
         assert results[0].context_id == "m-1"
         assert results[0].score == 1.0
+        assert results[0].modality == "text"
 
     def test_vector_search_returns_results(self, mock_connector):
         descriptors = [
@@ -655,9 +679,7 @@ class TestSearch:
         assert results[0].context_id == "c-1"
 
     def test_none_query_with_no_filters_returns_all(self, mock_connector):
-        mock_connector.query.return_value = (
-            [{"FindEntity": {"status": 0, "entities": []}}], []
-        )
+        mock_connector.query.return_value = _metadata_search_response()
         memory = _make_memory(mock_connector)
         results = memory.search()
         assert results == []
@@ -1232,3 +1254,345 @@ class TestAuthenticate:
         memory = Memory(db_client=mock_connector)
         with pytest.raises(NexusValidationError):
             memory.authenticate("alice", "")
+
+
+# ---------------------------------------------------------------------------
+# Bug fixes — URL handling, atomic descriptor write, metadata search
+# ---------------------------------------------------------------------------
+
+
+class TestToImageBytesUrlHandling:
+    """_to_image_bytes must download URLs before attempting file open."""
+
+    def test_http_url_is_downloaded_not_opened_as_file(self):
+        from unittest.mock import patch, MagicMock
+        from aperture_nexus.memory import _to_image_bytes
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"imagebytes"
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            result = _to_image_bytes("http://example.com/image.jpg")
+
+        mock_get.assert_called_once_with("http://example.com/image.jpg", timeout=30)
+        assert result == b"imagebytes"
+
+    def test_https_url_is_downloaded(self):
+        from unittest.mock import patch, MagicMock
+        from aperture_nexus.memory import _to_image_bytes
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"securebytes"
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("requests.get", return_value=mock_resp):
+            result = _to_image_bytes("https://example.com/img.png")
+
+        assert result == b"securebytes"
+
+    def test_file_path_string_opened_as_file(self, tmp_path):
+        from aperture_nexus.memory import _to_image_bytes
+
+        img_file = tmp_path / "img.bin"
+        img_file.write_bytes(b"filebytes")
+        result = _to_image_bytes(str(img_file))
+        assert result == b"filebytes"
+
+
+class TestAtomicDescriptorWrite:
+    """_write_entry must write content + Descriptor + Connection atomically."""
+
+    def test_text_entry_with_embedding_is_atomic(self, mock_connector):
+        """Text entry with embedding: [AddBlob+AddDescriptor+AddConnection] in one call."""
+        captured = []
+
+        def _capture(cmd, blobs=None):
+            captured.append(cmd)
+            if any("FindDescriptorSet" in c for c in cmd):
+                return _find_descriptor_set_response(count=1)
+            if any("FindEntity" in c for c in cmd):
+                return _find_response(count=1)
+            return ([{k: {"status": 0} for k in c} for c in cmd], [])
+
+        mock_connector.query.side_effect = _capture
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        vec = np.ones(64, dtype=np.float32)
+        info.log(text="hello", embedding=vec, embedding_model="test-model")
+        memory.commit(ctx, info)
+
+        atomic = next(
+            cmd for cmd in captured
+            if any("AddBlob" in c for c in cmd)
+        )
+        cmd_names = [list(c.keys())[0] for c in atomic]
+        assert cmd_names == ["AddBlob", "AddDescriptor", "AddConnection"]
+
+    def test_image_entry_with_embedding_is_atomic(self, mock_connector):
+        """Image entry with embedding: [AddImage+AddDescriptor+AddConnection] in one call."""
+        import io as _io
+        import PIL.Image as PILImage
+
+        captured = []
+
+        def _capture(cmd, blobs=None):
+            captured.append(cmd)
+            if any("FindDescriptorSet" in c for c in cmd):
+                return _find_descriptor_set_response(count=1)
+            if any("FindEntity" in c for c in cmd):
+                return _find_response(count=1)
+            return ([{k: {"status": 0} for k in c} for c in cmd], [])
+
+        mock_connector.query.side_effect = _capture
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        vec = np.ones(64, dtype=np.float32)
+        buf = _io.BytesIO()
+        PILImage.new("RGB", (4, 4)).save(buf, format="PNG")
+        info.log(image=buf.getvalue(), embedding=vec, embedding_model="clip")
+        memory.commit(ctx, info)
+
+        atomic = next(
+            cmd for cmd in captured
+            if any("AddImage" in c for c in cmd)
+        )
+        cmd_names = [list(c.keys())[0] for c in atomic]
+        assert cmd_names == ["AddImage", "AddDescriptor", "AddConnection"]
+
+    def test_connection_uses_nexus_descriptor_class(self, mock_connector):
+        """The AddConnection in the atomic write uses class='nexus_descriptor'."""
+        captured = []
+
+        def _capture(cmd, blobs=None):
+            captured.append(cmd)
+            if any("FindDescriptorSet" in c for c in cmd):
+                return _find_descriptor_set_response(count=1)
+            if any("FindEntity" in c for c in cmd):
+                return _find_response(count=1)
+            return ([{k: {"status": 0} for k in c} for c in cmd], [])
+
+        mock_connector.query.side_effect = _capture
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        vec = np.ones(64, dtype=np.float32)
+        info.log(text="linked", embedding=vec, embedding_model="m")
+        memory.commit(ctx, info)
+
+        atomic = next(
+            cmd for cmd in captured
+            if any("AddBlob" in c for c in cmd)
+        )
+        conn = next(c["AddConnection"] for c in atomic if "AddConnection" in c)
+        assert conn["class"] == "nexus_descriptor"
+        assert conn["src"] == 2   # Descriptor _ref
+        assert conn["dst"] == 1   # Blob _ref
+
+    def test_text_entry_without_embedding_is_single_blob(self, mock_connector):
+        """Text entry without embedding: just AddBlob, no atomic batch."""
+        captured = []
+
+        def _capture(cmd, blobs=None):
+            captured.append(cmd)
+            if any("FindEntity" in c for c in cmd):
+                return _find_response(count=1)
+            return _ok_response(list(cmd[0].keys())[0])
+
+        mock_connector.query.side_effect = _capture
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        info.log(text="no embedding")
+        memory.commit(ctx, info)
+
+        blob_call = next(
+            cmd for cmd in captured
+            if any("AddBlob" in c for c in cmd)
+        )
+        assert len(blob_call) == 1
+        assert "AddBlob" in blob_call[0]
+
+    def test_org_and_dept_written_to_content_entity(self, mock_connector):
+        """organization and department from the principal land on content entities."""
+        captured = []
+
+        def _capture(cmd, blobs=None):
+            captured.append(cmd)
+            if any("FindEntity" in c for c in cmd):
+                return _find_response(count=1)
+            return _ok_response(list(cmd[0].keys())[0])
+
+        mock_connector.query.side_effect = _capture
+        memory = _make_memory(mock_connector)
+        from aperture_nexus.auth import Principal
+        principal = Principal(
+            user_id="alice", user_name="Test User",
+            organization="AcmeCorp", department="support",
+        )
+        ctx = _make_ctx(principal=principal)
+        info = _make_info(ctx)
+        info.log(text="orgtest")
+        memory.commit(ctx, info)
+
+        blob_call = next(
+            cmd for cmd in captured
+            if any("AddBlob" in c for c in cmd)
+        )
+        props = blob_call[0]["AddBlob"]["properties"]
+        assert props["organization"] == "AcmeCorp"
+        assert props["department"] == "support"
+
+
+class TestMetadataSearchContentEntities:
+    """_search_by_metadata searches Blob/Image/Video, not NexusContext."""
+
+    def test_blob_results_have_text_modality(self, mock_connector):
+        blob_entities = [{
+            "context_id": "c-1",
+            "session_id": "s-1",
+            "user_id": "alice",
+            "created_at": "2024-01-01T00:00:00",
+            "document_type": "text",
+        }]
+        mock_connector.query.return_value = _metadata_search_response(
+            blob_entities=blob_entities
+        )
+        memory = _make_memory(mock_connector)
+        results = memory.search(filters={"session_id": "s-1"})
+        assert len(results) == 1
+        assert results[0].modality == "text"
+        assert results[0].context_id == "c-1"
+
+    def test_image_results_have_image_modality(self, mock_connector):
+        image_entities = [{
+            "context_id": "c-2",
+            "session_id": "s-2",
+            "user_id": "bob",
+            "created_at": "2024-01-01T00:00:00",
+        }]
+        mock_connector.query.return_value = _metadata_search_response(
+            image_entities=image_entities
+        )
+        memory = _make_memory(mock_connector)
+        results = memory.search(filters={"session_id": "s-2"})
+        assert len(results) == 1
+        assert results[0].modality == "image"
+        assert results[0].context_id == "c-2"
+
+    def test_video_results_have_video_modality(self, mock_connector):
+        video_entities = [{
+            "context_id": "c-3",
+            "session_id": "s-3",
+            "user_id": "carol",
+            "created_at": "2024-01-01T00:00:00",
+        }]
+        mock_connector.query.return_value = _metadata_search_response(
+            video_entities=video_entities
+        )
+        memory = _make_memory(mock_connector)
+        results = memory.search(filters={"session_id": "s-3"})
+        assert len(results) == 1
+        assert results[0].modality == "video"
+
+    def test_combines_results_from_all_entity_types(self, mock_connector):
+        mock_connector.query.return_value = _metadata_search_response(
+            blob_entities=[{
+                "context_id": "c-b", "session_id": "s", "user_id": "u",
+                "created_at": "2024-01-01T00:00:00", "document_type": "text",
+            }],
+            image_entities=[{
+                "context_id": "c-i", "session_id": "s", "user_id": "u",
+                "created_at": "2024-01-01T00:00:00",
+            }],
+            video_entities=[{
+                "context_id": "c-v", "session_id": "s", "user_id": "u",
+                "created_at": "2024-01-01T00:00:00",
+            }],
+        )
+        memory = _make_memory(mock_connector)
+        results = memory.search(filters={"session_id": "s"})
+        assert len(results) == 3
+        modalities = {r.modality for r in results}
+        assert modalities == {"text", "image", "video"}
+
+    def test_uses_single_multi_command_query(self, mock_connector):
+        """All three Find queries are batched in a single db.query() call."""
+        mock_connector.query.return_value = _metadata_search_response()
+        memory = _make_memory(mock_connector)
+        memory.search(filters={"session_id": "s-x"})
+        assert mock_connector.query.call_count == 1
+        cmd = mock_connector.query.call_args.args[0]
+        cmd_names = [list(c.keys())[0] for c in cmd]
+        assert cmd_names == ["FindBlob", "FindImage", "FindVideo"]
+
+    def test_text_preview_used_as_text_field(self, mock_connector):
+        blob_entities = [{
+            "context_id": "c-1",
+            "session_id": "s-1",
+            "user_id": "alice",
+            "created_at": "2024-01-01T00:00:00",
+            "document_type": "text",
+            "text_preview": "short text",
+        }]
+        mock_connector.query.return_value = _metadata_search_response(
+            blob_entities=blob_entities
+        )
+        memory = _make_memory(mock_connector)
+        results = memory.search(filters={"session_id": "s-1"})
+        assert results[0].text == "short text"
+
+
+class TestModalityPriority:
+    """_generate_missing_embeddings: image > video > text."""
+
+    def test_image_takes_priority_over_text(self, mock_connector):
+        """When an entry has both text and image, image embedding is generated."""
+        from unittest.mock import patch, MagicMock
+
+        captured_modality = []
+
+        def fake_embed_image(img):
+            captured_modality.append("image")
+            return np.ones(512, dtype=np.float32)
+
+        def fake_embed_text(texts):
+            captured_modality.append("text")
+            return [np.ones(512, dtype=np.float32)]
+
+        # Entry has both text and image: two atomic writes (text blob + image blob),
+        # each with its own descriptor in the atomic batch.
+        mock_connector.query.side_effect = [
+            _ok_response("AddEntity"),                # session
+            _ok_response("AddEntity"),                # context
+            _ok_conn_response(),                      # session_context conn
+            _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets (image dset)
+            _ok_atomic_write_response("AddBlob"),     # text blob + descriptor
+            _ok_atomic_write_response("AddImage"),    # image + descriptor
+        ]
+        memory = _make_memory(mock_connector)
+        memory._cfg.models.image_embedding = "ViT-B/16"
+        memory._cfg.models.text_embedding = "ViT-B/16"
+
+        import io as _io
+        import PIL.Image as PILImage
+        buf = _io.BytesIO()
+        PILImage.new("RGB", (4, 4)).save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        info.log(text="also has text", image=image_bytes)
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_image.side_effect = fake_embed_image
+        mock_embedder.embed_text.side_effect = fake_embed_text
+
+        with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
+             patch("aperture_nexus._embeddings.get_clip_embedder", return_value=mock_embedder):
+            memory.process_and_commit(ctx, info)
+
+        # image embedding was generated; text embedder was never called
+        assert captured_modality == ["image"]
