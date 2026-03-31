@@ -24,7 +24,7 @@ from aperture_nexus.exceptions import NexusConnectionError
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_connector(host="localhost", port=55555, use_ssl=True):
+def _make_connector(host="localhost", port=55556, use_ssl=True):
     """Return a mock Connector whose config object mirrors ApertureDB's."""
     c = MagicMock()
     # Connector stores params on connector.config (source of truth).
@@ -256,8 +256,8 @@ class TestConnectionDescription:
         assert connection_description(connector) == "db.example.com:12345 (tcp)"
 
     def test_returns_localhost_default(self):
-        connector = _make_connector(host="localhost", port=55555, use_ssl=True)
-        assert connection_description(connector) == "localhost:55555 (ssl)"
+        connector = _make_connector(host="localhost", port=55556, use_ssl=True)
+        assert connection_description(connector) == "localhost:55556 (ssl)"
 
     def test_falls_back_on_missing_config(self):
         """No config attribute → safe fallback string."""
@@ -267,7 +267,7 @@ class TestConnectionDescription:
 
     def test_does_not_expose_credentials(self):
         """Description must not contain passwords, tokens, or usernames."""
-        connector = _make_connector(host="myhost", port=55555)
+        connector = _make_connector(host="myhost", port=55556)
         connector.config.password = "supersecret"
         connector.config.token = "mytoken"
         connector.config.username = "admin"

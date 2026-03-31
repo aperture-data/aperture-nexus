@@ -13,12 +13,16 @@ Prerequisites:
     adb-nexus init         # or set credentials via environment variables
 """
 
+import os
 from aperture_nexus import Memory, Context, Information
 
 # ── Connect ──────────────────────────────────────────────────────────────────
 
 memory = Memory()
-principal = memory.authenticate(user_id="alice", api_key="changeme")
+principal = memory.authenticate(
+    user_id=os.environ["NEXUS_USER_ID"],
+    api_key=os.environ["NEXUS_API_KEY"],
+)
 
 print(f"Authenticated as: {principal}")
 

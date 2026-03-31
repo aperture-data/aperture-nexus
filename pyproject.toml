@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aperture-nexus"
 version = "0.1.0"
-description = "The Unified KMC (Knowledge, Memory, Context) Engine for Agentic State"
+description = "The cognition engine for enterprise AI — establish context, capture multimodal knowledge, and commit to memory for retrieval."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 # Core dependencies — kept minimal intentionally.
-# Install extras for additional capabilities: pip install aperture-nexus[video,metrics,ui]
+# Install extras for additional capabilities: pip install aperture-nexus[video,metrics,ui,clip]
 dependencies = [
     "aperturedb>=0.4.55",
     "numpy>=1.24",
@@ -38,9 +38,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Video scene detection (requires OpenCV internally via pyscenedetect)
+# Video frame extraction for CLIP embedding
 video = [
-    "scenedetect[opencv]>=0.6",
+    "opencv-python>=4.9",
 ]
 
 # Token-based text chunking
@@ -61,6 +61,17 @@ ui = [
     "python-multipart>=0.0.9",
 ]
 
+# CLIP embeddings (text, image, video)
+clip = [
+    "open-clip-torch>=2.24",
+]
+
+# Integration test dependencies (spins up local ApertureDB via Docker)
+integration = [
+    "testcontainers>=4.4",
+    "docker>=7.0",
+]
+
 # Development dependencies
 dev = [
     "pytest>=8.0",
@@ -71,11 +82,13 @@ dev = [
     "autopep8>=2.0",
     "pre-commit>=3.0",
     "mypy>=1.10",
+    "testcontainers>=4.4",
+    "docker>=7.0",
 ]
 
 # Install everything
 all = [
-    "aperture-nexus[video,tokens,metrics,ui]",
+    "aperture-nexus[video,tokens,metrics,ui,clip]",
 ]
 
 [project.scripts]

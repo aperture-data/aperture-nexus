@@ -34,14 +34,15 @@ class Context:
 
     Attributes:
         principal: The authenticated identity. Required.
-        session_id: ID of an existing session. Use
-            ``memory.generate_session_id()`` for multi-participant
-            sessions.
+        session_id: Unique session identifier. Use
+            ``generate_session_id()`` to generate one.
         session_name: Human-readable session name. Must be unique
             within the principal's scope.
         purpose: Why this interaction is happening. Stored as
             metadata; searchable.
         organization: Group scope for permission and search filtering.
+        department: Department this context belongs to. Inherited
+            from ``principal.department`` if not set explicitly.
         priority: Relative processing priority. Higher values are
             processed first in batch operations. Default: 0.
         restrictions: Access constraints applied during search.
@@ -49,6 +50,9 @@ class Context:
         id: Auto-generated context ID. Read-only; not set by caller.
 
     Example:
+        from aperture_nexus import Memory, Context, generate_session_id
+
+        memory = Memory()
         principal = memory.authenticate(user_id="alice", api_key="...")
 
         # Single participant
@@ -60,7 +64,7 @@ class Context:
         )
 
         # One of many participants in a shared session
-        sid = memory.generate_session_id()
+        sid = generate_session_id()
         ctx_a = Context(principal=principal_a, session_id=sid)
         ctx_b = Context(principal=principal_b, session_id=sid)
     """
@@ -70,6 +74,7 @@ class Context:
     session_name: Optional[str] = None
     purpose: Optional[str] = None
     organization: Optional[str] = None
+    department: Optional[str] = None
     priority: int = 0
     restrictions: Optional[dict] = None
     id: str = field(
@@ -105,7 +110,7 @@ class Context:
         ):
             raise NexusValidationError(
                 "session_id must be a non-empty string. "
-                "Use memory.generate_session_id() to create one."
+                "Use generate_session_id() to create one."
             )
 
         if (

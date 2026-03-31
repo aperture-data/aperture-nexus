@@ -47,15 +47,10 @@ bash setup.sh
 
 ApertureDB is ready when you see it accept connections — `adb-nexus validate` will confirm this in step 4.
 
-> **Mac users:** If port 55555 conflicts with AirPlay or another service, start on a different port:
-> ```bash
-> APERTUREDB_PORT=15555 docker compose up -d
-> ```
-> Then add `APERTUREDB_PORT=15555` to your `.env` file.
 
 ---
 
-## 3. Configure credentials
+## 3. Configure Credentials
 
 The simplest option is an encoded ApertureDB key:
 
@@ -63,14 +58,16 @@ The simplest option is an encoded ApertureDB key:
 export APERTUREDB_KEY="adbp_..."
 ```
 
-Or create a `.env` file (copy from the example and edit):
+Or create a `.env` file for the local Docker Compose setup — the
+example file has the right defaults and works without any changes:
 
 ```bash
 cp .env.example .env
-# Edit .env with your ApertureDB host, port, user, and password
 ```
 
-For the local Docker Compose setup, the default credentials work without any changes.
+For a remote ApertureDB instance, replace the `APERTUREDB_JSON` value
+with your host, port, and credentials, or use `APERTUREDB_KEY` if you
+have an encoded key from `adb config`.
 
 Then run the setup wizard to generate your config file:
 
@@ -82,7 +79,7 @@ The wizard walks you through connection settings and optional model configuratio
 
 ---
 
-## 4. Verify your setup
+## 4. Verify Your Setup
 
 ```bash
 adb-nexus validate
@@ -92,7 +89,7 @@ If everything is working, you will see a confirmation that ApertureDB is reachab
 
 ---
 
-## 5. Your first memory
+## 5. Your First Memory
 
 Run the quickstart example:
 
@@ -136,7 +133,7 @@ for r in results:
 
 ---
 
-## 6. Add an image
+## 6. Add an Image
 
 `Information.log()` accepts images in many forms — file path, URL, PIL Image, or numpy array:
 
@@ -149,7 +146,7 @@ To generate embeddings and enable image similarity search, call `process_and_com
 
 ---
 
-## 7. Multi-participant sessions
+## 7. Multi-Participant Sessions
 
 Multiple users or agents can participate in the same session. Each gets their own `Context`:
 
@@ -174,7 +171,7 @@ results = memory.search(query="order 4821", filters={"session_id": sid})
 
 ---
 
-## What's next
+## What's Next
 
 - See [Concepts](concepts.md) for the full KMC model and ApertureDB storage mapping
 - See [API Reference](api-reference.md) for all parameters and return types

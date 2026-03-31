@@ -48,6 +48,7 @@ ENV_CONFIG_PATH = "APERTURE_NEXUS_CONFIG"
 # These take precedence over anything in the config file.
 ENV_LOG_LEVEL = "APERTURE_NEXUS_LOG_LEVEL"
 ENV_UI_API_KEY = "APERTURE_NEXUS_UI_API_KEY"
+ENV_NEXUS_API_KEY = "NEXUS_API_KEY"
 
 def _default_search_paths() -> list[Path]:
     """
@@ -73,21 +74,47 @@ class ModelsConfig(BaseModel):
     AI models used for embedding and processing.
 
     Required only when process_and_commit() or async_process_and_commit()
-    is called. If you only use commit() (raw storage), omit this section.
+    is called with entries that have no pre-computed embeddings.
+    If you only use commit() (raw storage), omit this section.
 
-    Each modality has its own embedding model and its own ApertureDB
-    DescriptorSet (nexus_text, nexus_image, nexus_video). The model name
-    is stored on the DescriptorSet at creation time. Mismatches between
-    index-time and query-time models are caught at search time with a
-    NexusConfigError.
+    Recommended default: CLIP (ViT-B/16)
+    ======================================
+    CLIP works across all modalities (text, image, video frames) using
+    a single model and a shared embedding space. This means you can
+    search with a text query and find images, or vice versa.
 
-    Example (aperture_nexus.json):
+    To use CLIP, set all embedding fields to a CLIP model name and
+    install the dependency:
+        pip install aperture-nexus[clip]
+
+    CLIP limitations
+    ----------------
+    CLIP was trained on image-text pairs, not document retrieval.
+    For workloads that are primarily text-based, a purpose-built text
+    embedding model will give significantly better recall:
+    - BGE-M3 (bge-m3): strong multilingual, long-document retrieval
+    - text-embedding-3-small (OpenAI API): strong general-purpose text
+    - Instructor-XL: task-aware embeddings
+
+    CLIP's text encoder also truncates input at 77 tokens (roughly
+    300 characters). Longer passages must be chunked before embedding.
+    Dedicated text models handle up to 8192 tokens.
+
+    Example (aperture_nexus.json) — CLIP for everything:
         {
             "models": {
-                "llm": "gpt-4o",
+                "text_embedding": "ViT-B/16",
+                "image_embedding": "ViT-B/16",
+                "video_embedding": "ViT-B/16"
+            }
+        }
+
+    Example — dedicated text model + CLIP for images/video:
+        {
+            "models": {
                 "text_embedding": "text-embedding-3-small",
-                "image_embedding": "clip-vit-base-patch32",
-                "video_embedding": "clip-vit-base-patch32"
+                "image_embedding": "ViT-B/16",
+                "video_embedding": "ViT-B/16"
             }
         }
     """
@@ -197,6 +224,24 @@ class ProcessingConfig(BaseModel):
         ),
     )
 
+    # DescriptorSet defaults
+    descriptor_metric: str = Field(
+        default="CS",
+        description=(
+            "Distance metric for ApertureDB DescriptorSets. "
+            "'CS' = cosine similarity (recommended). "
+            "Also supported: 'L2', 'IP'."
+        ),
+    )
+    descriptor_engine: str = Field(
+        default="HNSW",
+        description=(
+            "Index engine for ApertureDB DescriptorSets. "
+            "'HNSW' = approximate nearest-neighbor, best speed/recall tradeoff (default). "
+            "Also supported: 'FaissFlat' (exact, slow at scale), 'FaissIVFFlat' (IVF quantized)."
+        ),
+    )
+
     # Video processing
     video_clip_duration: float = Field(
         default=10.0,
@@ -215,23 +260,19 @@ class ProcessingConfig(BaseModel):
         default=30,
         ge=1,
         description=(
-            "Extract one frame every N frames when scene detection "
-            "is disabled. At 30fps this extracts ~1 frame per second."
+            "Sample one frame every N video frames. "
+            "At 30fps this extracts ~1 frame per second."
         ),
     )
-    video_scene_detection: bool = Field(
-        default=False,
-        description=(
-            "Extract frames at scene boundaries instead of fixed intervals. "
-            "Requires pip install aperture-nexus[video]."
-        ),
-    )
-    video_max_frames: int = Field(
-        default=100,
+    video_frames_per_clip: int = Field(
+        default=10,
         ge=1,
         description=(
-            "Hard cap on frames extracted per video, "
-            "regardless of method."
+            "Number of sampled frames to group into one clip segment. "
+            "Combined with video_frame_interval this controls clip duration: "
+            "at frame_interval=30 and frames_per_clip=10, each clip covers "
+            "~300 original frames (~10s at 30fps). One embedding is produced "
+            "per clip."
         ),
     )
 
@@ -256,6 +297,39 @@ class ProcessingConfig(BaseModel):
                 f"({self.video_clip_duration})."
             )
         return self
+
+
+class AdminConfig(BaseModel):
+    """
+    NexusAdmin identity management settings.
+
+    Controls the default organization and department created by
+    NexusAdmin at init time. These are the fallback scope for
+    Principals that are not assigned to a specific department.
+
+    Example (aperture_nexus.json):
+        {
+            "admin": {
+                "default_organization": "my-company",
+                "default_department": "general"
+            }
+        }
+    """
+
+    default_organization: str = Field(
+        default="nexus_default_org",
+        description=(
+            "Organization entity created at NexusAdmin init time. "
+            "Used as fallback for Principals with no organization set."
+        ),
+    )
+    default_department: str = Field(
+        default="nexus_default_dept",
+        description=(
+            "Department entity created at NexusAdmin init time. "
+            "Used as fallback for Principals with no department set."
+        ),
+    )
 
 
 class LoggingConfig(BaseModel):
@@ -412,6 +486,7 @@ class NexusConfig(BaseModel):
 
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
+    admin: AdminConfig = Field(default_factory=AdminConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
@@ -502,16 +577,6 @@ def _validate_optional_deps(config: NexusConfig) -> None:
     Args:
         config: The fully loaded and validated config.
     """
-    if config.processing.video_scene_detection:
-        try:
-            import scenedetect  # noqa: F401
-        except ImportError:
-            raise NexusConfigError(
-                "processing.video_scene_detection is enabled but PySceneDetect "
-                "is not installed. "
-                "Install it with: pip install aperture-nexus[video]"
-            )
-
     if config.processing.text_chunk_unit == "tokens":
         try:
             import tiktoken  # noqa: F401

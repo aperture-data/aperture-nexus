@@ -6,7 +6,7 @@
 # IMPORTANT: The ApertureDB community edition image is licensed for
 # evaluation and development only — no production or commercial use.
 # See: https://www.aperturedata.io/docker-license
-# For production licensing: https://aperturedata.io/contact
+# For production licensing: https://www.aperturedata.io/contact-us
 #
 # Two web interfaces are available after startup:
 #   http://localhost:8087  — ApertureDB Web UI (raw database objects:
@@ -19,13 +19,8 @@
 #   docker compose down          # stop (data preserved)
 #   docker compose down -v       # stop and delete all data
 #
-# Mac users: AirPlay Receiver uses port 5000 and 7000. ApertureDB's
-# default port 55555 is fine on Mac, but if you see a conflict disable
-# AirPlay Receiver in System Settings > General > AirDrop & Handoff,
-# or use the APERTUREDB_PORT override below.
-#
 # Override the host port without editing this file:
-#   APERTUREDB_PORT=15555 docker compose up -d
+#   APERTUREDB_PORT=12345 docker compose up -d
 
 services:
 
@@ -36,7 +31,7 @@ services:
       # HOST_PORT:CONTAINER_PORT
       # Change APERTUREDB_PORT env var to use a different host port.
       # The container always listens on 55555 internally.
-      - "${APERTUREDB_PORT:-55555}:55555"
+      - "${APERTUREDB_PORT:-55556}:55555"
     environment:
       ADB_MASTER_KEY: "${APERTUREDB_PASSWORD:-admin}"
       ADB_FORCE_SSL: "false"

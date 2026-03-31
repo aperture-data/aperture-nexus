@@ -6,7 +6,13 @@ sidebar_position: 1
 
 # Concepts
 
-aperture-nexus is built around three objects — **Context**, **Information**, and **Memory** — that together form the KMC (Knowledge, Memory, Context) engine. This page explains what each object represents, how they relate, and how they map to ApertureDB's storage primitives.
+aperture-nexus is the cognition layer for enterprise AI. Agents use it
+to establish relations for context, capture multimodal knowledge, and
+commit it to memory for retrieval when needed. It is built around three
+objects — **Context**, **Information**, and **Memory** — that together
+implement the KMC (Knowledge, Memory, Context) model. This page explains
+what each object represents, how they relate, and how they map to
+ApertureDB's storage primitives.
 
 ---
 

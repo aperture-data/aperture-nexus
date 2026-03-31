@@ -78,11 +78,12 @@ def get_connector(db_client: Optional[Connector] = None) -> Connector:
     except AssertionError as e:
         # create_connector() uses assert statements for config errors.
         raise NexusConnectionError(
-            f"Could not find ApertureDB credentials. "
-            f"Set APERTUREDB_KEY, or set APERTUREDB_HOST / APERTUREDB_PORT / "
-            f"APERTUREDB_USER / APERTUREDB_PASSWORD environment variables, "
-            f"or run 'adb config' to create a saved configuration. "
-            f"Run 'adb-nexus validate' to test your setup. "
+            "Could not find ApertureDB credentials. "
+            "Set APERTUREDB_KEY (encoded key), or set APERTUREDB_JSON "
+            '(e.g. \'{"host":"localhost","port":55556,"username":"admin",'
+            '"password":"...","use_ssl":false}\'), '
+            "or run 'adb config' to create a saved configuration. "
+            "Run 'adb-nexus validate' to test your setup. "
             f"Details: {e}"
         ) from e
     except Exception as e:
@@ -176,7 +177,7 @@ def connection_description(connector: Connector) -> str:
 
     Example:
         desc = connection_description(connector)
-        # "localhost:55555 (ssl)" or "db.internal:55555 (tcp)"
+        # "localhost:55556 (ssl)" or "db.internal:55555 (tcp)"
     """
     try:
         config = connector.config

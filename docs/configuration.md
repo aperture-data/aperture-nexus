@@ -52,8 +52,7 @@ No root access is required for any of these paths.
         "video_clip_duration": 10.0,
         "video_clip_overlap": 0.5,
         "video_frame_interval": 30,
-        "video_scene_detection": false,
-        "video_max_frames": 100
+        "video_frames_per_clip": 10
     },
     "logging": {
         "level": "ERROR"
@@ -112,7 +111,7 @@ Controls how aperture-nexus processes and stores multimodal data.
 | `retry_attempts` | `3` | Retry attempts for failed DB writes before raising `NexusStorageError`. Set to `0` to disable. |
 | `retry_interval` | `1.0` | Seconds between retry attempts. |
 
-### Text chunking
+### Text Chunking
 
 Long text is chunked automatically before embedding. Tune chunk size to your embedding model's context window.
 
@@ -122,19 +121,16 @@ Long text is chunked automatically before embedding. Tune chunk size to your emb
 | `text_chunk_overlap` | `200` | Overlap between consecutive chunks. Must be less than `text_chunk_size`. |
 | `text_chunk_unit` | `"characters"` | `"characters"` (default, no extra deps) or `"tokens"` (requires `pip install aperture-nexus[tokens]`). |
 
-### Video processing
+### Video Processing
 
-Videos are split into clips. Each clip is embedded as a single vector by `models.video_embedding` and stored as one `Descriptor` in ApertureDB. Use a temporal video embedding model (e.g. CLIP4Clip, VideoCLIP) — image models cannot embed clips.
-
-`video_frame_interval`, `video_scene_detection`, and `video_max_frames` control how frames are **sampled internally** by the embedding model call. They do not produce separate embeddings.
+Videos are split into clip segments. Each segment gets one embedding (mean of CLIP frame embeddings within that segment) stored as one `Descriptor` in ApertureDB with `start_frame`/`stop_frame` metadata. This preserves temporal structure: a text query finds the specific segment of a video that matches, not just whether the video matches at all.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `video_clip_duration` | `10.0` | Clip duration in seconds. One embedding is produced per clip. Match to your model's expected input length. |
+| `video_clip_duration` | `10.0` | Duration of each clip in seconds. Adjust to match your embedding model's expected input length. |
 | `video_clip_overlap` | `0.5` | Overlap between consecutive clips in seconds. |
-| `video_frame_interval` | `30` | Hint to the embedding model: sample one frame every N frames when selecting frames from the clip. At 30fps: ~1 frame/sec. |
-| `video_scene_detection` | `false` | Use scene boundaries instead of fixed intervals when selecting frames within a clip. Requires `pip install aperture-nexus[video]`. |
-| `video_max_frames` | `100` | Maximum frames passed to the embedding model per clip, regardless of sampling method. |
+| `video_frame_interval` | `30` | Sample one frame every N frames. At 30fps: ~1 frame/sec. |
+| `video_frames_per_clip` | `10` | Number of sampled frames to group into one clip segment. At `frame_interval=30` and `frames_per_clip=10`, each clip covers ~300 original frames (~10s at 30fps). |
 
 ---
 
@@ -200,7 +196,7 @@ adb-nexus ui --host 0.0.0.0 --port 8080
 
 ---
 
-## Environment variable overrides
+## Environment Variable Overrides
 
 Environment variables always take precedence over the config file.
 
@@ -217,7 +213,7 @@ Environment variables always take precedence over the config file.
 
 ---
 
-## IDE autocomplete
+## IDE Autocomplete
 
 `adb-nexus init` also generates `aperture_nexus.schema.json`. To activate JSON Schema validation and autocomplete in VS Code, add to `.vscode/settings.json`:
 
