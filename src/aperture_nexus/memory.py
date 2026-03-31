@@ -1376,6 +1376,7 @@ class Memory:
             }
         }]
         response, _ = self._db.query(cmd)
+        _check_response(response, f"find DescriptorSet {set_name!r}")
         body = response[0].get("FindDescriptorSet", {})
         if body.get("count", 0) > 0:
             return   # already exists

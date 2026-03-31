@@ -2,7 +2,7 @@
 MemoryTask — async processing task for Memory.async_process_and_commit().
 
 Tasks are created by async_process_and_commit() and run in the background.
-Their state is persisted in ApertureDB so it survives process restarts.
+Their state is tracked in-memory only; it does not survive process restarts.
 Callers poll via is_ready(), block via await task.wait(), or resubmit via
 task.retry() after failure.
 """
@@ -43,7 +43,9 @@ class MemoryTask:
     Attributes:
         task_id: Unique identifier for this task (UUID).
         status: Current state: ``"pending"`` | ``"processing"``
-            | ``"complete"`` | ``"failed"``.
+            | ``"complete"`` | ``"failed"``. Held in memory only —
+            not persisted to ApertureDB and not visible across processes
+            or restarts.
         context_id: The committed context ID. Available only when
             ``status == "complete"``.
         completed_at: Completion timestamp. Available only when
@@ -104,7 +106,7 @@ class MemoryTask:
         while not self.is_ready():
             await asyncio.sleep(0.5)
 
-    def retry(self) -> None:
+    async def retry(self) -> None:
         """Resubmit a failed task for processing.
 
         Only valid when ``status == "failed"``. Resets the task to
@@ -116,7 +118,7 @@ class MemoryTask:
 
         Example:
             for task in memory.failed_commits():
-                task.retry()
+                await task.retry()
         """
         if self.status != _FAILED:
             raise NexusValidationError(
@@ -135,7 +137,7 @@ class MemoryTask:
         self.error_message = None
         self.failed_at = None
         logger.debug("Retrying task %r", self.task_id)
-        asyncio.ensure_future(self._retry_fn())
+        await self._retry_fn()
 
     # ------------------------------------------------------------------
     # Internal state transitions — called by Memory, not by callers

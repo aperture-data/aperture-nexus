@@ -229,12 +229,12 @@ class ClipEmbedder:
         import PIL.Image as PILImage
 
         # Write bytes to a temp file if needed
-        tmp = None
+        tmp_path = None
         if isinstance(video, bytes):
-            tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-            tmp.write(video)
-            tmp.flush()
-            path = tmp.name
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                tmp.write(video)
+                tmp_path = tmp.name
+            path = tmp_path
         else:
             path = video
 
@@ -253,8 +253,8 @@ class ClipEmbedder:
                 frame_number += 1
             cap.release()
         finally:
-            if tmp is not None:
-                os.unlink(path)
+            if tmp_path is not None:
+                os.unlink(tmp_path)
 
         if not sampled:
             raise NexusValidationError(

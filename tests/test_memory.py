@@ -1156,6 +1156,15 @@ class TestEnsureDescriptorSet:
         memory._ensure_descriptor_set("nexus_text__mymodel", vec, "text", "mymodel", "CS", "HNSW")
         assert mock_connector.query.call_count == 1
 
+    def test_find_error_raises_storage_error(self, mock_connector):
+        mock_connector.query.side_effect = [
+            ([{"FindDescriptorSet": {"status": -1, "info": "internal error"}}], []),
+        ]
+        memory = _make_memory(mock_connector)
+        vec = np.ones(128, dtype=np.float32)
+        with pytest.raises(NexusStorageError):
+            memory._ensure_descriptor_set("nexus_text__mymodel", vec, "text", "mymodel", "CS", "HNSW")
+
     def test_infers_dimensions_from_embedding(self, mock_connector):
         captured = []
 

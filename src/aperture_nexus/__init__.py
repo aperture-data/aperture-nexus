@@ -43,7 +43,6 @@ __all__ = [
     "NexusAdmin",
     "SearchResult",
     "MemoryEntry",
-    "MemoryTask",
     # Utilities
     "generate_session_id",
     # Exceptions
@@ -99,7 +98,4 @@ def __getattr__(name: str):
     if name == "NexusAdmin":
         from aperture_nexus.admin import NexusAdmin
         return NexusAdmin
-    if name == "MemoryTask":
-        from aperture_nexus.tasks import MemoryTask
-        return MemoryTask
     raise AttributeError(f"module 'aperture_nexus' has no attribute {name!r}")

@@ -50,10 +50,10 @@ class Context:
         id: Auto-generated context ID. Read-only; not set by caller.
 
     Example:
-        from aperture_nexus import NexusAdmin, Context, generate_session_id
+        from aperture_nexus import Memory, Context, generate_session_id
 
-        admin = NexusAdmin()
-        principal = admin.authenticate(user_id="alice", api_key="...")
+        memory = Memory()
+        principal = memory.authenticate(user_id="alice", api_key="...")
 
         # Single participant
         ctx = Context(

@@ -125,9 +125,6 @@ context_id = memory.commit(ctx, info)
 # Process and commit (model calls + store, sync)
 memory.process_and_commit(ctx, info)
 
-# Process and commit (async — returns MemoryTask immediately)
-task = await memory.async_process_and_commit(ctx, info)
-
 # Connect memories or contexts
 memory.connect(source=ctx, target=other_ctx, relationship="follows")
 
@@ -140,10 +137,6 @@ results = memory.search(query=my_vector, modality="image")
 
 # Remove
 memory.remove(ctx.id)
-
-# Task monitoring
-memory.pending_commits()   # list[MemoryTask]
-memory.failed_commits()    # list[MemoryTask]
 
 # Stats (opt-in)
 memory.stats()              # session scope
@@ -204,22 +197,6 @@ info.log(text="See attached", blob=pdf_bytes, document_type="pdf")
 
 # Query (for retrieval intent logging)
 info.query("what did we discuss last quarter?")
-```
-
-### `MemoryTask`
-
-Returned by `async_process_and_commit()`. State stored in ApertureDB.
-
-```python
-task.status          # "pending" | "processing" | "complete" | "failed"
-task.is_ready()      # bool
-task.context_id      # str — available when complete
-task.completed_at    # datetime — available when complete
-task.error           # Exception — available when failed
-task.error_message   # str — human-readable, available when failed
-task.failed_at       # datetime — available when failed
-await task.wait()    # async block until done
-task.retry()         # resubmit a failed task
 ```
 
 ---
@@ -420,7 +397,7 @@ Consistent with aperturedb-python:
 - Methods and functions: `snake_case`
 - Private/internal: `_underscore_prefix`
 - Constants: `UPPER_SNAKE_CASE`
-- Async methods: `async_` prefix (e.g. `async_process_and_commit`)
+- Async methods: `async_` prefix (reserved for v2)
 
 ---
 

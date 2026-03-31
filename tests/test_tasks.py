@@ -102,22 +102,26 @@ class TestWait:
 
 
 class TestRetry:
-    def test_retry_on_non_failed_raises(self):
+    @pytest.mark.asyncio
+    async def test_retry_on_non_failed_raises(self):
         task = MemoryTask(task_id="t", status="pending")
         with pytest.raises(NexusValidationError, match="not failed"):
-            task.retry()
+            await task.retry()
 
-    def test_retry_on_complete_raises(self):
+    @pytest.mark.asyncio
+    async def test_retry_on_complete_raises(self):
         task = MemoryTask(task_id="t", status="complete")
         with pytest.raises(NexusValidationError, match="not failed"):
-            task.retry()
+            await task.retry()
 
-    def test_retry_without_retry_fn_raises(self):
+    @pytest.mark.asyncio
+    async def test_retry_without_retry_fn_raises(self):
         task = MemoryTask(task_id="t", status="failed")
         with pytest.raises(NexusValidationError, match="retry function"):
-            task.retry()
+            await task.retry()
 
-    def test_retry_resets_state(self):
+    @pytest.mark.asyncio
+    async def test_retry_resets_state(self):
         fired = []
 
         async def noop():
@@ -126,12 +130,13 @@ class TestRetry:
         task = MemoryTask(task_id="t", status="failed")
         task._mark_failed(ValueError("oops"))
         task._retry_fn = noop
-        task.retry()
+        await task.retry()
 
         assert task.status == "pending"
         assert task.error is None
         assert task.error_message is None
         assert task.failed_at is None
+        assert fired == [True]
 
 
 # ---------------------------------------------------------------------------
