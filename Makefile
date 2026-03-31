@@ -46,6 +46,27 @@ lint:
 fmt:
 	$(PYTHON) -m autopep8 --in-place --recursive $(SRC) $(TESTS)
 
+# ── Demo GIF ─────────────────────────────────────────────────────────────────
+
+CAST     = demo/demo.cast
+DEMO_GIF = demo/demo.gif
+AGG      = $(shell command -v agg 2>/dev/null || echo ~/.local/bin/agg)
+
+# Record the hello-world walkthrough and produce a GIF.
+# Requires: asciinema, agg, Docker daemon running.
+demo: $(DEMO_GIF)
+
+$(DEMO_GIF): $(CAST)
+	$(AGG) --speed 1.25 --font-size 14 $(CAST) $(DEMO_GIF)
+	@echo "GIF written to $(DEMO_GIF)"
+
+$(CAST):
+	asciinema rec $(CAST) \
+		--command "bash demo/record.sh" \
+		--cols 88 --rows 28 \
+		--title "aperture-nexus hello world" \
+		--overwrite
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 help:
@@ -58,4 +79,5 @@ help:
 	@echo "  make test-module m=X   run tests/X.py"
 	@echo "  make lint              mypy type check"
 	@echo "  make fmt               autopep8 format"
+	@echo "  make demo              record hello-world GIF (requires asciinema + Docker)"
 	@echo ""

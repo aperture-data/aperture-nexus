@@ -14,6 +14,8 @@ The three building blocks — **Knowledge** (what was captured),
 cognition layer that scales from a single developer session to a
 multi-team enterprise deployment.
 
+![aperture-nexus hello world](demo/demo.gif)
+
 ---
 
 ## Quickstart
