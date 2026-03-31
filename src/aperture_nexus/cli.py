@@ -147,7 +147,7 @@ def validate(
         typer.echo(f"Config error: {e}", err=True)
         raise typer.Exit(1)
 
-    typer.echo(f"Config loaded: {cfg}")
+    typer.echo("Config: OK")
 
     try:
         from aperture_nexus._client import get_connector
