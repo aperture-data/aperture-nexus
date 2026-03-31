@@ -7,7 +7,6 @@ Commands:
               requires admin ApertureDB credentials.
     validate  Test the ApertureDB connection and config.
     stats     Show memory usage statistics.
-    ui        Launch the web UI (requires aperture-nexus[ui]).
 
 Admin credentials (APERTUREDB_KEY or APERTUREDB_USER/APERTUREDB_PASSWORD)
 are required only for 'init'. All other operations — including
@@ -181,25 +180,6 @@ def stats(
 
 
 # ---------------------------------------------------------------------------
-# ui
-# ---------------------------------------------------------------------------
-
-
-@app.command()
-def ui(
-    config: Optional[str] = typer.Option(None, "--config", "-c"),
-    host: str = typer.Option("127.0.0.1", "--host"),
-    port: int = typer.Option(8000, "--port"),
-) -> None:
-    """Launch the web UI and REST API (not yet available)."""
-    typer.echo(
-        "The web UI is not yet available. "
-        "It is planned for a future release.",
-        err=True,
-    )
-    raise typer.Exit(1)
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
