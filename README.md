@@ -300,6 +300,31 @@ without requiring any schema migration.
 
 ---
 
+## Roadmap
+
+v0.1 ships the core KMC API — commit, search, connect, and authenticate — validated against live ApertureDB.
+
+**Coming in v2:**
+
+| Feature | What it enables |
+|---------|----------------|
+| MCP server (`adb-nexus mcp`) | Persistent memory in Claude Code, Cursor, Windsurf, and any MCP-compatible client |
+| Memory updates with lineage | `Memory.update()` — supersede a memory while retaining full history via `superseded_by` |
+| Preference profiles | Per-category preferences (`coding`, `writing`, `email`) stored as searchable memories |
+| Visibility model | `private` / `department` / `organization` / `shared` — enforced automatically at search time |
+| Hybrid search | KNN vector search + metadata filters combined in a single query |
+| GraphRAG neighborhood search | `search(neighborhood=2)` — traverse the knowledge graph from matched results |
+| Recency weighting | Configurable decay in search scoring; `search(lookback=30)` |
+| Memory archiving + retention | Archive, TTL policies, and LLM-based consolidation of older memories |
+| Web UI | Browser interface for browsing sessions, contexts, memories, and search |
+| Async commit (validated) | `async_process_and_commit()` re-exposed after live integration testing |
+
+**Shape what gets built:** [Join the v2 discussion →](https://github.com/aperturedata/aperture-nexus/discussions)
+
+Tell us what you're building and what would unblock you. We prioritize based on real use cases.
+
+---
+
 ## License
 
 aperture-nexus is released under the [MIT License](LICENSE).
