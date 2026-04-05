@@ -18,6 +18,50 @@ multi-team enterprise deployment.
 
 ---
 
+## Try it now — one command
+
+```bash
+git clone https://github.com/aperturedata/aperture-nexus
+cd aperture-nexus
+docker compose --profile demo run --rm nexus-demo
+```
+
+Requires [Docker Desktop](https://docs.docker.com/get-started/get-docker/)
+(Mac / Windows) or [Docker Engine](https://docs.docker.com/engine/install/)
+(Linux). Docker Compose is included with both.
+
+The first run downloads Docker images if not already cached — allow
+**3–5 minutes**. Subsequent runs start in seconds.
+
+The walkthrough pauses at each step so you can read what's happening before
+it proceeds. ApertureDB starts automatically as a dependency. Explore stored
+data at **http://localhost:8087** (ApertureDB web UI) while the demo is running.
+
+When the demo finishes, the ApertureDB stack keeps running so you can explore
+the web UI at **http://localhost:8087**. Stop it when you're done:
+
+```
+docker compose down      # stop (data is preserved)
+docker compose down -v   # stop and wipe all data
+```
+
+> **Note:** Use `run --rm` (above), not `docker compose up`. The `up` variant
+> does not allocate a terminal, so the demo cannot pause for input and will
+> scroll straight through.
+
+```
+docker compose down      # stop (data is preserved)
+docker compose down -v   # stop and wipe all data
+```
+
+> **Demo vs. dev stack:** The `--profile demo` flag runs a self-contained
+> guided walkthrough that creates and cleans up all demo data automatically.
+> To start a persistent ApertureDB stack for your own development — without
+> the demo — omit the flag: `docker compose up -d`. See the
+> [ApertureDB](#aperturedb) section below.
+
+---
+
 ## Quickstart
 
 ```bash
@@ -59,18 +103,22 @@ results = memory.search(query="missing orders last week")
 
 ## Installation
 
+aperture-nexus v0.1.0 is not yet on PyPI. Install directly from the repository:
+
 ```bash
-pip install aperture-nexus
+git clone https://github.com/aperturedata/aperture-nexus
+cd aperture-nexus
+pip install .
 ```
 
 Optional features:
 
 ```bash
-pip install aperture-nexus[video]    # video frame extraction (opencv-python)
-pip install aperture-nexus[clip]     # CLIP embeddings for text and images
-pip install aperture-nexus[tokens]   # token-based text chunking
-pip install aperture-nexus[metrics]  # Prometheus metrics export
-pip install aperture-nexus[all]      # everything
+pip install ".[video]"    # video frame extraction (opencv-python)
+pip install ".[clip]"     # CLIP embeddings for text and images
+pip install ".[tokens]"   # token-based text chunking
+pip install ".[metrics]"  # Prometheus metrics export
+pip install ".[all]"      # everything
 ```
 
 > **Video embedding performance:** The built-in video embedder extracts frames
@@ -163,11 +211,17 @@ aperture-nexus requires a running ApertureDB instance.
 **Quickest option — Docker Compose:**
 
 ```bash
-ADB_PORT=55556 DB_TCP_CN=localhost DB_HTTP_CN=localhost docker compose up --detach
+docker compose up -d
 ```
 
+Starts ApertureDB, the Lenz TCP gateway, and the ApertureDB Web UI.
 Data persists across restarts. aperture-nexus connects on port `55556`
 by default.
+
+```
+docker compose down      # stop (data preserved)
+docker compose down -v   # stop and wipe all data
+```
 
 **ApertureDB Web UI** is available at `http://localhost:8087` after startup.
 Use it to inspect what is stored in ApertureDB — entities, connections,
@@ -297,6 +351,31 @@ Each principal has `user_id`, `department`, and `organization` properties
 stamped on every stored object. This is the foundation for the v2
 permissions model (Personal / Project / Team / Company retrieval scoping)
 without requiring any schema migration.
+
+---
+
+## Roadmap
+
+v0.1 ships the core KMC API — commit, search, connect, and authenticate — validated against live ApertureDB.
+
+**Coming in v2:**
+
+| Feature | What it enables |
+|---------|----------------|
+| MCP server (`adb-nexus mcp`) | Persistent memory in Claude Code, Cursor, Windsurf, and any MCP-compatible client |
+| Memory updates with lineage | `Memory.update()` — supersede a memory while retaining full history via `superseded_by` |
+| Preference profiles | Per-category preferences (`coding`, `writing`, `email`) stored as searchable memories |
+| Visibility model | `private` / `department` / `organization` / `shared` — enforced automatically at search time |
+| Hybrid search | KNN vector search + metadata filters combined in a single query |
+| GraphRAG neighborhood search | `search(neighborhood=2)` — traverse the knowledge graph from matched results |
+| Recency weighting | Configurable decay in search scoring; `search(lookback=30)` |
+| Memory archiving + retention | Archive, TTL policies, and LLM-based consolidation of older memories |
+| Web UI | Browser interface for browsing sessions, contexts, memories, and search |
+| Async commit (validated) | `async_process_and_commit()` re-exposed after live integration testing |
+
+**Shape what gets built:** [Join the v2 discussion →](https://github.com/aperturedata/aperture-nexus/discussions)
+
+Tell us what you're building and what would unblock you. We prioritize based on real use cases.
 
 ---
 
