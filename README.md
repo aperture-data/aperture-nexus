@@ -18,6 +18,44 @@ multi-team enterprise deployment.
 
 ---
 
+## Try it now — one command
+
+```bash
+git clone https://github.com/aperturedata/aperture-nexus
+cd aperture-nexus
+docker compose --profile demo run --rm nexus-demo
+```
+
+Requires [Docker Desktop](https://docs.docker.com/get-started/get-docker/)
+(Mac / Windows) or [Docker Engine](https://docs.docker.com/engine/install/)
+(Linux). Docker Compose is included with both.
+
+The first run downloads Docker images if not already cached — allow
+**3–5 minutes**. Subsequent runs start in seconds.
+
+The walkthrough pauses at each step so you can read what's happening before
+it proceeds. ApertureDB starts automatically as a dependency. Explore stored
+data at **http://localhost:8087** (ApertureDB web UI) while the demo is running.
+
+To run unattended instead (output streams without pausing):
+
+```bash
+docker compose --profile demo up
+```
+
+```
+docker compose down      # stop (data is preserved)
+docker compose down -v   # stop and wipe all data
+```
+
+> **Demo vs. dev stack:** The `--profile demo` flag runs a self-contained
+> guided walkthrough that creates and cleans up all demo data automatically.
+> To start a persistent ApertureDB stack for your own development — without
+> the demo — omit the flag: `docker compose up -d`. See the
+> [ApertureDB](#aperturedb) section below.
+
+---
+
 ## Quickstart
 
 ```bash
@@ -59,18 +97,22 @@ results = memory.search(query="missing orders last week")
 
 ## Installation
 
+aperture-nexus v0.1.0 is not yet on PyPI. Install directly from the repository:
+
 ```bash
-pip install aperture-nexus
+git clone https://github.com/aperturedata/aperture-nexus
+cd aperture-nexus
+pip install .
 ```
 
 Optional features:
 
 ```bash
-pip install aperture-nexus[video]    # video frame extraction (opencv-python)
-pip install aperture-nexus[clip]     # CLIP embeddings for text and images
-pip install aperture-nexus[tokens]   # token-based text chunking
-pip install aperture-nexus[metrics]  # Prometheus metrics export
-pip install aperture-nexus[all]      # everything
+pip install ".[video]"    # video frame extraction (opencv-python)
+pip install ".[clip]"     # CLIP embeddings for text and images
+pip install ".[tokens]"   # token-based text chunking
+pip install ".[metrics]"  # Prometheus metrics export
+pip install ".[all]"      # everything
 ```
 
 > **Video embedding performance:** The built-in video embedder extracts frames
@@ -163,11 +205,17 @@ aperture-nexus requires a running ApertureDB instance.
 **Quickest option — Docker Compose:**
 
 ```bash
-ADB_PORT=55556 DB_TCP_CN=localhost DB_HTTP_CN=localhost docker compose up --detach
+docker compose up -d
 ```
 
+Starts ApertureDB, the Lenz TCP gateway, and the ApertureDB Web UI.
 Data persists across restarts. aperture-nexus connects on port `55556`
 by default.
+
+```
+docker compose down      # stop (data preserved)
+docker compose down -v   # stop and wipe all data
+```
 
 **ApertureDB Web UI** is available at `http://localhost:8087` after startup.
 Use it to inspect what is stored in ApertureDB — entities, connections,

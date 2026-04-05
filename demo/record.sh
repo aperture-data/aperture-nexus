@@ -70,7 +70,7 @@ clear
 sleep 0.8
 
 comment "Start ApertureDB with Docker Compose"
-run "ADB_PORT=55556 DB_TCP_CN=localhost DB_HTTP_CN=localhost docker compose up --detach"
+run "docker compose up -d"
 
 wait_for_aperturedb
 
