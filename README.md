@@ -37,11 +37,9 @@ The walkthrough pauses at each step so you can read what's happening before
 it proceeds. ApertureDB starts automatically as a dependency. Explore stored
 data at **http://localhost:8087** (ApertureDB web UI) while the demo is running.
 
-To run unattended instead (output streams without pausing):
-
-```bash
-docker compose --profile demo up
-```
+> **Note:** Use `run --rm` (above), not `docker compose up`. The `up` variant
+> does not allocate a terminal, so the demo cannot pause for input and will
+> scroll straight through.
 
 ```
 docker compose down      # stop (data is preserved)
