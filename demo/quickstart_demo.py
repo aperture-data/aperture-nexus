@@ -138,13 +138,6 @@ def json_block(lines):
 
 def pause(label="next step"):
     blank()
-    # Discard keystrokes buffered while waiting for ApertureDB to start.
-    if sys.stdin.isatty():
-        try:
-            import termios
-            termios.tcflush(sys.stdin, termios.TCIFLUSH)
-        except Exception:
-            pass
     try:
         input(_c(BOLD, f"  ▸  Press Enter to {label}…"))
     except EOFError:

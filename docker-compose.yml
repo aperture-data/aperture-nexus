@@ -112,6 +112,7 @@ services:
       # Connect through lenz (the TCP gateway) — same path as the adb CLI.
       APERTUREDB_JSON: '{"host":"lenz","port":55551,"username":"admin","password":"${APERTUREDB_PASSWORD:-admin}","use_ssl":false}'
       APERTURE_NEXUS_LOG_LEVEL: "WARNING"
+      PYTHONUNBUFFERED: "1"
     restart: "no"
 
 configs:
