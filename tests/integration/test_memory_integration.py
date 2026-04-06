@@ -548,3 +548,122 @@ class TestBlobFilePath:
             (r for r in results if r.modality == "blob"), None
         )
         assert blob_result is not None
+
+
+# ---------------------------------------------------------------------------
+# search_contexts() — context graph node semantic search
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestSearchContexts:
+    """process_and_commit() indexes context.purpose; search_contexts() retrieves."""
+
+    def test_process_and_commit_indexes_context_purpose(
+        self, clip_memory, test_principal
+    ):
+        """process_and_commit() writes a context embedding when purpose is set."""
+        sid = _unique_sid()
+        ctx = Context(
+            principal=test_principal,
+            session_id=sid,
+            purpose="Customer reported missing package",
+        )
+        info = Information(context_id=ctx.id)
+        info.log(text="Order #4821 not received.")
+        mid = clip_memory.process_and_commit(ctx, info)
+        assert isinstance(mid, str) and len(mid) > 0
+
+    def test_search_contexts_returns_committed_purpose(
+        self, clip_memory, test_principal
+    ):
+        """search_contexts() finds a context committed with a matching purpose."""
+        sid = _unique_sid()
+        ctx = Context(
+            principal=test_principal,
+            session_id=sid,
+            purpose="Inventory shortage in warehouse B",
+        )
+        info = Information(context_id=ctx.id)
+        info.log(text="Shelf stock levels critically low.")
+        clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search_contexts(
+            "warehouse inventory", embedding_model=_CLIP_MODEL, k=10
+        )
+        assert any(r.session_id == sid for r in results), (
+            f"Expected session {sid!r} in search_contexts results: "
+            + str([r.session_id for r in results])
+        )
+
+    def test_search_contexts_result_carries_metadata(
+        self, clip_memory, test_principal
+    ):
+        """ContextResult carries purpose, context_id, session_id, user_id."""
+        sid = _unique_sid()
+        ctx = Context(
+            principal=test_principal,
+            session_id=sid,
+            purpose="Security audit log review",
+        )
+        info = Information(context_id=ctx.id)
+        info.log(text="Access logs reviewed for anomalies.")
+        clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search_contexts(
+            "security audit", embedding_model=_CLIP_MODEL, k=10
+        )
+        matching = [r for r in results if r.session_id == sid]
+        assert matching, "Committed context not found in search_contexts results"
+        r = matching[0]
+        assert r.context_id == ctx.id
+        assert r.purpose == "Security audit log review"
+        assert r.user_id == test_principal.user_id
+
+    def test_search_contexts_filtered_by_session_id(
+        self, clip_memory, test_principal
+    ):
+        """search_contexts() filters can narrow results to a specific session."""
+        sid_a = _unique_sid()
+        sid_b = _unique_sid()
+
+        for sid, purpose in [
+            (sid_a, "Data pipeline monitoring"),
+            (sid_b, "Data pipeline monitoring"),
+        ]:
+            ctx = Context(
+                principal=test_principal, session_id=sid, purpose=purpose
+            )
+            info = Information(context_id=ctx.id)
+            info.log(text="Pipeline run completed.")
+            clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search_contexts(
+            "pipeline monitoring",
+            filters={"session_id": sid_a},
+            embedding_model=_CLIP_MODEL,
+            k=10,
+        )
+        assert all(r.session_id == sid_a for r in results), (
+            "Filter on session_id should exclude other sessions"
+        )
+
+    def test_no_purpose_no_context_embedding(self, clip_memory, test_principal):
+        """Contexts without purpose are not indexed by process_and_commit()."""
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        # No purpose set
+        info = Information(context_id=ctx.id)
+        info.log(text="No purpose context.")
+        clip_memory.process_and_commit(ctx, info)
+
+        # search_contexts should not return this session
+        results = clip_memory.search_contexts(
+            "no purpose context",
+            filters={"session_id": sid},
+            embedding_model=_CLIP_MODEL,
+            k=10,
+        )
+        assert results == [], (
+            "Context without purpose should not appear in search_contexts"
+        )

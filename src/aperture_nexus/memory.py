@@ -144,6 +144,35 @@ class SearchResult:
     _entry_id: Optional[str] = field(default=None, repr=False, compare=False)
 
 
+@dataclass
+class ContextResult:
+    """One result from Memory.search_contexts().
+
+    Returned by ``search_contexts()`` which searches context graph
+    nodes by semantic similarity of their ``purpose`` field.
+
+    Attributes:
+        score: Similarity score (higher = more similar).
+        context_id: The context ID.
+        session_id: Session the context belongs to.
+        user_id: Principal who created this context.
+        purpose: The stated purpose of this context.
+        created_at: When the context was committed.
+        organization: Organization of the principal, if set.
+        department: Department of the principal, if set.
+    """
+
+    score: float
+    context_id: str
+    session_id: str
+    user_id: Optional[str]
+    purpose: Optional[str]
+    created_at: datetime
+
+    organization: Optional[str] = None
+    department: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -588,7 +617,10 @@ class Memory:
             commit_id = memory.process_and_commit(ctx, info)
         """
         self._generate_missing_embeddings(info._entries)
-        return self.commit(ctx, info)
+        context_id = self.commit(ctx, info)
+        session_id = self._resolve_session_id(ctx)
+        self._write_context_embedding(ctx, session_id)
+        return context_id
 
     # ------------------------------------------------------------------
     # async_process_and_commit()
@@ -818,6 +850,119 @@ class Memory:
         logger.debug(
             "Connected %r -[%s]-> %r", src_id, relationship, dst_id
         )
+
+    # ------------------------------------------------------------------
+    # search_contexts()
+    # ------------------------------------------------------------------
+
+    def search_contexts(
+        self,
+        query: str,
+        filters: Optional[dict] = None,
+        k: int = 10,
+        embedding_model: Optional[str] = None,
+    ) -> list[ContextResult]:
+        """Search committed contexts by semantic similarity of their purpose.
+
+        Searches the ``nexus_context`` DescriptorSet populated by
+        ``process_and_commit()`` when a context has a ``purpose`` set.
+        Only contexts committed via ``process_and_commit()`` with a
+        purpose appear here — ``commit()`` does not embed context nodes.
+
+        Args:
+            query: Text query to match against context purposes.
+            filters: Metadata constraints applied to results. Supported
+                keys: ``session_id``, ``user_id``, ``organization``,
+                ``department``.
+            k: Maximum results to return. Default: 10.
+            embedding_model: Override the configured text embedding
+                model. Must match the model used at index time.
+
+        Returns:
+            List of ``ContextResult``, ordered by descending similarity.
+
+        Raises:
+            NexusConfigError: If no text embedding model is configured
+                and ``embedding_model`` is not provided.
+            NexusProcessingError: If the embedding model call fails.
+            NexusConnectionError: If ApertureDB is unreachable.
+
+        Example:
+            results = memory.search_contexts("customer order inquiry")
+            for r in results:
+                print(r.purpose, r.session_id, r.score)
+        """
+        model = embedding_model or self._cfg.models.text_embedding
+        if not model:
+            raise NexusConfigError(
+                "No text embedding model configured for search_contexts(). "
+                "Set models.text_embedding in aperture_nexus.json "
+                "(e.g. \"ViT-B/16\"), or pass embedding_model= to "
+                "search_contexts(). Install CLIP with: "
+                "pip install aperture-nexus[clip]."
+            )
+
+        from aperture_nexus._embeddings import is_clip_model, get_clip_embedder
+        if not is_clip_model(model):
+            raise NexusConfigError(
+                f"Automatic embedding for search_contexts() via "
+                f"model={model!r} is not yet available. Use a CLIP "
+                f"model (e.g. 'ViT-B/16') or pass a pre-embedded "
+                f"query vector via embedding_model= and query=np.ndarray."
+            )
+
+        embedder = get_clip_embedder(model)
+        try:
+            vector = embedder.embed_text([query])[0]
+        except (NexusConfigError, NexusValidationError):
+            raise
+        except Exception as e:
+            raise NexusProcessingError(
+                f"CLIP text embedding for search_contexts failed: {e}."
+            ) from e
+
+        dset = _dset_name("context", model)
+        constraints = self._build_constraints(filters or {})
+        cmd_body: dict = {
+            "set": dset,
+            "k_neighbors": k,
+            "results": {"all_properties": True},
+            "distances": True,
+        }
+        if constraints:
+            cmd_body["constraints"] = constraints
+
+        cmd = [{"FindDescriptor": cmd_body}]
+        emb_bytes = _embedding_to_bytes(vector)
+
+        try:
+            response, _ = self._db.query(cmd, [emb_bytes])
+        except Exception as e:
+            raise NexusConnectionError(
+                f"ApertureDB search_contexts query failed: {e}."
+            ) from e
+
+        if not isinstance(response, list) or not response:
+            return []
+        body = response[0].get("FindDescriptor", {})
+        if body.get("status", 0) != 0:
+            return []
+
+        results = []
+        for desc in body.get("entities", []):
+            results.append(ContextResult(
+                score=float(desc.get("_distance", 0.0)),
+                context_id=desc.get("context_id", ""),
+                session_id=desc.get("session_id", ""),
+                user_id=desc.get("user_id"),
+                purpose=desc.get("purpose"),
+                organization=desc.get("organization"),
+                department=desc.get("department"),
+                created_at=datetime.fromisoformat(
+                    desc.get("created_at", datetime.utcnow().isoformat())
+                ),
+            ))
+        return results
 
     # ------------------------------------------------------------------
     # remove()
@@ -1339,6 +1484,73 @@ class Memory:
             response, _ = self._db.query(conn_cmd)
             _check_response(response, "nexus_session_context")
             self._ensured_contexts.add(ctx.id)
+
+    def _write_context_embedding(
+        self, ctx: Context, session_id: str
+    ) -> None:
+        """Embed the context's purpose into the nexus_context DescriptorSet.
+
+        Called by ``process_and_commit()`` after a successful ``commit()``.
+        Silently skips if ``ctx.purpose`` is not set or no text embedding
+        model is configured — so callers without a purpose or model never
+        see an error from this path.
+
+        Args:
+            ctx: The context whose purpose should be embedded.
+            session_id: Resolved session ID (from ``_resolve_session_id``).
+        """
+        if not ctx.purpose:
+            return
+        model = self._cfg.models.text_embedding
+        if not model:
+            return
+
+        from aperture_nexus._embeddings import is_clip_model, get_clip_embedder
+        if not is_clip_model(model):
+            raise NexusConfigError(
+                f"Automatic context embedding via model={model!r} is not "
+                f"yet available. Use a CLIP model (e.g. 'ViT-B/16') or "
+                f"set models.text_embedding in aperture_nexus.json."
+            )
+
+        embedder = get_clip_embedder(model)
+        try:
+            vector = embedder.embed_text([ctx.purpose])[0]
+        except (NexusConfigError, NexusValidationError):
+            raise
+        except Exception as e:
+            raise NexusProcessingError(
+                f"CLIP embedding of context purpose failed: {e}."
+            ) from e
+
+        dset = _dset_name("context", model)
+        self._ensure_descriptor_set(
+            dset, vector, "context", model,
+            self._cfg.processing.descriptor_metric,
+            self._cfg.processing.descriptor_engine,
+        )
+
+        props: dict = {
+            "context_id": ctx.id,
+            "session_id": session_id,
+            "user_id": ctx.principal.user_id,
+            "purpose": ctx.purpose,
+            "embedding_model": model,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        for attr in ("organization", "department"):
+            val = getattr(ctx, attr, None) or getattr(ctx.principal, attr, None)
+            if val is not None:
+                props[attr] = val
+
+        emb_bytes = _embedding_to_bytes(vector)
+        cmd = [{"AddDescriptor": {"set": dset, "properties": props}}]
+        response, _ = self._db.query(cmd, [emb_bytes])
+        _check_response(response, "write_context_embedding")
+        logger.debug(
+            "Wrote context embedding for context_id=%r purpose=%r",
+            ctx.id, ctx.purpose,
+        )
 
     def _descriptor_props(
         self, entry, ctx: Context, session_id: str, modality: str,

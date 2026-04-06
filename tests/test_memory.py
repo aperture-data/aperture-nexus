@@ -1729,3 +1729,313 @@ class TestModalityPriority:
 
         # image embedding was generated; text embedder was never called
         assert captured_modality == ["image"]
+
+
+# ---------------------------------------------------------------------------
+# process_and_commit() — context graph node embedding
+# ---------------------------------------------------------------------------
+
+
+class TestContextEmbedding:
+    """process_and_commit() embeds ctx.purpose into nexus_context dset."""
+
+    def _make_clip_embedder(self, dim: int = 512):
+        mock = MagicMock()
+        mock.embed_text.return_value = [np.ones(dim, dtype=np.float32)]
+        return mock
+
+    def test_writes_context_embedding_when_purpose_set(self, mock_connector):
+        """process_and_commit calls _write_context_embedding for ctx with purpose."""
+        vec = np.ones(512, dtype=np.float32)
+        mock_embedder = self._make_clip_embedder()
+
+        # commit() side effects (precomputed embedding, no model needed)
+        mock_connector.query.side_effect = [
+            _ok_response("AddEntity"),               # ensure_session
+            _ok_response("AddEntity"),               # ensure_context
+            _ok_conn_response(),                     # nexus_session_context
+            _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets
+            _ok_atomic_write_response("AddBlob"),    # text blob+descriptor
+            # _write_context_embedding:
+            _find_descriptor_set_response(count=1),  # context dset exists
+            _ok_response("AddDescriptor"),           # context descriptor
+        ]
+        memory = _make_memory(mock_connector)
+        memory._cfg.models.text_embedding = "ViT-B/16"
+
+        ctx = _make_ctx(session_id="s-ctx-emb")
+        ctx.purpose = "Customer reporting missing order"  # type: ignore[attr-defined]
+        info = _make_info(ctx)
+        info.log(text="hello", embedding=vec, embedding_model="ViT-B/16")
+
+        with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
+             patch("aperture_nexus._embeddings.get_clip_embedder",
+                   return_value=mock_embedder):
+            mid = memory.process_and_commit(ctx, info)
+
+        assert isinstance(mid, str)
+        # _write_context_embedding called embed_text with the purpose
+        mock_embedder.embed_text.assert_called_once_with(
+            ["Customer reporting missing order"]
+        )
+        assert mock_connector.query.call_count == 7
+
+    def test_skips_context_embedding_when_no_purpose(self, mock_connector):
+        """No context embedding is written when ctx.purpose is not set."""
+        vec = np.ones(128, dtype=np.float32)
+        mock_embedder = self._make_clip_embedder(128)
+
+        mock_connector.query.side_effect = [
+            _ok_response("AddEntity"),               # ensure_session
+            _ok_response("AddEntity"),               # ensure_context
+            _ok_conn_response(),                     # nexus_session_context
+            _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets
+            _ok_atomic_write_response("AddBlob"),    # text blob+descriptor
+            # no extra queries — context embedding skipped
+        ]
+        memory = _make_memory(mock_connector)
+        memory._cfg.models.text_embedding = "ViT-B/16"
+
+        ctx = _make_ctx()   # no purpose
+        info = _make_info(ctx)
+        info.log(text="hello", embedding=vec, embedding_model="ViT-B/16")
+
+        with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
+             patch("aperture_nexus._embeddings.get_clip_embedder",
+                   return_value=mock_embedder):
+            mid = memory.process_and_commit(ctx, info)
+
+        assert isinstance(mid, str)
+        # embed_text should only have been called for content, not context
+        mock_embedder.embed_text.assert_not_called()
+        assert mock_connector.query.call_count == 5
+
+    def test_skips_context_embedding_when_no_model(self, mock_connector):
+        """No context embedding when text_embedding model is not configured."""
+        vec = np.ones(128, dtype=np.float32)
+
+        mock_connector.query.side_effect = [
+            _ok_response("AddEntity"),
+            _ok_response("AddEntity"),
+            _ok_conn_response(),
+            _find_descriptor_set_response(count=1),
+            _ok_atomic_write_response("AddBlob"),
+        ]
+        memory = _make_memory(mock_connector)
+        # no text_embedding model configured (default is None)
+
+        ctx = _make_ctx()
+        ctx.purpose = "Some purpose"  # type: ignore[attr-defined]
+        info = _make_info(ctx)
+        info.log(text="hello", embedding=vec, embedding_model="other-model")
+        mid = memory.process_and_commit(ctx, info)
+        assert isinstance(mid, str)
+        assert mock_connector.query.call_count == 5  # no extra descriptor query
+
+    def test_context_descriptor_properties_include_purpose(self, mock_connector):
+        """Descriptor written for the context carries purpose and ctx metadata."""
+        dim = 64
+        vec = np.ones(dim, dtype=np.float32)
+        captured_cmds: list = []
+
+        def _capture(cmd, blobs=None):
+            captured_cmds.append(cmd)
+            if any("AddEntity" in c for c in cmd):
+                return _ok_response("AddEntity")
+            if any("FindDescriptorSet" in c for c in cmd):
+                return _find_descriptor_set_response(count=1)
+            if any("FindEntity" in c and "AddConnection" in c
+                   for c in cmd) or (
+                   len(cmd) == 3 and "AddConnection" in cmd[-1]):
+                return _ok_conn_response()
+            if any("AddBlob" in c or "AddImage" in c for c in cmd):
+                return _ok_atomic_write_response("AddBlob")
+            return _ok_response("AddDescriptor")
+
+        mock_connector.query.side_effect = _capture
+
+        memory = _make_memory(mock_connector)
+        memory._cfg.models.text_embedding = "ViT-B/16"
+
+        from aperture_nexus.context import Context
+        from aperture_nexus.auth import Principal
+        principal = Principal(
+            user_id="alice",
+            user_name="Alice",
+            organization="AcmeCorp",
+            department="support",
+        )
+        ctx = Context(
+            principal=principal,
+            session_id="s-prop-test",
+            purpose="Inventory audit Q2",
+        )
+        info = _make_info(ctx)
+        info.log(text="hello", embedding=vec, embedding_model="ViT-B/16")
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_text.return_value = [np.ones(dim, dtype=np.float32)]
+
+        with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
+             patch("aperture_nexus._embeddings.get_clip_embedder",
+                   return_value=mock_embedder):
+            memory.process_and_commit(ctx, info)
+
+        # Find the AddDescriptor call for the context embedding
+        ctx_desc_cmd = None
+        for call_args in mock_connector.query.call_args_list:
+            cmd = call_args.args[0]
+            if (len(cmd) == 1
+                    and "AddDescriptor" in cmd[0]
+                    and cmd[0]["AddDescriptor"].get("properties", {}).get("purpose")):
+                ctx_desc_cmd = cmd[0]
+                break
+
+        assert ctx_desc_cmd is not None, "context descriptor not written"
+        props = ctx_desc_cmd["AddDescriptor"]["properties"]
+        assert props["purpose"] == "Inventory audit Q2"
+        assert props["context_id"] == ctx.id
+        assert props["session_id"] == "s-prop-test"
+        assert props["user_id"] == "alice"
+        assert props["organization"] == "AcmeCorp"
+        assert props["department"] == "support"
+
+
+# ---------------------------------------------------------------------------
+# search_contexts()
+# ---------------------------------------------------------------------------
+
+
+class TestSearchContexts:
+    """memory.search_contexts() returns ContextResult list."""
+
+    from aperture_nexus.memory import ContextResult  # re-export for assertions
+
+    def _make_context_descriptor_response(self, contexts: list) -> tuple:
+        entities = []
+        for c in contexts:
+            ent = dict(c)
+            entities.append(ent)
+        return ([{"FindDescriptor": {"status": 0, "entities": entities}}], [])
+
+    def test_happy_path_returns_context_results(self, mock_connector):
+        from aperture_nexus.memory import ContextResult
+
+        now = datetime.utcnow().isoformat()
+        mock_connector.query.return_value = self._make_context_descriptor_response([
+            {
+                "context_id": "ctx-1",
+                "session_id": "s-1",
+                "user_id": "alice",
+                "purpose": "Order inquiry",
+                "organization": "AcmeCorp",
+                "department": "support",
+                "created_at": now,
+                "_distance": 0.92,
+            }
+        ])
+        memory = _make_memory(mock_connector)
+        memory._cfg.models.text_embedding = "ViT-B/16"
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_text.return_value = [np.ones(512, dtype=np.float32)]
+
+        with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
+             patch("aperture_nexus._embeddings.get_clip_embedder",
+                   return_value=mock_embedder):
+            results = memory.search_contexts("order inquiry")
+
+        assert len(results) == 1
+        r = results[0]
+        assert isinstance(r, ContextResult)
+        assert r.context_id == "ctx-1"
+        assert r.session_id == "s-1"
+        assert r.user_id == "alice"
+        assert r.purpose == "Order inquiry"
+        assert r.organization == "AcmeCorp"
+        assert r.department == "support"
+        assert r.score == pytest.approx(0.92)
+
+    def test_no_model_configured_raises(self, mock_connector):
+        memory = _make_memory(mock_connector)
+        # text_embedding is None by default
+        with pytest.raises(NexusConfigError, match="No text embedding model"):
+            memory.search_contexts("something")
+
+    def test_empty_descriptor_set_returns_empty_list(self, mock_connector):
+        mock_connector.query.return_value = (
+            [{"FindDescriptor": {"status": 0, "entities": []}}], []
+        )
+        memory = _make_memory(mock_connector)
+        memory._cfg.models.text_embedding = "ViT-B/16"
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_text.return_value = [np.ones(512, dtype=np.float32)]
+
+        with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
+             patch("aperture_nexus._embeddings.get_clip_embedder",
+                   return_value=mock_embedder):
+            results = memory.search_contexts("nothing here")
+
+        assert results == []
+
+    def test_filters_passed_as_constraints(self, mock_connector):
+        captured: list = []
+
+        def _capture(cmd, blobs=None):
+            captured.append(cmd)
+            return ([{"FindDescriptor": {"status": 0, "entities": []}}], [])
+
+        mock_connector.query.side_effect = _capture
+        memory = _make_memory(mock_connector)
+        memory._cfg.models.text_embedding = "ViT-B/16"
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_text.return_value = [np.ones(512, dtype=np.float32)]
+
+        with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
+             patch("aperture_nexus._embeddings.get_clip_embedder",
+                   return_value=mock_embedder):
+            memory.search_contexts(
+                "order", filters={"session_id": "s-42", "user_id": "bob"}
+            )
+
+        cmd = captured[0][0]["FindDescriptor"]
+        assert cmd["constraints"]["session_id"] == ["==", "s-42"]
+        assert cmd["constraints"]["user_id"] == ["==", "bob"]
+
+    def test_uses_nexus_context_descriptor_set(self, mock_connector):
+        captured: list = []
+
+        def _capture(cmd, blobs=None):
+            captured.append(cmd)
+            return ([{"FindDescriptor": {"status": 0, "entities": []}}], [])
+
+        mock_connector.query.side_effect = _capture
+        memory = _make_memory(mock_connector)
+        memory._cfg.models.text_embedding = "ViT-B/16"
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_text.return_value = [np.ones(512, dtype=np.float32)]
+
+        with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
+             patch("aperture_nexus._embeddings.get_clip_embedder",
+                   return_value=mock_embedder):
+            memory.search_contexts("anything")
+
+        dset = captured[0][0]["FindDescriptor"]["set"]
+        assert dset == "nexus_context__ViT-B/16"
+
+    def test_connection_error_propagated(self, mock_connector):
+        mock_connector.query.side_effect = Exception("network timeout")
+        memory = _make_memory(mock_connector)
+        memory._cfg.models.text_embedding = "ViT-B/16"
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_text.return_value = [np.ones(512, dtype=np.float32)]
+
+        with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
+             patch("aperture_nexus._embeddings.get_clip_embedder",
+                   return_value=mock_embedder):
+            with pytest.raises(NexusConnectionError, match="network timeout"):
+                memory.search_contexts("query")
