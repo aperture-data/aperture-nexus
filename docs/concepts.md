@@ -37,7 +37,7 @@ A context does not write to ApertureDB directly. `Memory` uses it as metadata wh
 
 Inputs are added via `Information.log()`, which validates and normalizes each entry immediately — so errors surface at log time, not later during commit.
 
-You can commit incrementally during a long session rather than buffering everything until the end. Each `memory.commit(ctx, info)` call flushes the current buffer and returns — you can then continue logging to the same `info` object and commit again later.
+You can commit incrementally during a long session rather than buffering everything until the end. Each `memory.commit(ctx, info)` call flushes the current buffer and returns — you can then continue logging to the same `info` object and commit again later. If a commit fails, the buffer is preserved so you can retry without losing any entries.
 
 Supported input types:
 
@@ -108,6 +108,33 @@ flowchart LR
 ```
 
 Use `commit()` when you need speed and will rely on metadata-only search. Use `process_and_commit()` when you need semantic (vector) search across the stored content.
+
+### Memories are append-only in v1
+
+`commit()` always adds new entries — there is no in-place update. If you commit the same context twice you get more entries, not replaced ones. `Memory.update()` with a `superseded_by` lineage edge is planned for v2.
+
+---
+
+## Search Results
+
+`memory.search()` returns a flat `list[SearchResult]` — one item per stored entry or text chunk, ordered by descending similarity score. Each result carries:
+
+- `score` — similarity score (higher = more similar; 1.0 for metadata-only results)
+- `text` — inline text content (for text entries)
+- `modality` — `"text"` | `"image"` | `"video"` | `"blob"`
+- `context_id`, `session_id`, `user_id`, `created_at` — provenance
+- `data` — raw bytes for image/video/blob results
+- `metadata` — any custom properties stored at log time
+
+**There is no LLM summarization in v1.** If a long document was chunked into five pieces at commit time, a matching search may return up to five separate results — one per chunk. Grouping by context, ranking by session recency, and LLM-based consolidation of results are planned for v2.
+
+For now, the typical pattern is to pass the results directly to your LLM as retrieved context:
+
+```python
+results = memory.search(query="missing order", filters={"organization": "acme"})
+context_block = "\n".join(r.text for r in results if r.text)
+# Pass context_block to your LLM prompt
+```
 
 ---
 
