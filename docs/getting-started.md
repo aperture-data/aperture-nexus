@@ -1,15 +1,16 @@
 ---
 title: Getting Started
-description: From zero to your first stored and searchable memory in under ten minutes
+description: From zero to your first stored and searchable memory
 sidebar_position: 0
 ---
 
 # Getting Started
 
-This guide takes you from a fresh machine to storing and searching your first
-multimodal memory. It takes about ten minutes.
+This guide takes you from a fresh machine to storing and searching
+your first multimodal memory. It takes about ten minutes.
 
-Want to see it in action first? Run the interactive demo — no setup needed:
+Want to see it in action first? Run the interactive demo — no setup
+needed:
 
 ```bash
 git clone https://github.com/aperturedata/aperture-nexus
@@ -28,7 +29,8 @@ docker compose --profile demo run --rm nexus-demo
 
 ## 1. Install aperture-nexus
 
-aperture-nexus is not yet on PyPI. Clone the repository and install directly:
+aperture-nexus is not yet on PyPI. Clone the repository and install
+directly:
 
 ```bash
 git clone https://github.com/aperturedata/aperture-nexus
@@ -48,8 +50,9 @@ pip install ".[all]"      # everything
 
 ## 2. Start ApertureDB
 
-aperture-nexus stores everything in [ApertureDB](https://aperturedata.io).
-Choose the option that fits your situation:
+aperture-nexus stores everything in
+[ApertureDB](https://aperturedata.io). Choose the option that fits
+your situation:
 
 **Local — Docker Compose (quickest):**
 
@@ -57,7 +60,8 @@ Choose the option that fits your situation:
 docker compose up -d
 ```
 
-This starts ApertureDB, the Lenz gateway, and the web UI at `http://localhost:8087`.
+This starts ApertureDB, the Lenz gateway, and the web UI at
+`http://localhost:8087`.
 
 **Existing or cloud ApertureDB instance:**
 
@@ -71,17 +75,20 @@ export APERTUREDB_KEY="adbp_..."
 export APERTUREDB_JSON='{"host":"your-host","port":55556,"username":"...","password":"...","use_ssl":true}'
 ```
 
-See the [ApertureDB documentation](https://docs.aperturedata.io) for connection options.
+See the [ApertureDB documentation](https://docs.aperturedata.io) for
+connection options.
 
 ---
 
 ## 3. Create a Principal
 
 aperture-nexus uses a two-tier identity model. An **admin** creates
-**principals** — one per user or agent. Principals authenticate with an
-`api_key` that the admin issues and can rotate without disrupting stored data.
+**principals** — one per user or agent. Principals authenticate with
+an `api_key` that the admin issues and can rotate without disrupting
+stored data.
 
-Run the setup wizard once to create your principal and write the key to `.env`:
+Run the setup wizard once to create your principal and write the key
+to `.env`:
 
 ```bash
 adb-nexus init
@@ -93,7 +100,8 @@ For non-interactive setup:
 adb-nexus init --defaults
 ```
 
-In production, principals are created programmatically via `NexusAdmin`:
+In production, principals are created programmatically via
+`NexusAdmin`:
 
 ```python
 from aperture_nexus import NexusAdmin
@@ -116,7 +124,8 @@ api_key = admin.create_principal(
 adb-nexus validate
 ```
 
-If everything is working you will see `Config: OK` and `ApertureDB connection: OK`.
+If everything is working you will see `Config: OK` and
+`ApertureDB connection: OK`.
 
 ---
 
@@ -143,7 +152,7 @@ ctx = Context(
 
 info = Information(context_id=ctx.id)
 info.log(text="aperture-nexus stores text, images, audio, video, and more")
-info.log(text="Each piece of information is linked to a context and session")
+info.log(text="Each entry is linked to a context and session")
 
 # Commit to ApertureDB (raw storage — fast, no model calls)
 memory.commit(ctx, info)
@@ -165,7 +174,8 @@ python examples/quickstart.py
 
 ## 6. Log Multimodal Content
 
-`Information.log()` accepts any combination of modalities in a single entry:
+`Information.log()` accepts any combination of modalities in a single
+entry:
 
 ```python
 # Text
@@ -188,22 +198,27 @@ info.log(text="See attached screenshot", image="screenshot.png")
 
 To generate embeddings and enable semantic similarity search, use
 `process_and_commit()` instead of `commit()`. This requires a model
-configured in `aperture_nexus.json` — see [Configuration](configuration.md).
+configured in `aperture_nexus.json` — see
+[Configuration](configuration.md).
 
 ---
 
 ## 7. Multi-Participant Sessions
 
-Multiple agents, workflows, or humans can contribute to the same session.
-Each gets their own `Context`:
+Multiple agents, workflows, or humans can contribute to the same
+session. Each gets their own `Context`:
 
 ```python
 from aperture_nexus import generate_session_id
 
 sid = generate_session_id()
 
-ctx_user  = Context(principal=user_principal,  session_id=sid, purpose="Question")
-ctx_agent = Context(principal=agent_principal, session_id=sid, purpose="Response")
+ctx_user  = Context(
+    principal=user_principal, session_id=sid, purpose="Question"
+)
+ctx_agent = Context(
+    principal=agent_principal, session_id=sid, purpose="Response"
+)
 
 info_user = Information(context_id=ctx_user.id)
 info_user.log(text="What happened to order #4821?")
@@ -222,7 +237,8 @@ results = memory.search(filters={"session_id": sid})
 
 ## What's Next
 
-- [Concepts](concepts.md) — the full KMC model and ApertureDB storage mapping
+- [Concepts](concepts.md) — the full KMC model and storage mapping
 - [API Reference](api-reference.md) — all parameters and return types
 - [Configuration](configuration.md) — add models and tune processing
-- [`examples/`](https://github.com/aperturedata/aperture-nexus/tree/main/examples) — runnable scripts for each modality
+- [`examples/`](https://github.com/aperturedata/aperture-nexus/tree/main/examples)
+  — runnable scripts for each modality
