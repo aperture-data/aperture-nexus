@@ -13,7 +13,7 @@ images, audio, video, and more — and commit it to memory for search
 and retrieval, powered by [ApertureDB](https://aperturedata.io)'s
 vector search and knowledge graph.
 
-![aperture-nexus hello world](https://raw.githubusercontent.com/aperturedata/aperture-nexus/main/demo/demo.gif)
+![aperture-nexus hello world](https://raw.githubusercontent.com/vishakha041/aperture-nexus/main/demo/demo.gif)
 
 ---
 
@@ -50,7 +50,7 @@ pipeline, or a human+AI team sharing context across an enterprise.
 Try the interactive walkthrough in one command — no setup needed:
 
 ```bash
-git clone https://github.com/aperturedata/aperture-nexus
+git clone https://github.com/vishakha041/aperture-nexus
 cd aperture-nexus
 docker compose --profile demo run --rm nexus-demo
 ```
@@ -69,5 +69,5 @@ your own integration.
 | [API Reference](api-reference.md) | `Memory`, `Context`, `Information`, `MemoryTask` |
 | [Configuration](configuration.md) | Every field in `aperture_nexus.json` |
 
-See [`examples/`](https://github.com/aperturedata/aperture-nexus/tree/main/examples)
+See [`examples/`](https://github.com/vishakha041/aperture-nexus/tree/main/examples)
 for runnable scripts covering each data modality.
