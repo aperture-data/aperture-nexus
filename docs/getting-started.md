@@ -19,14 +19,20 @@ This guide takes you from a fresh machine to storing and searching your first mu
 
 ## 1. Install aperture-nexus
 
+aperture-nexus is not yet on PyPI. Clone the repository and install directly:
+
 ```bash
-pip install aperture-nexus
+git clone https://github.com/aperturedata/aperture-nexus
+cd aperture-nexus
+pip install .
 ```
 
-To also enable video processing, token-based chunking, or the web UI, use extras:
+To also enable video processing or token-based chunking, use extras:
 
 ```bash
-pip install aperture-nexus[video,ui]
+pip install ".[video]"
+pip install ".[tokens]"
+pip install ".[all]"      # everything
 ```
 
 ---
@@ -58,16 +64,9 @@ The simplest option is an encoded ApertureDB key:
 export APERTUREDB_KEY="adbp_..."
 ```
 
-Or create a `.env` file for the local Docker Compose setup — the
-example file has the right defaults and works without any changes:
-
-```bash
-cp .env.example .env
-```
-
-For a remote ApertureDB instance, replace the `APERTUREDB_JSON` value
-with your host, port, and credentials, or use `APERTUREDB_KEY` if you
-have an encoded key from `adb config`.
+For the local Docker Compose setup, `APERTUREDB_JSON` is set automatically.
+For a remote ApertureDB instance, replace it with your host, port, and
+credentials, or use `APERTUREDB_KEY` if you have an encoded key from `adb config`.
 
 Then run the setup wizard to generate your config file:
 

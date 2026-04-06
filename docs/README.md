@@ -31,8 +31,8 @@ multi-team enterprise deployment.
 | [Configuration](configuration.md) | Every field in `aperture_nexus.json` with defaults, constraints, and environment variable overrides |
 
 For a one-command setup, run `bash setup.sh` from the repo root.
-See [`examples/`](../examples/) for runnable scripts covering each data modality.
-For installation and CLI reference, see the [main README](../README.md).
+See [`examples/`](https://github.com/aperturedata/aperture-nexus/tree/main/examples) for runnable scripts covering each data modality.
+For installation and CLI reference, see the [main README](https://github.com/aperturedata/aperture-nexus#readme).
 
 ---
 
