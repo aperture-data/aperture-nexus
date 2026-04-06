@@ -6,13 +6,13 @@ sidebar_position: 1
 
 # Concepts
 
-aperture-nexus is the cognition layer for enterprise AI. Agents use it
-to establish relations for context, capture multimodal knowledge, and
-commit it to memory for retrieval when needed. It is built around three
-objects — **Context**, **Information**, and **Memory** — that together
-implement the KMC (Knowledge, Memory, Context) model. This page explains
-what each object represents, how they relate, and how they map to
-ApertureDB's storage primitives.
+aperture-nexus is the cognition layer for enterprise AI. AI workflows,
+agents, and the humans working alongside them use it to establish context,
+capture multimodal knowledge, and commit it to memory for retrieval when
+needed. It is built around three objects — **Context**, **Information**,
+and **Memory** — that together implement the KMC (Knowledge, Memory,
+Context) model. This page explains what each object represents, how they
+relate, and how they map to ApertureDB's storage primitives.
 
 ---
 
@@ -36,6 +36,8 @@ A context does not write to ApertureDB directly. `Memory` uses it as metadata wh
 `Information` is a **local buffer for multimodal inputs** accumulated during a session. Nothing is written to ApertureDB until `memory.commit()` or `memory.process_and_commit()` is called.
 
 Inputs are added via `Information.log()`, which validates and normalizes each entry immediately — so errors surface at log time, not later during commit.
+
+You can commit incrementally during a long session rather than buffering everything until the end. Each `memory.commit(ctx, info)` call flushes the current buffer and returns — you can then continue logging to the same `info` object and commit again later.
 
 Supported input types:
 
@@ -111,7 +113,7 @@ Use `commit()` when you need speed and will rely on metadata-only search. Use `p
 
 ## Sessions and Participants
 
-Sessions in aperture-nexus are **many-to-many with users**: one session can have multiple participants, and one user can belong to multiple sessions.
+Sessions in aperture-nexus are **many-to-many with participants**: one session can have multiple contributors — AI agents, automated pipelines, and human collaborators — and one participant can belong to multiple sessions.
 
 Each participant gets their own `Context` into a shared session. Attribution is implicit — every piece of `Information` is linked to the `Context` that logged it.
 
@@ -141,7 +143,7 @@ The same user can also be in multiple sessions simultaneously — for example an
 
 ## ApertureDB Storage Mapping
 
-aperture-nexus is a semantic layer on top of ApertureDB's native storage primitives. The table below shows how aperture-nexus concepts map to ApertureDB objects.
+aperture-nexus is a semantic layer on top of ApertureDB's native storage primitives. The table below shows how aperture-nexus concepts map to ApertureDB objects. See the [ApertureDB documentation](https://docs.aperturedata.io) for a full reference on these primitives.
 
 | aperture-nexus | ApertureDB primitive | Notes |
 |----------------|---------------------|-------|
@@ -173,7 +175,7 @@ ApertureDB ships with its own web UI at `http://localhost:8087` (when running vi
 - Debugging schema issues
 - Inspecting DescriptorSets and their dimensions
 
-The aperture-nexus UI (`adb-nexus ui`) is a higher-level interface that shows sessions, contexts, memories, and search results in aperture-nexus terms.
+A higher-level aperture-nexus UI showing sessions, contexts, memories, and search results is planned for a future release.
 
 ---
 
