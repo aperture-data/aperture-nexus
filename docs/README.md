@@ -50,7 +50,7 @@ pipeline, or a human+AI team sharing context across an enterprise.
 Try the interactive walkthrough in one command — no setup needed:
 
 ```bash
-git clone https://github.com/aperturedata/aperture-nexus
+git clone https://github.com/vishakha041/aperture-nexus
 cd aperture-nexus
 docker compose --profile demo run --rm nexus-demo
 ```
