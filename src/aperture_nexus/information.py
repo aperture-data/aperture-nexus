@@ -10,7 +10,7 @@ Example:
     info.log(text="Customer says order #4821 never arrived")
     info.log(image="screenshot.png")
     info.log(video="recording.mp4")
-    info.log(blob=open("contract.pdf", "rb").read(), document_type="pdf")
+    info.log(blob="contract.pdf", document_type="pdf")
     memory.commit(ctx, info)
 """
 
@@ -50,7 +50,7 @@ class _LogEntry:
     text: Optional[str] = None
     image: Optional[Any] = None   # PIL.Image, np.ndarray, bytes, or str
     video: Optional[Any] = None   # str (path/url) or bytes
-    blob: Optional[bytes] = None
+    blob: Optional[Any] = None    # str (path/url) or bytes
     document_type: Optional[str] = None
     embedding: Optional[np.ndarray] = None
     embedding_model: Optional[str] = None
@@ -132,7 +132,7 @@ class Information:
         text: Optional[str] = None,
         image: Optional[Any] = None,
         video: Optional[Any] = None,
-        blob: Optional[bytes] = None,
+        blob: Optional[Any] = None,
         document_type: Optional[str] = None,
         embedding: Optional[np.ndarray] = None,
         embedding_model: Optional[str] = None,
@@ -151,8 +151,9 @@ class Information:
             image: Image in any common form: file path, URL, bytes,
                 PIL Image, or numpy array (HW or HWC uint8/float32).
             video: Video file path, URL, or raw bytes.
-            blob: Raw bytes for any binary format. Requires
-                ``document_type``.
+            blob: File path, URL, or raw bytes for any binary format.
+                Requires ``document_type``. Paths and URLs are
+                resolved at commit time.
             document_type: File extension for blobs: ``"pdf"``,
                 ``"mp3"``, ``"docx"``, ``"csv"``, etc.
             embedding: Pre-computed embedding vector (1D float array).
@@ -250,6 +251,78 @@ class Information:
         logger.debug(
             "Buffered connection -[%s]-> %r for context_id=%r",
             relationship, target, self.context_id,
+        )
+
+    def clear(self) -> None:
+        """Remove all pending entries and connections from the buffer.
+
+        Entries are discarded without being committed to ApertureDB.
+        Use this to abandon a work-in-progress log before starting
+        over — for example after an upstream error invalidated the
+        current batch.
+
+        Does not affect entries already committed via
+        ``Memory.commit()``.
+
+        Example:
+            info.log(text="preliminary note")
+            info.log(image="draft.png")
+            info.clear()         # start over — nothing committed yet
+            info.log(text="final note")
+            memory.commit(ctx, info)
+        """
+        count = len(self._entries)
+        self._entries.clear()
+        self._pending_connections.clear()
+        logger.debug(
+            "Information buffer cleared: %d entries discarded,"
+            " context_id=%r",
+            count,
+            self.context_id,
+        )
+
+    def remove(self, index: int) -> None:
+        """Remove a single pending entry from the buffer by position.
+
+        Use ``len(info)`` to get the current count. The index is
+        0-based and follows the order entries were added via
+        ``log()``. Consistent with ``memory.remove()`` which removes
+        a committed memory by ID.
+
+        Args:
+            index: 0-based position of the entry to remove.
+
+        Raises:
+            IndexError: If ``index`` is out of range.
+            NexusValidationError: If ``index`` is not an integer.
+
+        Example:
+            info.log(text="stale note — remove this")
+            info.log(image="screenshot.png")
+            info.remove(0)   # discard the first entry
+            # only screenshot.png entry will be committed
+        """
+        if not isinstance(index, int):
+            raise NexusValidationError(
+                f"index must be an integer. "
+                f"Got {type(index).__name__!r}."
+            )
+        n = len(self._entries)
+        if n == 0:
+            raise IndexError(
+                f"index {index} is out of range — buffer is empty."
+            )
+        if not (-n <= index < n):
+            raise IndexError(
+                f"index {index} is out of range — buffer has "
+                f"{n} entr{'y' if n == 1 else 'ies'} "
+                f"(valid range: {-n} to {n - 1})."
+            )
+        self._entries.pop(index)
+        logger.debug(
+            "Removed entry at index %d for context_id=%r",
+            index,
+            self.context_id,
         )
 
     def _drain(self) -> list["_LogEntry"]:
@@ -366,20 +439,32 @@ def _validate_video(video: Optional[Any]) -> Optional[Any]:
 
 
 def _validate_blob(
-    blob: Optional[bytes],
+    blob: Optional[Any],
     document_type: Optional[str],
-) -> tuple[Optional[bytes], Optional[str]]:
+) -> tuple[Optional[Any], Optional[str]]:
     if blob is None:
         if document_type is not None:
             raise NexusValidationError(
                 "document_type provided but blob is None. "
-                "Provide blob=<bytes> alongside document_type."
+                "Provide blob=<path>, blob=<url>, or blob=<bytes> "
+                "alongside document_type."
             )
         return None, None
 
-    if not isinstance(blob, bytes):
+    if isinstance(blob, str):
+        if blob.startswith(("http://", "https://")):
+            pass  # URL — reachability checked at commit time
+        else:
+            path = Path(blob)
+            if not path.is_file():
+                raise NexusValidationError(
+                    f"Blob file not found: {blob}. "
+                    "Provide a valid file path, URL, or raw bytes."
+                )
+    elif not isinstance(blob, bytes):
         raise NexusValidationError(
-            f"blob must be bytes. Got {type(blob).__name__!r}."
+            f"blob must be a file path, URL, or bytes. "
+            f"Got {type(blob).__name__!r}."
         )
 
     if not document_type:

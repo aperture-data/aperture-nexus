@@ -380,3 +380,116 @@ class TestMetadataSearchContentEntities:
     def test_metadata_search_unknown_session_returns_empty(self, clip_memory):
         results = clip_memory.search(filters={"session_id": "no-such-session-xyz"})
         assert results == []
+
+
+# ---------------------------------------------------------------------------
+# Information.clear() and Information.remove() — buffer cleanup before commit
+#
+# These tests verify that cleanup on the local buffer (before commit) is
+# invisible to ApertureDB — only entries still in the buffer at commit()
+# time are stored. This is the expected pattern for abandoning stale
+# content, e.g. after an upstream error, or for removing a specific entry
+# before it reaches the database.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+class TestInformationClearBeforeCommit:
+    def test_clear_then_log_only_fresh_entry_committed(
+        self, memory_engine, test_principal
+    ):
+        """Entries logged before clear() are not committed; only post-clear
+        entries reach ApertureDB."""
+        sid = _unique_sid()
+        ctx = Context(
+            principal=test_principal,
+            session_id=sid,
+            purpose="clear before commit test",
+        )
+        info = Information(context_id=ctx.id)
+
+        # Log something, decide to start over, then log the real entry
+        info.log(text="preliminary draft — should not be committed")
+        info.clear()
+        info.log(text="final entry — this one should be committed")
+        memory_engine.commit(ctx, info)
+
+        results = memory_engine.search(filters={"session_id": sid})
+        assert len(results) == 1
+        assert results[0].text == "final entry — this one should be committed"
+
+    def test_clear_all_entries_then_commit_raises(
+        self, memory_engine, test_principal
+    ):
+        """Committing an empty buffer raises NexusValidationError — there is
+        nothing to store."""
+        ctx = Context(principal=test_principal, session_id=_unique_sid())
+        info = Information(context_id=ctx.id)
+        info.log(text="will be cleared")
+        info.clear()
+        with pytest.raises(NexusValidationError, match="no entries"):
+            memory_engine.commit(ctx, info)
+
+
+@pytest.mark.integration
+class TestInformationRemoveBeforeCommit:
+    def test_remove_first_entry_only_second_committed(
+        self, memory_engine, test_principal
+    ):
+        """Removing the first entry before commit stores only the second."""
+        sid = _unique_sid()
+        ctx = Context(
+            principal=test_principal,
+            session_id=sid,
+            purpose="remove before commit test",
+        )
+        info = Information(context_id=ctx.id)
+        info.log(text="entry A — remove this")
+        info.log(text="entry B — keep this")
+        info.remove(0)
+        memory_engine.commit(ctx, info)
+
+        results = memory_engine.search(filters={"session_id": sid})
+        assert len(results) == 1
+        assert results[0].text == "entry B — keep this"
+
+    def test_remove_last_entry_only_first_committed(
+        self, memory_engine, test_principal
+    ):
+        """Removing the last entry before commit stores only the first."""
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(text="keep this")
+        info.log(text="discard this")
+        info.remove(-1)
+        memory_engine.commit(ctx, info)
+
+        results = memory_engine.search(filters={"session_id": sid})
+        assert len(results) == 1
+        assert results[0].text == "keep this"
+
+
+@pytest.mark.integration
+class TestBlobFilePath:
+    def test_blob_from_file_path_stores_bytes(
+        self, memory_engine, test_principal, tmp_path
+    ):
+        """Passing blob as a file path — content is read and stored at
+        commit() time, not at log() time."""
+        pdf_path = tmp_path / "document.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake content")
+
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        # Pass the path as a string — no open() needed
+        info.log(blob=str(pdf_path), document_type="pdf")
+        memory_engine.commit(ctx, info)
+
+        # Should be committed without error; searchable by session
+        results = memory_engine.search(filters={"session_id": sid})
+        assert len(results) >= 1
+        blob_result = next(
+            (r for r in results if r.modality == "blob"), None
+        )
+        assert blob_result is not None
