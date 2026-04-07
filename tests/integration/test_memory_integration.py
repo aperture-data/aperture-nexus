@@ -383,7 +383,7 @@ class TestMetadataSearchContentEntities:
 
 
 # ---------------------------------------------------------------------------
-# Information.clear() and Information.remove() — buffer cleanup before commit
+# Information.remove_all() and Information.remove() — buffer cleanup before commit
 #
 # These tests verify that cleanup on the local buffer (before commit) is
 # invisible to ApertureDB — only entries still in the buffer at commit()
@@ -393,23 +393,23 @@ class TestMetadataSearchContentEntities:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.integration
-class TestInformationClearBeforeCommit:
-    def test_clear_then_log_only_fresh_entry_committed(
+class TestInformationRemoveAllBeforeCommit:
+    def test_remove_all_then_log_only_fresh_entry_committed(
         self, memory_engine, test_principal
     ):
-        """Entries logged before clear() are not committed; only post-clear
-        entries reach ApertureDB."""
+        """Entries logged before remove_all() are not committed; only
+        post-remove_all entries reach ApertureDB."""
         sid = _unique_sid()
         ctx = Context(
             principal=test_principal,
             session_id=sid,
-            purpose="clear before commit test",
+            purpose="remove_all before commit test",
         )
         info = Information(context_id=ctx.id)
 
         # Log something, decide to start over, then log the real entry
         info.log(text="preliminary draft — should not be committed")
-        info.clear()
+        info.remove_all()
         info.log(text="final entry — this one should be committed")
         memory_engine.commit(ctx, info)
 
@@ -417,15 +417,15 @@ class TestInformationClearBeforeCommit:
         assert len(results) == 1
         assert results[0].text == "final entry — this one should be committed"
 
-    def test_clear_all_entries_then_commit_raises(
+    def test_remove_all_entries_then_commit_raises(
         self, memory_engine, test_principal
     ):
         """Committing an empty buffer raises NexusValidationError — there is
         nothing to store."""
         ctx = Context(principal=test_principal, session_id=_unique_sid())
         info = Information(context_id=ctx.id)
-        info.log(text="will be cleared")
-        info.clear()
+        info.log(text="will be removed")
+        info.remove_all()
         with pytest.raises(NexusValidationError, match="no entries"):
             memory_engine.commit(ctx, info)
 

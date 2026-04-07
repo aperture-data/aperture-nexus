@@ -496,10 +496,11 @@ info.log(
     text: str | None = None,
     image: str | bytes | PIL.Image | np.ndarray | None = None,
     video: str | bytes | None = None,
-    blob: bytes | None = None,
+    blob: str | bytes | None = None,
     document_type: str | None = None,
     embedding: np.ndarray | None = None,
     embedding_model: str | None = None,
+    metadata: dict | None = None,
 ) -> None
 ```
 
@@ -512,12 +513,15 @@ Validation happens eagerly at `log()` time — bad inputs raise `NexusValidation
 | `text` | `str \| None` | Plain text. Long text is chunked automatically at commit time. |
 | `image` | `str \| bytes \| PIL.Image \| np.ndarray \| None` | Image in any common form. File path, URL, bytes, PIL Image, or numpy array (HWC uint8 or float32). |
 | `video` | `str \| bytes \| None` | Video file path, URL, or raw bytes. |
-| `blob` | `bytes \| None` | Raw bytes for any binary format. Requires `document_type`. |
+| `blob` | `str \| bytes \| None` | File path, URL, or raw bytes for any binary format. Requires `document_type`. Paths and URLs are resolved at commit time. |
 | `document_type` | `str \| None` | File extension for blobs: `"pdf"`, `"mp3"`, `"docx"`, `"csv"`, etc. |
 | `embedding` | `np.ndarray \| None` | Pre-computed embedding vector. Skips model call at commit time. Requires `embedding_model`. |
 | `embedding_model` | `str \| None` | Name of the model that produced the embedding. Required when `embedding` is provided. |
+| `metadata` | `dict \| None` | Arbitrary key-value properties stored alongside the entry. Keys must be strings; values must be `str`, `int`, `float`, or `bool`. Reserved keys (`context_id`, `session_id`, etc.) are rejected. |
 
-**Raises:** `NexusValidationError` if input is invalid (missing file, wrong shape, missing `document_type` for blob, etc.)
+**Raises:** `NexusValidationError` if input is invalid (missing file, wrong shape, missing `document_type` for blob, reserved metadata key, etc.)
+
+> **Storage semantics for paths and URLs:** File paths and URLs passed to `image`, `video`, or `blob` are stored as references in the local buffer. Content is read from disk or network only when `memory.commit()` is called — not at `log()` time. Raw `bytes` are held in memory until commit.
 
 ```python
 info = Information(context_id=ctx.id)
@@ -531,30 +535,61 @@ info.log(image="https://example.com/photo.jpg")
 info.log(image=pil_image)
 info.log(image=numpy_array)
 
-# Video
+# Video — file path, URL, or bytes
 info.log(video="recording.mp4")
+info.log(video="https://example.com/clip.mp4")
 
-# Blobs — document_type is required
-info.log(blob=open("contract.pdf", "rb").read(), document_type="pdf")
-info.log(blob=open("call.mp3", "rb").read(), document_type="mp3")
+# Blobs — file path, URL, or bytes; document_type is required
+info.log(blob="contract.pdf", document_type="pdf")
+info.log(blob="https://example.com/report.pdf", document_type="pdf")
+info.log(blob=audio_bytes, document_type="mp3")
+
+# Metadata — custom properties stored alongside the entry
+info.log(text="Order #4821 missing", metadata={"ticket_id": "T-99", "priority": 1})
 
 # Pre-computed embedding — skips model call at commit time
 info.log(image=img, embedding=my_vector, embedding_model="clip-vit-base-patch32")
 
 # Combined — one log entry with multiple modalities
-info.log(text="See attached invoice", blob=pdf_bytes, document_type="pdf")
+info.log(text="See attached invoice", blob="invoice.pdf", document_type="pdf")
 ```
 
-### `info.query()`
+### `info.remove()`
 
 ```python
-info.query(text: str) -> None
+info.remove(index: int) -> None
 ```
 
-Log a retrieval intent — what the user or agent was looking for. Stored as metadata and used to improve future search relevance.
+Remove a single pending entry from the buffer by 0-based position. Consistent with `memory.remove()` which removes a committed memory by ID.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `index` | `int` | 0-based position of the entry to remove. Negative indices (Python-style) are supported. |
+
+**Raises:** `IndexError` if `index` is out of range. `NexusValidationError` if `index` is not an integer.
 
 ```python
-info.query("what did we discuss last quarter?")
+info.log(text="preliminary draft")
+info.log(text="final version")
+info.remove(0)          # discard the draft; only "final version" commits
+memory.commit(ctx, info)
+```
+
+### `info.remove_all()`
+
+```python
+info.remove_all() -> None
+```
+
+Remove all pending entries and connections from the buffer. Nothing is written to or deleted from ApertureDB — only the local buffer is affected.
+
+Use this to abandon a work-in-progress batch before starting over, for example after an upstream error.
+
+```python
+info.log(text="wrong context — discard all of this")
+info.remove_all()
+info.log(text="fresh start")
+memory.commit(ctx, info)   # only "fresh start" is stored
 ```
 
 ---

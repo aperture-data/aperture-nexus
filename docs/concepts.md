@@ -61,7 +61,7 @@ Supported input types:
 | Text | `str` |
 | Image | file path, URL, `bytes`, PIL `Image`, `numpy.ndarray` |
 | Video | file path, URL, `bytes` |
-| Blob | `bytes` + `document_type` (e.g. `"pdf"`, `"mp3"`, `"docx"`) |
+| Blob | file path, URL, `bytes` + `document_type` (e.g. `"pdf"`, `"mp3"`, `"docx"`) |
 | Embedding | `numpy.ndarray` + `embedding_model` (skips model call) |
 
 ### Memory
@@ -128,12 +128,34 @@ Use `commit()` when you need speed and will rely on metadata-only
 search. Use `process_and_commit()` when you need semantic (vector)
 search across the stored content.
 
+### Clearing and updating the buffer
+
+Before committing, you can clean up the `Information` buffer:
+
+```python
+# Remove a specific entry (0-based index, consistent with memory.remove())
+info.log(text="preliminary draft")
+info.log(text="final version")
+info.remove(0)          # discard the draft; only "final version" commits
+
+# Clear everything and start over
+info.log(text="wrong context — discard all of this")
+info.remove_all()
+info.log(text="fresh start")
+memory.commit(ctx, info)   # only "fresh start" is stored
+```
+
+`remove()` and `remove_all()` affect only the local buffer — nothing is
+written to or deleted from ApertureDB. They are the right tools for
+handling upstream errors or refining content before it is committed.
+
 ### Memories are append-only in v1
 
 `commit()` always adds new entries — there is no in-place update. If
 you commit the same context twice you get more entries, not replaced
-ones. `Memory.update()` with a `superseded_by` lineage edge is
-planned for v2.
+ones. `memory.remove(memory_id)` deletes a committed memory entirely.
+`Memory.update()` with a `superseded_by` lineage edge for partial
+updates is planned for v2.
 
 ---
 
@@ -148,7 +170,7 @@ Each result carries:
 - `text` — inline text content (for text entries)
 - `modality` — `"text"` | `"image"` | `"video"` | `"blob"`
 - `context_id`, `session_id`, `user_id`, `created_at` — provenance
-- `data` — raw bytes for image/video/blob results
+- `start_frame`, `stop_frame` — video clip boundaries (video only)
 - `metadata` — any custom properties stored at log time
 
 **There is no LLM summarization in v1.** If a long document was

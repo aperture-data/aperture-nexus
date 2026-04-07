@@ -253,7 +253,7 @@ class Information:
             relationship, target, self.context_id,
         )
 
-    def clear(self) -> None:
+    def remove_all(self) -> None:
         """Remove all pending entries and connections from the buffer.
 
         Entries are discarded without being committed to ApertureDB.
@@ -267,7 +267,7 @@ class Information:
         Example:
             info.log(text="preliminary note")
             info.log(image="draft.png")
-            info.clear()         # start over — nothing committed yet
+            info.remove_all()    # start over — nothing committed yet
             info.log(text="final note")
             memory.commit(ctx, info)
         """
@@ -275,7 +275,7 @@ class Information:
         self._entries.clear()
         self._pending_connections.clear()
         logger.debug(
-            "Information buffer cleared: %d entries discarded,"
+            "Information buffer cleared (remove_all): %d entries discarded,"
             " context_id=%r",
             count,
             self.context_id,

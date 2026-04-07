@@ -10,7 +10,7 @@ Tests cover:
   document_type, empty text, no modality, etc.)
 - log(): embedding with and without embedding_model
 - log(): combined modalities in one call
-- clear(): empties buffer without committing
+- remove_all(): empties buffer without committing
 - remove(): removes a single entry by index
 - __len__ and __repr__
 
@@ -528,36 +528,36 @@ class TestDrain:
         assert len(info) == 0
 
 # ---------------------------------------------------------------------------
-# clear() — discard entire buffer
+# remove_all() — discard entire buffer
 # ---------------------------------------------------------------------------
 
 
-class TestClear:
-    def test_clear_empties_buffer(self):
+class TestRemoveAll:
+    def test_remove_all_empties_buffer(self):
         info = Information(context_id="c")
         info.log(text="first")
         info.log(text="second")
-        info.clear()
+        info.remove_all()
         assert len(info) == 0
 
-    def test_clear_empty_buffer_is_noop(self):
+    def test_remove_all_empty_buffer_is_noop(self):
         info = Information(context_id="c")
-        info.clear()
+        info.remove_all()
         assert len(info) == 0
 
-    def test_clear_allows_continued_logging(self):
+    def test_remove_all_allows_continued_logging(self):
         info = Information(context_id="c")
         info.log(text="stale")
-        info.clear()
+        info.remove_all()
         info.log(text="fresh")
         assert len(info) == 1
         assert info._entries[0].text == "fresh"
 
-    def test_clear_removes_pending_connections(self):
+    def test_remove_all_removes_pending_connections(self):
         info = Information(context_id="c")
         info.log(text="entry")
         info.connect(target="other-ctx-id", relationship="follows")
-        info.clear()
+        info.remove_all()
         assert len(info._pending_connections) == 0
 
 
