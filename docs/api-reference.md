@@ -327,27 +327,32 @@ for r in results:
 
 ### `SearchResult`
 
-Returned by `memory.search()`. Exactly one content field is set,
-corresponding to the modality of the stored memory.
+Returned by `memory.search()`.
 
 ```python
 @dataclass
 class SearchResult:
-    score: float              # similarity (higher = more similar)
-    modality: str             # "text" | "image" | "video" | "blob"
-    memory_id: str
+    score: float        # similarity (higher = more similar)
+    modality: str       # "text" | "image" | "video" | "blob"
     session_id: str
     context_id: str
-    timestamp: datetime
+    user_id: str | None
+    created_at: datetime
 
-    # Content — exactly one is set:
+    # Text content — set when modality is "text" and text is short
     text: str | None = None
-    image: PIL.Image | None = None
-    video_url: str | None = None
-    blob: bytes | None = None
+
+    # Video clip boundaries (modality "video" only)
+    start_frame: int | None = None
+    stop_frame: int | None = None
 
     metadata: dict = field(default_factory=dict)
 ```
+
+To retrieve the raw bytes for image, video, or blob results, fetch
+the entry via the `context_id` or `session_id` from ApertureDB
+directly, or use `memory.search()` with `modality=` and use the
+`metadata` field to identify the stored object reference.
 
 ---
 
@@ -441,7 +446,7 @@ Either `session_id` or `session_name` is required. If `session_name` is provided
 | `principal` | `Principal` | The authenticated user or agent. Required. |
 | `session_id` | `str \| None` | ID of an existing session. Use `memory.generate_session_id()` for multi-participant sessions. |
 | `session_name` | `str \| None` | Human-readable session name. Must be unique within a principal's scope. |
-| `purpose` | `str \| None` | Why this interaction is happening. Stored as metadata; searchable. |
+| `purpose` | `str \| None` | The task or intent behind this interaction — a short phrase describing what is being done (e.g. `"debug failing export"`, `"Q3 budget review"`, `"customer support ticket #4821"`). Stored as metadata; filterable at search time via `filters={"purpose": "..."}`. |
 | `organization` | `str \| None` | Group scope for permission and search filtering. |
 | `priority` | `int` | Relative priority hint. Higher values are processed first in batch operations. |
 | `restrictions` | `dict \| None` | `{"local": [...], "global": [...]}` — access constraints applied during search. |
@@ -496,28 +501,42 @@ info.log(
     text: str | None = None,
     image: str | bytes | PIL.Image | np.ndarray | None = None,
     video: str | bytes | None = None,
-    blob: bytes | None = None,
+    blob: str | bytes | None = None,
     document_type: str | None = None,
     embedding: np.ndarray | None = None,
     embedding_model: str | None = None,
+    metadata: dict | None = None,
 ) -> None
 ```
 
-Add one entry to the buffer. Multiple modalities can be combined in a single call (e.g. text + blob for "see attached PDF").
+Add one entry to the buffer. Multiple modalities can be combined in a
+single call (e.g. text + blob for "see attached PDF").
 
-Validation happens eagerly at `log()` time — bad inputs raise `NexusValidationError` immediately.
+Validation happens eagerly at `log()` time — bad inputs raise
+`NexusValidationError` immediately.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `text` | `str \| None` | Plain text. Long text is chunked automatically at commit time. |
-| `image` | `str \| bytes \| PIL.Image \| np.ndarray \| None` | Image in any common form. File path, URL, bytes, PIL Image, or numpy array (HWC uint8 or float32). |
-| `video` | `str \| bytes \| None` | Video file path, URL, or raw bytes. |
-| `blob` | `bytes \| None` | Raw bytes for any binary format. Requires `document_type`. |
-| `document_type` | `str \| None` | File extension for blobs: `"pdf"`, `"mp3"`, `"docx"`, `"csv"`, etc. |
+| `image` | `str \| bytes \| PIL.Image \| np.ndarray \| None` | File path, URL, raw bytes, PIL Image, or numpy array (HWC uint8/float32). Content is read and stored at commit time. |
+| `video` | `str \| bytes \| None` | File path, URL, or raw bytes. Content stored at commit time. |
+| `blob` | `str \| bytes \| None` | File path or raw bytes for any binary format. Requires `document_type`. Use a path to avoid reading the file until commit. |
+| `document_type` | `str \| None` | File extension hint for blobs: `"pdf"`, `"mp3"`, `"docx"`, `"csv"`, etc. Required when `blob` is provided. |
 | `embedding` | `np.ndarray \| None` | Pre-computed embedding vector. Skips model call at commit time. Requires `embedding_model`. |
 | `embedding_model` | `str \| None` | Name of the model that produced the embedding. Required when `embedding` is provided. |
+| `metadata` | `dict \| None` | Arbitrary key-value properties stored alongside the entry. Keys must be `str`; values must be `str`, `int`, `float`, or `bool`. Reserved keys (`context_id`, `session_id`, etc.) are rejected. |
 
-**Raises:** `NexusValidationError` if input is invalid (missing file, wrong shape, missing `document_type` for blob, etc.)
+**Storage semantics:**
+
+- `image` and `video` accept a file path or URL as a `str` — the
+  content is read and stored at commit time, not at `log()` time.
+- `blob` similarly accepts a file path — content is read at commit.
+- Passing raw `bytes` stores the content directly in the buffer
+  (held in memory until commit).
+
+**Raises:** `NexusValidationError` if input is invalid (missing file,
+wrong numpy shape, missing `document_type` for blob, reserved metadata
+key, etc.)
 
 ```python
 info = Information(context_id=ctx.id)
@@ -525,7 +544,7 @@ info = Information(context_id=ctx.id)
 # Text
 info.log(text="Customer says order #4821 never arrived")
 
-# Images — any of these forms
+# Images — path, URL, PIL Image, or numpy array
 info.log(image="screenshot.png")
 info.log(image="https://example.com/photo.jpg")
 info.log(image=pil_image)
@@ -534,27 +553,26 @@ info.log(image=numpy_array)
 # Video
 info.log(video="recording.mp4")
 
-# Blobs — document_type is required
-info.log(blob=open("contract.pdf", "rb").read(), document_type="pdf")
-info.log(blob=open("call.mp3", "rb").read(), document_type="mp3")
+# Blob — file path (content read at commit) or raw bytes
+info.log(blob="contract.pdf", document_type="pdf")
+info.log(blob=pdf_bytes,      document_type="pdf")
+info.log(blob="call.mp3",     document_type="mp3")
+
+# Metadata alongside any entry
+info.log(
+    text="Order #4821 missing",
+    metadata={"ticket_id": "T-99", "priority": 1},
+)
 
 # Pre-computed embedding — skips model call at commit time
-info.log(image=img, embedding=my_vector, embedding_model="clip-vit-base-patch32")
+info.log(
+    image=img,
+    embedding=my_vector,
+    embedding_model="clip-vit-base-patch32",
+)
 
 # Combined — one log entry with multiple modalities
-info.log(text="See attached invoice", blob=pdf_bytes, document_type="pdf")
-```
-
-### `info.query()`
-
-```python
-info.query(text: str) -> None
-```
-
-Log a retrieval intent — what the user or agent was looking for. Stored as metadata and used to improve future search relevance.
-
-```python
-info.query("what did we discuss last quarter?")
+info.log(text="See attached invoice", blob="invoice.pdf", document_type="pdf")
 ```
 
 ---

@@ -6,53 +6,45 @@ sidebar_position: 1
 
 # Concepts
 
-aperture-nexus is the cognition layer for enterprise AI. AI workflows,
-agents, and the humans working alongside them use it to establish
-context, capture multimodal knowledge, and commit it to memory for
-retrieval when needed. It is built around three objects —
-**Context**, **Information**, and **Memory** — that together implement
-the KMC (Knowledge, Memory, Context) model. This page explains what
-each object represents, how they relate, and how they map to
+aperture-nexus is the cognition layer for enterprise AI. It is built
+around the **KMC model** — three concepts that reflect how enterprises
+actually work with knowledge:
+
+- **Knowledge** — enterprises already have it: documents, past
+  decisions, customer records, support tickets. aperture-nexus captures
+  new multimodal knowledge and connects it to what already exists.
+- **Memory** — the engine that stores, processes, and retrieves
+  Knowledge. The only component that writes to or reads from
+  ApertureDB.
+- **Context** — who is acting, in which session, and why. Context
+  spans Knowledge and Memory: it is stamped on every stored entry and
+  used to retrieve the right knowledge for the right situation.
+
+In code, the three API objects that implement the KMC model are
+`Information` (K), `Memory` (M), and `Context` (C). This page
+explains what each represents, how they relate, and how they map to
 ApertureDB's storage primitives.
 
 ---
 
 ## The Three Core Objects
 
-### Context
-
-A `Context` captures **who is doing what, in which session, and why**.
-It carries identity, session membership, and intent — but holds no
-data of its own.
-
-Key properties:
-- `principal` — the authenticated user or agent performing this action
-- `session_id` / `session_name` — which session this context belongs to
-- `purpose` — why this interaction is happening
-  (e.g. `"Customer reporting missing order"`)
-- `organization` — optional group scope for permission and search
-- `restrictions` — optional local or global constraints that affect
-  what this context can access
-
-A context does not write to ApertureDB directly. `Memory` uses it as
-metadata when committing and enforces it during search.
-
-### Information
+### Information — Knowledge (K)
 
 `Information` is a **local buffer for multimodal inputs** accumulated
-during a session. Nothing is written to ApertureDB until
-`memory.commit()` or `memory.process_and_commit()` is called.
+during a session. It is the K in KMC — the raw knowledge being
+captured. Nothing is written to ApertureDB until `memory.commit()`
+or `memory.process_and_commit()` is called.
 
 Inputs are added via `Information.log()`, which validates and
-normalizes each entry immediately — so errors surface at log time,
-not later during commit.
+normalizes each entry immediately — errors surface at log time, not
+during commit.
 
 You can commit incrementally during a long session rather than
 buffering everything until the end. Each `memory.commit(ctx, info)`
-call flushes the current buffer and returns — you can then continue
-logging to the same `info` object and commit again later. If a commit
-fails, the buffer is preserved so you can retry without losing any
-entries.
+call flushes the current buffer and returns — you can continue logging
+to the same `info` object and commit again later. If a commit fails,
+the buffer is preserved so you can retry without losing entries.
 
 Supported input types:
 
@@ -61,17 +53,51 @@ Supported input types:
 | Text | `str` |
 | Image | file path, URL, `bytes`, PIL `Image`, `numpy.ndarray` |
 | Video | file path, URL, `bytes` |
-| Blob | `bytes` + `document_type` (e.g. `"pdf"`, `"mp3"`, `"docx"`) |
+| Blob | file path, `bytes` — requires `document_type`
+  (e.g. `"pdf"`, `"mp3"`, `"docx"`) |
 | Embedding | `numpy.ndarray` + `embedding_model` (skips model call) |
 
-### Memory
+Note that `image` and `video` accept paths and URLs (content is read
+at commit time), while `blob` also accepts a file path as a
+convenience. If you want to store a reference only (e.g. a URL you
+don't want fetched), use `text` or a custom `metadata` field.
 
-`Memory` is the **central engine**. It is the only component that
-writes to ApertureDB. It:
+### Memory — Engine (M)
+
+`Memory` is the **central engine** — the M in KMC. It is the only
+component that writes to ApertureDB. It:
+
 - Authenticates principals
 - Commits and processes `Information` into durable storage
 - Connects memories and contexts with named relationships
 - Searches across stored memories with permission enforcement
+
+### Context — Retrieval Frame (C)
+
+A `Context` captures **who is acting, in which session, and why** —
+the C in KMC. It is a pure data object: it never writes to ApertureDB.
+`Memory` uses it as a retrieval frame, stamping every stored entry
+with its properties so searches can be scoped precisely.
+
+Key properties:
+
+- `principal` — the authenticated user or agent performing this action
+- `session_id` / `session_name` — which session this context belongs
+  to
+- `purpose` — the task or intent behind this interaction, expressed
+  as a short phrase (e.g. `"debug failing export"`,
+  `"Q3 budget review"`, `"customer support ticket #4821"`). Stored
+  as metadata and filterable at search time.
+- `organization` — optional group scope for permission and search
+  filtering
+- `restrictions` — optional local or global constraints that affect
+  what this context can read and write
+
+**Why `purpose` matters:** it is the signal that lets Memory retrieve
+knowledge in the right context. `search(filters={"purpose":
+"customer support"})` returns only entries where that purpose was set
+— without it, results are scoped only by session or organization.
+Think of it as tagging every log entry with the task it was part of.
 
 ---
 
@@ -81,10 +107,10 @@ writes to ApertureDB. It:
 flowchart TD
     P["Principal\n(authenticated user or agent)"]
     S["Session\n(shared across participants)"]
-    C["Context\n(one per participant per session)"]
-    I["Information\n(local buffer)"]
-    M["Memory\n(engine)"]
-    DB["ApertureDB"]
+    C["Context (C)\nwho · session · purpose"]
+    I["Information (K)\nlocal buffer — text · image · video · blob"]
+    M["Memory (M)\nengine"]
+    DB["ApertureDB\nvector search · knowledge graph"]
 
     P -->|"participates in"| S
     P -->|"identified by"| C
@@ -93,6 +119,7 @@ flowchart TD
     I -->|"commit / process_and_commit"| M
     M -->|"reads and writes"| DB
     DB -->|"search results"| M
+    C -->|"stamps every entry"| M
 ```
 
 ---
