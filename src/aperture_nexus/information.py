@@ -15,7 +15,8 @@ Example:
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -44,8 +45,13 @@ _METADATA_VALUE_TYPES = (str, int, float, bool)
 
 
 @dataclass
-class _LogEntry:
-    """Internal: one item added via Information.log()."""
+class InformationEntry:
+    """One entry added via ``Information.log()``.
+
+    Returned by ``log()`` so the caller can hold a reference and pass
+    it to ``remove()`` later. Treat this as an opaque handle — do not
+    construct instances directly or mutate fields.
+    """
 
     text: Optional[str] = None
     image: Optional[Any] = None   # PIL.Image, np.ndarray, bytes, or str
@@ -60,6 +66,10 @@ class _LogEntry:
     # single embeddings supplied by the caller via info.log(embedding=...).
     video_clip_embeddings: Optional[list] = None
     metadata: Optional[dict] = None
+    tag: Optional[str] = None
+    logged_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
 
 @dataclass
@@ -121,7 +131,7 @@ class Information:
                 "Use ctx.id from a Context instance."
             )
         self.context_id = context_id
-        self._entries: list[_LogEntry] = []
+        self._entries: list[InformationEntry] = []
         self._pending_connections: list[_PendingConnection] = []
         logger.debug(
             "Information buffer created: context_id=%r", context_id
@@ -137,23 +147,31 @@ class Information:
         embedding: Optional[np.ndarray] = None,
         embedding_model: Optional[str] = None,
         metadata: Optional[dict] = None,
-    ) -> None:
-        """Add one entry to the buffer.
+        tag: Optional[str] = None,
+    ) -> "InformationEntry":
+        """Add one entry to the buffer and return it.
 
         Multiple modalities can be combined in a single call (e.g.
         text + blob for "see attached PDF"). Validation happens
         immediately — bad inputs raise NexusValidationError before
         anything is stored.
 
+        The returned ``InformationEntry`` can be passed to
+        ``remove()`` to discard the entry before it is committed.
+
         Args:
             text: Plain text. Long text is chunked automatically at
                 commit time.
             image: Image in any common form: file path, URL, bytes,
                 PIL Image, or numpy array (HW or HWC uint8/float32).
+                File existence and read permission are checked
+                immediately; content validity is checked at commit time.
             video: Video file path, URL, or raw bytes.
+                File existence and read permission are checked
+                immediately; content validity is checked at commit time.
             blob: File path, URL, or raw bytes for any binary format.
-                Requires ``document_type``. Paths and URLs are
-                resolved at commit time.
+                Requires ``document_type``. File existence and read
+                permission are checked immediately.
             document_type: File extension for blobs: ``"pdf"``,
                 ``"mp3"``, ``"docx"``, ``"csv"``, etc.
             embedding: Pre-computed embedding vector (1D float array).
@@ -166,13 +184,31 @@ class Information:
                 must be ``str``, ``int``, ``float``, or ``bool``.
                 Reserved keys (``context_id``, ``session_id``, etc.)
                 are rejected — use the Context fields for those.
+            tag: Optional label for this entry. Use the same tag on a
+                group of related entries and call ``remove_tagged()``
+                to discard them all at once.
+
+        Returns:
+            The ``InformationEntry`` that was added. Hold a reference
+            and pass it to ``remove()`` to discard it later.
 
         Raises:
             NexusValidationError: If input is invalid (missing file,
-                wrong numpy shape, missing document_type for blob,
-                embedding provided without embedding_model,
-                invalid metadata key/value types, reserved key used,
-                etc.)
+                permission denied, wrong numpy shape, missing
+                document_type for blob, embedding provided without
+                embedding_model, invalid metadata key/value types,
+                reserved key used, etc.)
+
+        Example:
+            entry = info.log(text="preliminary note")
+            if changed_my_mind:
+                info.remove(entry)
+
+            # Tag a group for atomic discard:
+            info.log(text="Order #4412 placed", tag="order-4412")
+            info.log(blob=receipt, document_type="pdf", tag="order-4412")
+            if order_cancelled:
+                info.remove_tagged("order-4412")
         """
         if all(v is None for v in [text, image, video, blob]):
             raise NexusValidationError(
@@ -190,8 +226,9 @@ class Information:
             embedding, embedding_model
         )
         validated_metadata = _validate_metadata(metadata)
+        validated_tag = _validate_tag(tag)
 
-        entry = _LogEntry(
+        entry = InformationEntry(
             text=validated_text,
             image=validated_image,
             video=validated_video,
@@ -200,13 +237,16 @@ class Information:
             embedding=validated_emb,
             embedding_model=validated_emb_model,
             metadata=validated_metadata,
+            tag=validated_tag,
         )
         self._entries.append(entry)
         logger.debug(
-            "Logged entry %d for context_id=%r",
+            "Logged entry %d for context_id=%r tag=%r",
             len(self._entries),
             self.context_id,
+            validated_tag,
         )
+        return entry
 
     def connect(
         self,
@@ -281,51 +321,181 @@ class Information:
             self.context_id,
         )
 
-    def remove(self, index: int) -> None:
-        """Remove a single pending entry from the buffer by position.
+    def remove(self, entry: "InformationEntry") -> bool:
+        """Remove a specific pending entry from the buffer.
 
-        Use ``len(info)`` to get the current count. The index is
-        0-based and follows the order entries were added via
-        ``log()``. Consistent with ``memory.remove()`` which removes
-        a committed memory by ID.
+        Uses identity comparison (``is``), not equality. Pass back the
+        object returned by ``log()`` — do not construct a new instance.
 
         Args:
-            index: 0-based position of the entry to remove.
+            entry: The ``InformationEntry`` returned by ``log()``.
+
+        Returns:
+            ``True`` if the entry was found and removed; ``False`` if
+            it was not in the buffer (already committed or already
+            removed).
 
         Raises:
-            IndexError: If ``index`` is out of range.
-            NexusValidationError: If ``index`` is not an integer.
+            NexusValidationError: If ``entry`` is not an
+                ``InformationEntry`` instance.
 
         Example:
-            info.log(text="stale note — remove this")
-            info.log(image="screenshot.png")
-            info.remove(0)   # discard the first entry
-            # only screenshot.png entry will be committed
+            entry = info.log(text="preliminary note")
+            # … decide the note was wrong …
+            info.remove(entry)   # removed — will not be committed
         """
-        if not isinstance(index, int):
+        if not isinstance(entry, InformationEntry):
             raise NexusValidationError(
-                f"index must be an integer. "
-                f"Got {type(index).__name__!r}."
+                "entry must be an InformationEntry returned by log(). "
+                f"Got {type(entry).__name__!r}."
             )
-        n = len(self._entries)
-        if n == 0:
-            raise IndexError(
-                f"index {index} is out of range — buffer is empty."
-            )
-        if not (-n <= index < n):
-            raise IndexError(
-                f"index {index} is out of range — buffer has "
-                f"{n} entr{'y' if n == 1 else 'ies'} "
-                f"(valid range: {-n} to {n - 1})."
-            )
-        self._entries.pop(index)
-        logger.debug(
-            "Removed entry at index %d for context_id=%r",
-            index,
-            self.context_id,
-        )
+        for i, e in enumerate(self._entries):
+            if e is entry:
+                self._entries.pop(i)
+                logger.debug(
+                    "Removed entry (tag=%r) for context_id=%r",
+                    entry.tag, self.context_id,
+                )
+                return True
+        return False
 
-    def _drain(self) -> list["_LogEntry"]:
+    def remove_tagged(self, tag: str) -> int:
+        """Remove all pending entries with the given tag.
+
+        Entries added via ``log(tag=...)`` that share the same tag
+        are discarded atomically. Useful for cancelling a logical
+        group of entries before commit.
+
+        Args:
+            tag: The tag value to match. Must be non-empty.
+
+        Returns:
+            Number of entries removed (0 if none matched).
+
+        Raises:
+            NexusValidationError: If ``tag`` is not a non-empty string.
+
+        Example:
+            info.log(text="Order #4412 placed", tag="order-4412")
+            info.log(blob=receipt, document_type="pdf", tag="order-4412")
+            if order_cancelled:
+                removed = info.remove_tagged("order-4412")  # removes 2
+        """
+        if not isinstance(tag, str) or not tag.strip():
+            raise NexusValidationError(
+                "tag must be a non-empty string."
+            )
+        before = len(self._entries)
+        self._entries = [e for e in self._entries if e.tag != tag]
+        removed = before - len(self._entries)
+        logger.debug(
+            "remove_tagged(%r): removed %d entries for context_id=%r",
+            tag, removed, self.context_id,
+        )
+        return removed
+
+    def remove_before(self, timestamp: datetime) -> int:
+        """Remove all pending entries logged before a timestamp.
+
+        Discards older staged entries while keeping more recent ones.
+        Useful for trimming a buffer that has accumulated stale context
+        from earlier in a session.
+
+        For the inverse (rollback: discard everything logged *since* a
+        checkpoint, keep what came before), use ``remove_since()``.
+
+        Args:
+            timestamp: UTC-aware ``datetime``. Entries whose
+                ``logged_at`` is strictly earlier than this value are
+                removed. Must be timezone-aware (use
+                ``datetime.now(timezone.utc)`` or equivalent).
+
+        Returns:
+            Number of entries removed (0 if none matched).
+
+        Raises:
+            NexusValidationError: If ``timestamp`` is not a
+                timezone-aware ``datetime``.
+
+        Example:
+            from datetime import datetime, timezone
+
+            # Discard anything logged before the last hour:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+            info.remove_before(cutoff)  # stale entries gone, recent kept
+        """
+        if not isinstance(timestamp, datetime):
+            raise NexusValidationError(
+                "timestamp must be a datetime instance. "
+                f"Got {type(timestamp).__name__!r}."
+            )
+        if timestamp.tzinfo is None:
+            raise NexusValidationError(
+                "timestamp must be timezone-aware. "
+                "Use datetime.now(timezone.utc) or attach tzinfo explicitly."
+            )
+        before = len(self._entries)
+        self._entries = [
+            e for e in self._entries if e.logged_at >= timestamp
+        ]
+        removed = before - len(self._entries)
+        logger.debug(
+            "remove_before(%s): removed %d entries for context_id=%r",
+            timestamp.isoformat(), removed, self.context_id,
+        )
+        return removed
+
+    def remove_since(self, checkpoint: datetime) -> int:
+        """Remove all pending entries logged at or after a checkpoint.
+
+        Use this for rollback: capture a checkpoint before a block of
+        ``log()`` calls, then call ``remove_since(checkpoint)`` to
+        undo all logging since that point.
+
+        Args:
+            checkpoint: UTC-aware ``datetime``. Entries whose
+                ``logged_at`` is greater than or equal to this value
+                are removed. Must be timezone-aware (use
+                ``datetime.now(timezone.utc)`` or equivalent).
+
+        Returns:
+            Number of entries removed (0 if none matched).
+
+        Raises:
+            NexusValidationError: If ``checkpoint`` is not a
+                timezone-aware ``datetime``.
+
+        Example:
+            from datetime import datetime, timezone
+
+            checkpoint = datetime.now(timezone.utc)
+            info.log(text="attempt A")
+            info.log(image="draft.png")
+            # … something went wrong, undo the whole attempt …
+            info.remove_since(checkpoint)  # back to state at checkpoint
+        """
+        if not isinstance(checkpoint, datetime):
+            raise NexusValidationError(
+                "checkpoint must be a datetime instance. "
+                f"Got {type(checkpoint).__name__!r}."
+            )
+        if checkpoint.tzinfo is None:
+            raise NexusValidationError(
+                "checkpoint must be timezone-aware. "
+                "Use datetime.now(timezone.utc) or attach tzinfo explicitly."
+            )
+        before = len(self._entries)
+        self._entries = [
+            e for e in self._entries if e.logged_at < checkpoint
+        ]
+        removed = before - len(self._entries)
+        logger.debug(
+            "remove_since(%s): removed %d entries for context_id=%r",
+            checkpoint.isoformat(), removed, self.context_id,
+        )
+        return removed
+
+    def _drain(self) -> list["InformationEntry"]:
         """Return all buffered entries and reset the buffer.
 
         Called by Memory after a successful commit. Matches the
@@ -350,6 +520,18 @@ class Information:
 # ---------------------------------------------------------------------------
 # Validation helpers — module-private
 # ---------------------------------------------------------------------------
+
+
+def _validate_tag(tag: Optional[str]) -> Optional[str]:
+    if tag is None:
+        return None
+    if not isinstance(tag, str):
+        raise NexusValidationError(
+            f"tag must be a string. Got {type(tag).__name__!r}."
+        )
+    if not tag.strip():
+        raise NexusValidationError("tag must not be empty.")
+    return tag
 
 
 def _validate_text(text: Optional[str]) -> Optional[str]:
@@ -377,6 +559,12 @@ def _validate_image(image: Optional[Any]) -> Optional[Any]:
                 f"Image file not found: {image}. "
                 "Provide a valid file path, URL, PIL Image, "
                 "numpy array, or raw bytes."
+            )
+        try:
+            path.open("rb").close()
+        except PermissionError:
+            raise NexusValidationError(
+                f"Image file is not readable (permission denied): {image}."
             )
         return image
 
@@ -427,6 +615,12 @@ def _validate_video(video: Optional[Any]) -> Optional[Any]:
                 f"Video file not found: {video}. "
                 "Provide a valid file path, URL, or raw bytes."
             )
+        try:
+            path.open("rb").close()
+        except PermissionError:
+            raise NexusValidationError(
+                f"Video file is not readable (permission denied): {video}."
+            )
         return video
 
     if isinstance(video, bytes):
@@ -460,6 +654,12 @@ def _validate_blob(
                 raise NexusValidationError(
                     f"Blob file not found: {blob}. "
                     "Provide a valid file path, URL, or raw bytes."
+                )
+            try:
+                path.open("rb").close()
+            except PermissionError:
+                raise NexusValidationError(
+                    f"Blob file is not readable (permission denied): {blob}."
                 )
     elif not isinstance(blob, bytes):
         raise NexusValidationError(

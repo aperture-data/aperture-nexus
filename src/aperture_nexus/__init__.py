@@ -95,6 +95,9 @@ def __getattr__(name: str):
     if name == "Information":
         from aperture_nexus.information import Information
         return Information
+    if name == "InformationEntry":
+        from aperture_nexus.information import InformationEntry
+        return InformationEntry
     if name == "NexusAdmin":
         from aperture_nexus.admin import NexusAdmin
         return NexusAdmin

@@ -4,27 +4,32 @@ Unit tests for aperture_nexus.information.
 Tests cover:
 - Construction (valid, invalid context_id)
 - log(): happy paths for all modalities (text, image, video, blob)
+- log(): returns InformationEntry; tag and logged_at fields set
 - log(): image input variants (path, URL, bytes, PIL, numpy)
 - log(): blob input variants (bytes, file path, URL)
-- log(): validation errors (missing file, wrong dtype, missing
-  document_type, empty text, no modality, etc.)
+- log(): validation errors (missing file, permission denied, wrong dtype,
+  missing document_type, empty text, no modality, etc.)
 - log(): embedding with and without embedding_model
 - log(): combined modalities in one call
 - remove_all(): empties buffer without committing
-- remove(): removes a single entry by index
+- remove(entry): removes a specific entry by identity
+- remove_tagged(tag): removes all entries with the given tag
+- remove_before(timestamp): removes entries logged before a timestamp
 - __len__ and __repr__
 
 No live ApertureDB instance required.
 """
 
-import io
+import stat
+import sys
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
 from PIL import Image as PILImage
 
 from aperture_nexus.exceptions import NexusValidationError
-from aperture_nexus.information import Information
+from aperture_nexus.information import Information, InformationEntry
 
 
 # ---------------------------------------------------------------------------
@@ -77,9 +82,34 @@ class TestInformationConstruction:
 class TestLogText:
     def test_plain_text(self):
         info = Information(context_id="c")
-        info.log(text="Hello world")
+        entry = info.log(text="Hello world")
+        assert isinstance(entry, InformationEntry)
         assert len(info) == 1
         assert info._entries[0].text == "Hello world"
+
+    def test_log_returns_entry_with_logged_at(self):
+        before = datetime.now(timezone.utc)
+        info = Information(context_id="c")
+        entry = info.log(text="timestamped")
+        after = datetime.now(timezone.utc)
+        assert entry.logged_at.tzinfo is not None
+        assert before <= entry.logged_at <= after
+
+    def test_log_with_tag(self):
+        info = Information(context_id="c")
+        entry = info.log(text="tagged entry", tag="order-1")
+        assert entry.tag == "order-1"
+        assert info._entries[0].tag == "order-1"
+
+    def test_log_tag_default_is_none(self):
+        info = Information(context_id="c")
+        entry = info.log(text="no tag")
+        assert entry.tag is None
+
+    def test_log_empty_tag_raises(self):
+        info = Information(context_id="c")
+        with pytest.raises(NexusValidationError, match="empty"):
+            info.log(text="x", tag="")
 
     def test_empty_text_raises(self):
         info = Information(context_id="c")
@@ -124,6 +154,18 @@ class TestLogImage:
         info = Information(context_id="c")
         with pytest.raises(NexusValidationError, match="not found"):
             info.log(image="/nonexistent/path/image.jpg")
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="chmod not reliable on Windows")
+    def test_image_permission_denied_raises(self, tmp_path):
+        img_path = tmp_path / "noperm.png"
+        _pil_image().save(img_path)
+        img_path.chmod(0o000)
+        try:
+            info = Information(context_id="c")
+            with pytest.raises(NexusValidationError, match="permission denied"):
+                info.log(image=str(img_path))
+        finally:
+            img_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
     def test_image_pil(self):
         info = Information(context_id="c")
@@ -208,6 +250,18 @@ class TestLogVideo:
         with pytest.raises(NexusValidationError, match="not found"):
             info.log(video="/no/such/video.mp4")
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="chmod not reliable on Windows")
+    def test_video_permission_denied_raises(self, tmp_path):
+        vid_path = tmp_path / "noperm.mp4"
+        vid_path.write_bytes(b"fake-mp4")
+        vid_path.chmod(0o000)
+        try:
+            info = Information(context_id="c")
+            with pytest.raises(NexusValidationError, match="permission denied"):
+                info.log(video=str(vid_path))
+        finally:
+            vid_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
     def test_video_bytes(self):
         info = Information(context_id="c")
         raw = b"fake-video-bytes"
@@ -275,6 +329,18 @@ class TestLogBlob:
         info = Information(context_id="c")
         with pytest.raises(NexusValidationError, match="not found"):
             info.log(blob="/nonexistent/file.pdf", document_type="pdf")
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="chmod not reliable on Windows")
+    def test_blob_permission_denied_raises(self, tmp_path):
+        pdf_path = tmp_path / "noperm.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4")
+        pdf_path.chmod(0o000)
+        try:
+            info = Information(context_id="c")
+            with pytest.raises(NexusValidationError, match="permission denied"):
+                info.log(blob=str(pdf_path), document_type="pdf")
+        finally:
+            pdf_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
     def test_blob_unsupported_type_raises(self):
         info = Information(context_id="c")
@@ -562,66 +628,245 @@ class TestRemoveAll:
 
 
 # ---------------------------------------------------------------------------
-# remove() — discard a single entry by index
+# remove(entry) — discard a specific entry by identity
 # ---------------------------------------------------------------------------
 
 
 class TestRemove:
-    def test_remove_first_entry(self):
+    def test_remove_returns_true_when_found(self):
         info = Information(context_id="c")
-        info.log(text="a")
+        entry = info.log(text="target")
+        result = info.remove(entry)
+        assert result is True
+        assert len(info) == 0
+
+    def test_remove_returns_false_when_not_in_buffer(self):
+        info = Information(context_id="c")
+        info2 = Information(context_id="c2")
+        entry = info2.log(text="from other buffer")
+        result = info.remove(entry)
+        assert result is False
+
+    def test_remove_first_entry_by_reference(self):
+        info = Information(context_id="c")
+        a = info.log(text="a")
         info.log(text="b")
         info.log(text="c")
-        info.remove(0)
+        info.remove(a)
         assert len(info) == 2
         assert info._entries[0].text == "b"
 
-    def test_remove_last_entry(self):
+    def test_remove_middle_entry_by_reference(self):
         info = Information(context_id="c")
         info.log(text="a")
-        info.log(text="b")
-        info.remove(1)
-        assert len(info) == 1
-        assert info._entries[0].text == "a"
-
-    def test_remove_middle_entry(self):
-        info = Information(context_id="c")
-        info.log(text="a")
-        info.log(text="b")
+        b = info.log(text="b")
         info.log(text="c")
-        info.remove(1)
+        info.remove(b)
         texts = [e.text for e in info._entries]
         assert texts == ["a", "c"]
 
-    def test_remove_negative_index(self):
-        """Python-style negative indexing is supported."""
+    def test_remove_last_entry_by_reference(self):
         info = Information(context_id="c")
         info.log(text="a")
-        info.log(text="b")
-        info.remove(-1)
+        last = info.log(text="b")
+        info.remove(last)
         assert len(info) == 1
         assert info._entries[0].text == "a"
 
-    def test_remove_out_of_range_raises(self):
-        info = Information(context_id="c")
-        info.log(text="only entry")
-        with pytest.raises(IndexError, match="out of range"):
-            info.remove(5)
-
-    def test_remove_empty_buffer_raises(self):
-        info = Information(context_id="c")
-        with pytest.raises(IndexError):
-            info.remove(0)
-
-    def test_remove_non_integer_raises(self):
-        from aperture_nexus.exceptions import NexusValidationError
+    def test_remove_wrong_type_raises(self):
         info = Information(context_id="c")
         info.log(text="entry")
-        with pytest.raises(NexusValidationError, match="integer"):
-            info.remove("0")  # type: ignore
+        with pytest.raises(NexusValidationError, match="InformationEntry"):
+            info.remove(0)  # type: ignore
 
-    def test_remove_only_entry_empties_buffer(self):
+    def test_remove_after_drain_returns_false(self):
+        """Entry is no longer in the buffer after _drain(); remove() returns False."""
         info = Information(context_id="c")
-        info.log(text="solo")
-        info.remove(0)
+        entry = info.log(text="committed")
+        info._drain()
+        assert info.remove(entry) is False
+
+    def test_remove_same_text_uses_identity_not_equality(self):
+        """Two entries with identical text are distinct objects — remove only removes one."""
+        info = Information(context_id="c")
+        e1 = info.log(text="same")
+        e2 = info.log(text="same")
+        info.remove(e1)
+        assert len(info) == 1
+        assert info._entries[0] is e2
+
+
+# ---------------------------------------------------------------------------
+# remove_tagged(tag) — discard all entries with a given tag
+# ---------------------------------------------------------------------------
+
+
+class TestRemoveTagged:
+    def test_remove_tagged_removes_matching_entries(self):
+        info = Information(context_id="c")
+        info.log(text="Order placed", tag="order-1")
+        info.log(blob=b"receipt", document_type="pdf", tag="order-1")
+        info.log(text="unrelated note")
+        removed = info.remove_tagged("order-1")
+        assert removed == 2
+        assert len(info) == 1
+        assert info._entries[0].text == "unrelated note"
+
+    def test_remove_tagged_returns_zero_when_no_match(self):
+        info = Information(context_id="c")
+        info.log(text="no tag")
+        removed = info.remove_tagged("nonexistent")
+        assert removed == 0
+        assert len(info) == 1
+
+    def test_remove_tagged_empty_buffer_returns_zero(self):
+        info = Information(context_id="c")
+        assert info.remove_tagged("any") == 0
+
+    def test_remove_tagged_removes_all_matching(self):
+        info = Information(context_id="c")
+        for i in range(5):
+            info.log(text=f"item {i}", tag="batch")
+        removed = info.remove_tagged("batch")
+        assert removed == 5
         assert len(info) == 0
+
+    def test_remove_tagged_leaves_other_tags_intact(self):
+        info = Information(context_id="c")
+        info.log(text="keep", tag="keep-tag")
+        info.log(text="drop", tag="drop-tag")
+        info.remove_tagged("drop-tag")
+        assert len(info) == 1
+        assert info._entries[0].tag == "keep-tag"
+
+    def test_remove_tagged_empty_string_raises(self):
+        info = Information(context_id="c")
+        info.log(text="x")
+        with pytest.raises(NexusValidationError, match="non-empty"):
+            info.remove_tagged("")
+
+    def test_remove_tagged_non_string_raises(self):
+        info = Information(context_id="c")
+        info.log(text="x")
+        with pytest.raises(NexusValidationError, match="non-empty"):
+            info.remove_tagged(None)  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# remove_before(timestamp) — discard entries logged before a checkpoint
+# ---------------------------------------------------------------------------
+
+
+class TestRemoveBefore:
+    def test_remove_before_removes_earlier_entries(self):
+        info = Information(context_id="c")
+        info.log(text="before checkpoint")
+        checkpoint = datetime.now(timezone.utc)
+        info.log(text="after checkpoint")
+        removed = info.remove_before(checkpoint)
+        assert removed == 1
+        assert len(info) == 1
+        assert info._entries[0].text == "after checkpoint"
+
+    def test_remove_before_returns_zero_when_all_after(self):
+        checkpoint = datetime.now(timezone.utc) - timedelta(hours=1)
+        info = Information(context_id="c")
+        info.log(text="recent entry")
+        removed = info.remove_before(checkpoint)
+        assert removed == 0
+        assert len(info) == 1
+
+    def test_remove_before_removes_all_when_old_checkpoint(self):
+        info = Information(context_id="c")
+        info.log(text="a")
+        info.log(text="b")
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        removed = info.remove_before(future)
+        assert removed == 2
+        assert len(info) == 0
+
+    def test_remove_before_empty_buffer_returns_zero(self):
+        info = Information(context_id="c")
+        checkpoint = datetime.now(timezone.utc)
+        assert info.remove_before(checkpoint) == 0
+
+    def test_remove_before_naive_datetime_raises(self):
+        info = Information(context_id="c")
+        info.log(text="entry")
+        naive = datetime.now()  # no tzinfo
+        with pytest.raises(NexusValidationError, match="timezone-aware"):
+            info.remove_before(naive)
+
+    def test_remove_before_non_datetime_raises(self):
+        info = Information(context_id="c")
+        info.log(text="entry")
+        with pytest.raises(NexusValidationError, match="datetime"):
+            info.remove_before("2025-01-01")  # type: ignore
+
+    def test_remove_before_keeps_recent_discards_old(self):
+        """remove_before keeps entries at or after the timestamp."""
+        info = Information(context_id="c")
+        info.log(text="old entry")
+        cutoff = datetime.now(timezone.utc)
+        info.log(text="recent entry A")
+        info.log(text="recent entry B")
+        # Discard old entries before cutoff:
+        removed = info.remove_before(cutoff)
+        assert removed == 1
+        assert len(info) == 2
+        texts = [e.text for e in info._entries]
+        assert "recent entry A" in texts
+        assert "recent entry B" in texts
+
+
+# ---------------------------------------------------------------------------
+# remove_since(checkpoint) — rollback: discard entries logged since checkpoint
+# ---------------------------------------------------------------------------
+
+
+class TestRemoveSince:
+    def test_rollback_to_checkpoint(self):
+        """Classic rollback: stable entries before checkpoint are kept."""
+        info = Information(context_id="c")
+        info.log(text="stable entry")
+        checkpoint = datetime.now(timezone.utc)
+        info.log(text="attempt A")
+        info.log(text="attempt B")
+        removed = info.remove_since(checkpoint)
+        assert removed == 2
+        assert len(info) == 1
+        assert info._entries[0].text == "stable entry"
+
+    def test_remove_since_future_removes_nothing(self):
+        info = Information(context_id="c")
+        info.log(text="entry")
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        removed = info.remove_since(future)
+        assert removed == 0
+        assert len(info) == 1
+
+    def test_remove_since_past_removes_all(self):
+        info = Information(context_id="c")
+        info.log(text="a")
+        info.log(text="b")
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        removed = info.remove_since(past)
+        assert removed == 2
+        assert len(info) == 0
+
+    def test_remove_since_empty_buffer_returns_zero(self):
+        info = Information(context_id="c")
+        checkpoint = datetime.now(timezone.utc)
+        assert info.remove_since(checkpoint) == 0
+
+    def test_remove_since_naive_datetime_raises(self):
+        info = Information(context_id="c")
+        info.log(text="entry")
+        with pytest.raises(NexusValidationError, match="timezone-aware"):
+            info.remove_since(datetime.now())
+
+    def test_remove_since_non_datetime_raises(self):
+        info = Information(context_id="c")
+        info.log(text="entry")
+        with pytest.raises(NexusValidationError, match="datetime"):
+            info.remove_since("2025-01-01")  # type: ignore

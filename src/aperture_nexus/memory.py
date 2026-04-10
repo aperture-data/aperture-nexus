@@ -1205,7 +1205,7 @@ class Memory:
         return props
 
     def _write_entry(self, entry, ctx: Context, session_id: str) -> None:
-        """Write one _LogEntry to ApertureDB.
+        """Write one InformationEntry to ApertureDB.
 
         Each content object (Blob, Image, Video) and its Descriptor are
         written in a single atomic transaction using ``_ref`` /
