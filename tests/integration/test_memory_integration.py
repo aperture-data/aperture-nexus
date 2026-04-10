@@ -435,7 +435,7 @@ class TestInformationRemoveBeforeCommit:
     def test_remove_first_entry_only_second_committed(
         self, memory_engine, test_principal
     ):
-        """Removing the first entry before commit stores only the second."""
+        """Removing the first entry (by reference) before commit stores only the second."""
         sid = _unique_sid()
         ctx = Context(
             principal=test_principal,
@@ -443,9 +443,9 @@ class TestInformationRemoveBeforeCommit:
             purpose="remove before commit test",
         )
         info = Information(context_id=ctx.id)
-        info.log(text="entry A — remove this")
+        entry_a = info.log(text="entry A — remove this")
         info.log(text="entry B — keep this")
-        info.remove(0)
+        info.remove(entry_a)
         memory_engine.commit(ctx, info)
 
         results = memory_engine.search(filters={"session_id": sid})
@@ -455,13 +455,13 @@ class TestInformationRemoveBeforeCommit:
     def test_remove_last_entry_only_first_committed(
         self, memory_engine, test_principal
     ):
-        """Removing the last entry before commit stores only the first."""
+        """Removing the last entry (by reference) before commit stores only the first."""
         sid = _unique_sid()
         ctx = Context(principal=test_principal, session_id=sid)
         info = Information(context_id=ctx.id)
         info.log(text="keep this")
-        info.log(text="discard this")
-        info.remove(-1)
+        discard = info.log(text="discard this")
+        info.remove(discard)
         memory_engine.commit(ctx, info)
 
         results = memory_engine.search(filters={"session_id": sid})
