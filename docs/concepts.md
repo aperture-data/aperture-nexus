@@ -130,24 +130,51 @@ search across the stored content.
 
 ### Clearing and updating the buffer
 
-Before committing, you can clean up the `Information` buffer:
+Before committing, you can clean up the `Information` buffer. All removal methods affect only the local buffer — nothing is written to or deleted from ApertureDB.
+
+**By reference** — `log()` returns an `InformationEntry`. Hold it and pass it back to `remove()`:
 
 ```python
-# Remove a specific entry (0-based index, consistent with memory.remove())
-info.log(text="preliminary draft")
+draft = info.log(text="preliminary draft")
 info.log(text="final version")
-info.remove(0)          # discard the draft; only "final version" commits
+info.remove(draft)       # discard the draft; only "final version" commits
+memory.commit(ctx, info)
+```
 
-# Clear everything and start over
+**By tag** — label a group of related entries at log time, then discard the whole group:
+
+```python
+info.log(text="Order #4412 placed", tag="order-4412")
+info.log(blob=receipt, document_type="pdf", tag="order-4412")
+if order_cancelled:
+    info.remove_tagged("order-4412")   # both entries removed atomically
+```
+
+**By timestamp** — two patterns:
+
+```python
+from datetime import datetime, timezone
+
+# Rollback: undo everything logged since a checkpoint
+checkpoint = datetime.now(timezone.utc)
+info.log(text="attempt A")
+info.log(image="draft.png")
+# … something went wrong …
+info.remove_since(checkpoint)   # only entries before the checkpoint remain
+
+# Cleanup: discard old staged entries, keep recent ones
+cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+info.remove_before(cutoff)
+```
+
+**Everything** — abandon the whole buffer and start over:
+
+```python
 info.log(text="wrong context — discard all of this")
 info.remove_all()
 info.log(text="fresh start")
 memory.commit(ctx, info)   # only "fresh start" is stored
 ```
-
-`remove()` and `remove_all()` affect only the local buffer — nothing is
-written to or deleted from ApertureDB. They are the right tools for
-handling upstream errors or refining content before it is committed.
 
 ### Memories are append-only in v1
 

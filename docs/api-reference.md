@@ -501,25 +501,31 @@ info.log(
     embedding: np.ndarray | None = None,
     embedding_model: str | None = None,
     metadata: dict | None = None,
-) -> None
+    tag: str | None = None,
+) -> InformationEntry
 ```
 
-Add one entry to the buffer. Multiple modalities can be combined in a single call (e.g. text + blob for "see attached PDF").
+Add one entry to the buffer and return it. Multiple modalities can be combined in a single call (e.g. text + blob for "see attached PDF").
 
-Validation happens eagerly at `log()` time — bad inputs raise `NexusValidationError` immediately.
+Validation happens eagerly at `log()` time — bad inputs raise `NexusValidationError` immediately. For file path inputs, file existence and read permissions are checked at `log()` time; content validity (format, decoding) is checked at `commit()` time.
+
+The returned `InformationEntry` can be passed to `remove()` to discard the entry before it is committed.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `text` | `str \| None` | Plain text. Long text is chunked automatically at commit time. |
-| `image` | `str \| bytes \| PIL.Image \| np.ndarray \| None` | Image in any common form. File path, URL, bytes, PIL Image, or numpy array (HWC uint8 or float32). |
-| `video` | `str \| bytes \| None` | Video file path, URL, or raw bytes. |
-| `blob` | `str \| bytes \| None` | File path, URL, or raw bytes for any binary format. Requires `document_type`. Paths and URLs are resolved at commit time. |
+| `image` | `str \| bytes \| PIL.Image \| np.ndarray \| None` | Image in any common form. File path, URL, bytes, PIL Image, or numpy array (HWC uint8 or float32). File existence and read permission checked at `log()` time. |
+| `video` | `str \| bytes \| None` | Video file path, URL, or raw bytes. File existence and read permission checked at `log()` time. |
+| `blob` | `str \| bytes \| None` | File path, URL, or raw bytes for any binary format. Requires `document_type`. File existence and read permission checked at `log()` time. |
 | `document_type` | `str \| None` | File extension for blobs: `"pdf"`, `"mp3"`, `"docx"`, `"csv"`, etc. |
 | `embedding` | `np.ndarray \| None` | Pre-computed embedding vector. Skips model call at commit time. Requires `embedding_model`. |
 | `embedding_model` | `str \| None` | Name of the model that produced the embedding. Required when `embedding` is provided. |
 | `metadata` | `dict \| None` | Arbitrary key-value properties stored alongside the entry. Keys must be strings; values must be `str`, `int`, `float`, or `bool`. Reserved keys (`context_id`, `session_id`, etc.) are rejected. |
+| `tag` | `str \| None` | Optional label. Pass the same tag to several `log()` calls and then call `remove_tagged(tag)` to discard them all at once. |
 
-**Raises:** `NexusValidationError` if input is invalid (missing file, wrong shape, missing `document_type` for blob, reserved metadata key, etc.)
+**Returns:** `InformationEntry` — holds a reference to the buffered entry. Pass it to `remove()` to discard it.
+
+**Raises:** `NexusValidationError` if input is invalid (missing file, permission denied, wrong shape, missing `document_type` for blob, reserved metadata key, etc.)
 
 > **Storage semantics for paths and URLs:** File paths and URLs passed to `image`, `video`, or `blob` are stored as references in the local buffer. Content is read from disk or network only when `memory.commit()` is called — not at `log()` time. Raw `bytes` are held in memory until commit.
 
@@ -557,22 +563,96 @@ info.log(text="See attached invoice", blob="invoice.pdf", document_type="pdf")
 ### `info.remove()`
 
 ```python
-info.remove(index: int) -> None
+info.remove(entry: InformationEntry) -> bool
 ```
 
-Remove a single pending entry from the buffer by 0-based position. Consistent with `memory.remove()` which removes a committed memory by ID.
+Remove a specific pending entry from the buffer by identity. Pass back the `InformationEntry` returned by `log()`. Uses `is` comparison — not equality — so two entries with identical content are treated as distinct.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `index` | `int` | 0-based position of the entry to remove. Negative indices (Python-style) are supported. |
+| `entry` | `InformationEntry` | The object returned by `log()`. |
 
-**Raises:** `IndexError` if `index` is out of range. `NexusValidationError` if `index` is not an integer.
+**Returns:** `True` if the entry was found and removed; `False` if it was not in the buffer (already committed or already removed).
+
+**Raises:** `NexusValidationError` if `entry` is not an `InformationEntry` instance.
 
 ```python
-info.log(text="preliminary draft")
+entry = info.log(text="preliminary draft")
 info.log(text="final version")
-info.remove(0)          # discard the draft; only "final version" commits
+info.remove(entry)          # discard the draft; only "final version" commits
 memory.commit(ctx, info)
+```
+
+### `info.remove_tagged()`
+
+```python
+info.remove_tagged(tag: str) -> int
+```
+
+Remove all pending entries with the given tag. Useful for cancelling a logical group of entries (e.g. all entries for a cancelled order) atomically before commit.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `tag` | `str` | The tag value to match. Must be non-empty. |
+
+**Returns:** Number of entries removed (0 if none matched).
+
+**Raises:** `NexusValidationError` if `tag` is not a non-empty string.
+
+```python
+info.log(text="Order #4412 placed", tag="order-4412")
+info.log(blob=receipt, document_type="pdf", tag="order-4412")
+if order_cancelled:
+    info.remove_tagged("order-4412")   # both entries removed atomically
+```
+
+### `info.remove_before()`
+
+```python
+info.remove_before(timestamp: datetime) -> int
+```
+
+Remove all pending entries logged before `timestamp`. Discards older staged entries while keeping more recent ones. For the rollback pattern (discard entries since a checkpoint), use `remove_since()`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `timestamp` | `datetime` | UTC-aware `datetime`. Entries logged strictly before this value are removed. |
+
+**Returns:** Number of entries removed (0 if none matched).
+
+**Raises:** `NexusValidationError` if `timestamp` is not a timezone-aware `datetime`.
+
+```python
+from datetime import datetime, timedelta, timezone
+
+cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+info.remove_before(cutoff)   # discard stale entries, keep recent ones
+```
+
+### `info.remove_since()`
+
+```python
+info.remove_since(checkpoint: datetime) -> int
+```
+
+Remove all pending entries logged at or after `checkpoint`. Use this as a rollback: capture a checkpoint before a block of `log()` calls, then call `remove_since(checkpoint)` to undo all logging since that point.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `checkpoint` | `datetime` | UTC-aware `datetime`. Entries logged at or after this value are removed. |
+
+**Returns:** Number of entries removed (0 if none matched).
+
+**Raises:** `NexusValidationError` if `checkpoint` is not a timezone-aware `datetime`.
+
+```python
+from datetime import datetime, timezone
+
+checkpoint = datetime.now(timezone.utc)
+info.log(text="attempt A")
+info.log(image="draft.png")
+# … something went wrong …
+info.remove_since(checkpoint)   # undo everything since the checkpoint
 ```
 
 ### `info.remove_all()`
