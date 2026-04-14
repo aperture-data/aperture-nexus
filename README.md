@@ -87,7 +87,7 @@ ctx = Context(
 
 info = Information(context_id=ctx.id)
 info.log(text="Customer says order #4821 never arrived")
-info.log(image="screenshot.png")
+info.log(text="Order was marked delivered on April 3rd")
 
 # Store — no model calls required
 memory.commit(ctx, info)
