@@ -19,26 +19,28 @@ vector search and knowledge graph.
 
 ## How It Works
 
-Three objects form the KMC model and work together as a cognition layer:
+The KMC model reflects how enterprises work with knowledge: existing
+Knowledge is captured via `Information`, `Memory` stores and retrieves
+it, and `Context` tells Memory who is acting and why so the right
+knowledge comes back.
 
 ```mermaid
 flowchart LR
-    C["Context\nwho · session · why"]
-    I["Information\ntext · image · audio\nvideo · blob"]
-    M["Memory\ncommit · search · connect"]
+    I["Information (K)\ntext · image · video · blob\nlocal buffer"]
+    C["Context (C)\nwho · session · purpose"]
+    M["Memory (M)\ncommit · search · connect"]
     DB["ApertureDB\nvector search\nknowledge graph"]
 
-    C --> I
-    I -->|"log()"| I
+    C -->|"stamps entries"| M
     I -->|"commit()"| M
     M <-->|"store / retrieve"| DB
 ```
 
-| Object | Role |
-|--------|------|
-| **Context** | Who is doing what, in which session, and why |
-| **Information** | Local buffer; nothing written to the DB until commit |
-| **Memory** | Commits, processes embeddings, connects, and searches |
+| KMC | Object | Role |
+|-----|--------|------|
+| **K** | `Information` | Local buffer — nothing written to DB until commit |
+| **M** | `Memory` | Commits, processes embeddings, connects, and searches |
+| **C** | `Context` | Who is acting, in which session, and why — scopes retrieval |
 
 The same model works for a single developer session, a multi-agent
 pipeline, or a human+AI team sharing context across an enterprise.
