@@ -199,15 +199,15 @@ memory = Memory(db_client=existing_connector)
 memory.commit(ctx: Context, info: Information) -> str
 ```
 
-Store `Information` in ApertureDB as-is — no model calls, no embeddings. Fast. Returns the `memory_id` of the committed memory.
+Store `Information` in ApertureDB as-is — no model calls, no embeddings. Fast. Returns the `context_id` of the committed context.
 
 Use `commit()` when you need speed and plan to search by metadata (session, organization, time range) rather than semantic similarity.
 
-**Returns:** `str` — the `memory_id`
+**Returns:** `str` — the `context_id`
 **Raises:** `NexusConnectionError`, `NexusStorageError`, `NexusPermissionError`
 
 ```python
-memory_id = memory.commit(ctx, info)
+ctx_id = memory.commit(ctx, info)
 ```
 
 ---
@@ -222,11 +222,11 @@ Generate embeddings and summaries for all items in `info`, then store everything
 
 Requires at least one model configured in `aperture_nexus.json` or supplied via `info.log(embedding_model=...)`.
 
-**Returns:** `str` — the `memory_id`
+**Returns:** `str` — the `context_id`
 **Raises:** `NexusConfigError` if no model is configured; `NexusProcessingError` if model calls fail; `NexusConnectionError`, `NexusStorageError`, `NexusPermissionError`
 
 ```python
-memory_id = memory.process_and_commit(ctx, info)
+ctx_id = memory.process_and_commit(ctx, info)
 ```
 
 ---
