@@ -229,6 +229,24 @@ def _to_image_bytes(image: Any) -> bytes:
     )
 
 
+def _to_blob_bytes(blob: Any) -> bytes:
+    """Convert any supported blob type to bytes."""
+    if isinstance(blob, bytes):
+        return blob
+    if isinstance(blob, str):
+        if blob.startswith("http://") or blob.startswith("https://"):
+            import requests
+            resp = requests.get(blob, timeout=60)
+            resp.raise_for_status()
+            return resp.content
+        with open(blob, "rb") as f:
+            return f.read()
+    raise NexusValidationError(
+        f"Cannot convert blob type {type(blob).__name__!r} to bytes. "
+        "Pass a file path, URL, or bytes."
+    )
+
+
 def _to_video_bytes(video: Any) -> bytes:
     """Convert any supported video type to bytes."""
     if isinstance(video, bytes):
@@ -1315,6 +1333,7 @@ class Memory:
 
         # ---- Raw blob --------------------------------------------------------
         if entry.blob is not None:
+            blob_bytes = _to_blob_bytes(entry.blob)
             props = dict(common_props, document_type=entry.document_type or "")
 
             if has_emb:
@@ -1326,11 +1345,11 @@ class Memory:
                     {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
                     {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
                 ]
-                response, _ = self._db.query(cmd, [entry.blob, emb_bytes])
+                response, _ = self._db.query(cmd, [blob_bytes, emb_bytes])
                 _check_response(response, "write_blob_entry+descriptor")
             else:
                 cmd = [{"AddBlob": {"properties": props}}]
-                response, _ = self._db.query(cmd, [entry.blob])
+                response, _ = self._db.query(cmd, [blob_bytes])
                 _check_response(response, "write_blob_entry")
 
         # ---- Per-clip video descriptors --------------------------------------
