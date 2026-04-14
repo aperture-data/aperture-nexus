@@ -244,13 +244,15 @@ class NexusAdmin:
         """
         if not isinstance(user_id, str) or not user_id.strip():
             raise NexusValidationError(
-                "user_id must be a non-empty string."
+                "user_id must be a non-empty string. "
+                "Pass the user_id used when calling create_principal()."
             )
         if not _entity_exists(
             self._db, _CLASS_USER, {"user_id": ["==", user_id]}
         ):
             raise NexusValidationError(
-                f"Principal {user_id!r} does not exist."
+                f"Principal {user_id!r} does not exist. "
+                "Check the user_id or call admin.create_principal() first."
             )
 
         cmd = [{
@@ -287,13 +289,15 @@ class NexusAdmin:
         """
         if not isinstance(user_id, str) or not user_id.strip():
             raise NexusValidationError(
-                "user_id must be a non-empty string."
+                "user_id must be a non-empty string. "
+                "Pass the user_id used when calling create_principal()."
             )
         if not _entity_exists(
             self._db, _CLASS_USER, {"user_id": ["==", user_id]}
         ):
             raise NexusValidationError(
-                f"Principal {user_id!r} does not exist."
+                f"Principal {user_id!r} does not exist. "
+                "Check the user_id or call admin.create_principal() first."
             )
 
         logger.warning(

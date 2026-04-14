@@ -224,7 +224,8 @@ def _to_image_bytes(image: Any) -> bytes:
         pil.save(buf, format="PNG")
         return buf.getvalue()
     raise NexusValidationError(
-        f"Cannot convert image type {type(image).__name__!r} to bytes."
+        f"Cannot convert image type {type(image).__name__!r} to bytes. "
+        "Pass a file path, URL, bytes, PIL Image, or numpy array."
     )
 
 
@@ -241,7 +242,8 @@ def _to_video_bytes(video: Any) -> bytes:
         with open(video, "rb") as f:
             return f.read()
     raise NexusValidationError(
-        f"Cannot convert video type {type(video).__name__!r} to bytes."
+        f"Cannot convert video type {type(video).__name__!r} to bytes. "
+        "Pass a file path, URL, or bytes."
     )
 
 
@@ -749,7 +751,8 @@ class Memory:
         """
         if not isinstance(relationship, str) or not relationship.strip():
             raise NexusValidationError(
-                "relationship must be a non-empty string."
+                "relationship must be a non-empty string. "
+                "Examples: 'follows', 'caused_by', 'references'."
             )
 
         src_id = source.id if isinstance(source, Context) else source
@@ -819,7 +822,8 @@ class Memory:
         """
         if not isinstance(context_id, str) or not context_id.strip():
             raise NexusValidationError(
-                "context_id must be a non-empty string."
+                "context_id must be a non-empty string. "
+                "Pass the context_id returned by memory.commit()."
             )
         constraints = {"context_id": ["==", context_id]}
         for cmd_name in ("DeleteBlob", "DeleteImage", "DeleteVideo"):
@@ -901,7 +905,8 @@ class Memory:
         """
         if not isinstance(context_id, str) or not context_id.strip():
             raise NexusValidationError(
-                "context_id must be a non-empty string."
+                "context_id must be a non-empty string. "
+                "Pass the context_id returned by memory.commit()."
             )
         constraints = {"context_id": ["==", context_id]}
         entries: list[MemoryEntry] = []
@@ -927,7 +932,8 @@ class Memory:
             response, blobs = self._db.query(cmd)
         except Exception as e:
             raise NexusConnectionError(
-                f"ApertureDB blob retrieval failed: {e}."
+                f"ApertureDB blob retrieval failed: {e}. "
+                "Run 'adb-nexus validate' to check your connection."
             ) from e
         if isinstance(response, dict):
             return []
@@ -979,7 +985,8 @@ class Memory:
             response, blobs = self._db.query(cmd)
         except Exception as e:
             raise NexusConnectionError(
-                f"ApertureDB image retrieval failed: {e}."
+                f"ApertureDB image retrieval failed: {e}. "
+                "Run 'adb-nexus validate' to check your connection."
             ) from e
         if isinstance(response, dict):
             return []
@@ -1017,7 +1024,8 @@ class Memory:
             response, blobs = self._db.query(cmd)
         except Exception as e:
             raise NexusConnectionError(
-                f"ApertureDB video retrieval failed: {e}."
+                f"ApertureDB video retrieval failed: {e}. "
+                "Run 'adb-nexus validate' to check your connection."
             ) from e
         if isinstance(response, dict):
             return []
@@ -1539,7 +1547,9 @@ class Memory:
                 raise
             except Exception as e:
                 raise NexusProcessingError(
-                    f"CLIP text embedding for search failed: {e}."
+                    f"CLIP text embedding for search failed: {e}. "
+                    "Check that the model is available and run "
+                    "'adb-nexus validate' to check your connection."
                 ) from e
             # Use the caller's modality if provided — enables cross-modal
             # search (text query → image or video DescriptorSet).
@@ -1585,7 +1595,8 @@ class Memory:
             response, _ = self._db.query(cmd, [emb_bytes])
         except Exception as e:
             raise NexusConnectionError(
-                f"ApertureDB search query failed: {e}."
+                f"ApertureDB search query failed: {e}. "
+                "Run 'adb-nexus validate' to check your connection."
             ) from e
 
         # ApertureDB may return a bare dict (not a list) when the descriptor
@@ -1654,7 +1665,8 @@ class Memory:
             response, _ = self._db.query(cmd)
         except Exception as e:
             raise NexusConnectionError(
-                f"ApertureDB metadata search failed: {e}."
+                f"ApertureDB metadata search failed: {e}. "
+                "Run 'adb-nexus validate' to check your connection."
             ) from e
 
         if isinstance(response, dict):

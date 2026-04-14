@@ -277,11 +277,13 @@ class Information:
         """
         if not isinstance(target, str) or not target.strip():
             raise NexusValidationError(
-                "target must be a non-empty context_id string."
+                "target must be a non-empty context_id string. "
+                "Pass ctx.id of the target Context."
             )
         if not isinstance(relationship, str) or not relationship.strip():
             raise NexusValidationError(
-                "relationship must be a non-empty string."
+                "relationship must be a non-empty string. "
+                "Examples: 'follows', 'caused_by', 'references'."
             )
         self._pending_connections.append(_PendingConnection(
             target_id=target.strip(),
@@ -383,7 +385,8 @@ class Information:
         """
         if not isinstance(tag, str) or not tag.strip():
             raise NexusValidationError(
-                "tag must be a non-empty string."
+                "tag must be a non-empty string. "
+                "Use the same tag you passed to log(tag=...) when logging the entries."
             )
         before = len(self._entries)
         self._entries = [e for e in self._entries if e.tag != tag]
@@ -542,7 +545,10 @@ def _validate_text(text: Optional[str]) -> Optional[str]:
             f"text must be a string. Got {type(text).__name__!r}."
         )
     if not text.strip():
-        raise NexusValidationError("text must not be empty.")
+        raise NexusValidationError(
+            "text must not be empty. "
+            "Provide a non-empty string or omit text= entirely."
+        )
     return text
 
 
@@ -564,7 +570,9 @@ def _validate_image(image: Optional[Any]) -> Optional[Any]:
             path.open("rb").close()
         except PermissionError:
             raise NexusValidationError(
-                f"Image file is not readable (permission denied): {image}."
+                f"Image file is not readable (permission denied): {image}. "
+                "Check file permissions (e.g. chmod 644) or copy the file "
+                "to a readable location."
             )
         return image
 
@@ -619,7 +627,9 @@ def _validate_video(video: Optional[Any]) -> Optional[Any]:
             path.open("rb").close()
         except PermissionError:
             raise NexusValidationError(
-                f"Video file is not readable (permission denied): {video}."
+                f"Video file is not readable (permission denied): {video}. "
+                "Check file permissions (e.g. chmod 644) or copy the file "
+                "to a readable location."
             )
         return video
 
@@ -659,7 +669,9 @@ def _validate_blob(
                 path.open("rb").close()
             except PermissionError:
                 raise NexusValidationError(
-                    f"Blob file is not readable (permission denied): {blob}."
+                    f"Blob file is not readable (permission denied): {blob}. "
+                    "Check file permissions (e.g. chmod 644) or copy the file "
+                    "to a readable location."
                 )
     elif not isinstance(blob, bytes):
         raise NexusValidationError(
@@ -732,7 +744,8 @@ def _validate_embedding(
     if not np.issubdtype(embedding.dtype, np.floating):
         raise NexusValidationError(
             "embedding dtype must be a float type. "
-            f"Got {embedding.dtype}."
+            f"Got {embedding.dtype}. "
+            "Cast before passing: embedding.astype(np.float32)."
         )
 
     if not embedding_model:
