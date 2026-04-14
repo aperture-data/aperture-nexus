@@ -89,13 +89,18 @@ info = Information(context_id=ctx.id)
 info.log(text="Customer says order #4821 never arrived")
 info.log(image="screenshot.png")
 
-# Raw storage — fast, no model calls
+# Store — no model calls required
 memory.commit(ctx, info)
 
-# Or: generate embeddings and store (requires models in config)
-memory.process_and_commit(ctx, info)
+# Search by metadata — works immediately, no embedding model needed
+results = memory.search(filters={"session_name": "support-2024-001"})
+```
 
-# Search — permissions applied automatically
+For semantic search, generate embeddings at commit time and query by content:
+
+```python
+# Requires an embedding model — see the Models section below
+memory.process_and_commit(ctx, info)
 results = memory.search(query="missing orders last week")
 ```
 

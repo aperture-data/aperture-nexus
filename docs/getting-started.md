@@ -155,10 +155,11 @@ info.log(text="aperture-nexus stores text, images, audio, video, and more")
 info.log(text="Each entry is linked to a context and session")
 
 # Commit to ApertureDB (raw storage — fast, no model calls)
-memory.commit(ctx, info)
+ctx_id = memory.commit(ctx, info)
 print("Memory committed.")
 
-# Search by metadata filter (no embedding model needed)
+# Search by metadata filter — no embedding model needed.
+# Filter by session_name (human-readable) or session_id (precise).
 results = memory.search(filters={"session_name": "my-first-session"})
 for r in results:
     print(r.text)

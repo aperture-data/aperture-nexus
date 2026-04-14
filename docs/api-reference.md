@@ -280,7 +280,7 @@ results) in v1.
 |-----------|------|-------------|
 | `query` | see below | The search query. Type determines modality. `None` returns results by metadata only. |
 | `modality` | `str \| None` | Required when `query` is `np.ndarray` (ambiguous). One of `"text"`, `"image"`, `"video"`. |
-| `filters` | `dict \| None` | Metadata filters. Keys: `session_id`, `user_id`, `organization`, `purpose`. |
+| `filters` | `dict \| None` | Metadata filters. Supported keys: `session_id`, `session_name`, `context_id`, `user_id`, `organization`, `department`, `purpose`. Unknown keys raise `NexusValidationError`. |
 | `k` | `int` | Maximum results. Default: `10`. |
 | `embedding_model` | `str \| None` | Override the configured embedding model for this query. Must match the model used at index time. |
 | `min_score` | `float \| None` | Minimum similarity score threshold. Results below this are excluded. |

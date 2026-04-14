@@ -659,8 +659,11 @@ class Memory:
                 returns results by metadata filter only.
             modality: Required when ``query`` is ``np.ndarray``. One of
                 ``"text"``, ``"image"``, ``"video"``.
-            filters: Metadata constraints. Keys: ``session_id``,
-                ``user_id``, ``organization``, ``department``, ``purpose``.
+            filters: Metadata constraints. Supported keys:
+                ``session_id``, ``session_name``, ``context_id``,
+                ``user_id``, ``organization``, ``department``,
+                ``purpose``. Unknown keys raise
+                ``NexusValidationError``.
             k: Maximum results to return. Default: 10.
             embedding_model: Override the configured embedding model for
                 this query. Must match the model used at index time.
@@ -1220,6 +1223,11 @@ class Memory:
             "user_id": ctx.principal.user_id,
             "created_at": datetime.utcnow().isoformat(),
         }
+        # Include session_name so entries can be filtered by it (session_name
+        # is also stored on NexusSession, but the filter path queries content
+        # entities directly, so the property must live here too).
+        if ctx.session_name:
+            common_props["session_name"] = ctx.session_name
         # Include principal org/dept so content entities can be filtered by them
         if ctx.principal.organization:
             common_props["organization"] = ctx.principal.organization
@@ -1688,13 +1696,20 @@ class Memory:
 
     @staticmethod
     def _build_constraints(filters: dict) -> dict:
-        """Convert a user-supplied filters dict to ApertureDB constraints."""
+        """Convert a user-supplied filters dict to ApertureDB constraints.
+
+        Raises NexusValidationError for any key not in the allowed set so
+        that typos and unsupported keys produce a loud error rather than
+        silent empty results.
+        """
         allowed = {
-            "session_id", "user_id", "organization",
-            "department", "purpose",
+            "session_id", "session_name", "context_id",
+            "user_id", "organization", "department", "purpose",
         }
-        constraints = {}
-        for key, value in filters.items():
-            if key in allowed:
-                constraints[key] = ["==", value]
-        return constraints
+        unknown = set(filters) - allowed
+        if unknown:
+            raise NexusValidationError(
+                f"Unknown filter key(s): {sorted(unknown)}. "
+                f"Supported keys: {sorted(allowed)}."
+            )
+        return {key: ["==", value] for key, value in filters.items()}

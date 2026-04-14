@@ -9,7 +9,7 @@ Tests cover:
 - async_process_and_commit(): returns MemoryTask, drains info immediately,
   task transitions to complete/failed
 - search(): ndarray without modality raises; metadata-only; vector search;
-  min_score filtering; unknown modality raises
+  min_score filtering; unknown modality raises; unknown filter key raises
 - connect(): happy path; empty relationship raises
 - remove(): happy path; empty context_id raises
 - pending_commits() / failed_commits(): task list filtering
@@ -1122,10 +1122,36 @@ class TestBuildConstraints:
             "user_id": ["==", "alice"],
         }
 
-    def test_unknown_keys_dropped(self):
-        result = Memory._build_constraints({"session_id": "s-1", "unknown": "x"})
-        assert "unknown" not in result
-        assert "session_id" in result
+    def test_session_name_allowed(self):
+        result = Memory._build_constraints({"session_name": "my-session"})
+        assert result == {"session_name": ["==", "my-session"]}
+
+    def test_context_id_allowed(self):
+        result = Memory._build_constraints({"context_id": "ctx-abc"})
+        assert result == {"context_id": ["==", "ctx-abc"]}
+
+    def test_all_allowed_keys(self):
+        filters = {
+            "session_id": "s-1",
+            "session_name": "my-session",
+            "context_id": "ctx-1",
+            "user_id": "alice",
+            "organization": "AcmeCorp",
+            "department": "support",
+            "purpose": "triage",
+        }
+        result = Memory._build_constraints(filters)
+        assert set(result) == set(filters)
+
+    def test_unknown_key_raises(self):
+        from aperture_nexus.exceptions import NexusValidationError
+        with pytest.raises(NexusValidationError, match="Unknown filter key"):
+            Memory._build_constraints({"session_id": "s-1", "session_name_typo": "x"})
+
+    def test_unknown_key_error_names_the_bad_key(self):
+        from aperture_nexus.exceptions import NexusValidationError
+        with pytest.raises(NexusValidationError, match="session_name_typo"):
+            Memory._build_constraints({"session_name_typo": "x"})
 
     def test_empty_filters_returns_empty(self):
         assert Memory._build_constraints({}) == {}
