@@ -160,7 +160,8 @@ print("Memory committed.")
 
 # Search by metadata filter — no embedding model needed.
 # Filter by session_name (human-readable) or session_id (precise).
-results = memory.search(filters={"session_name": "my-first-session"})
+# k controls the maximum number of results returned (default: 10).
+results = memory.search(filters={"session_name": "my-first-session"}, k=10)
 for r in results:
     print(r.text)
 ```
