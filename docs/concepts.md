@@ -206,7 +206,7 @@ memory.commit(ctx, info)   # only "fresh start" is stored
 
 `commit()` always adds new entries — there is no in-place update. If
 you commit the same context twice you get more entries, not replaced
-ones. `memory.remove(memory_id)` deletes a committed memory entirely.
+ones. `memory.remove(context_id)` deletes a committed context and all its associated content entirely.
 `Memory.update()` with a `superseded_by` lineage edge for partial
 updates is planned for v2.
 
@@ -345,8 +345,8 @@ of ApertureDB's `Connection` primitive.
 ```python
 memory.connect(source=ctx_q1, target=ctx_q2, relationship="follows")
 memory.connect(
-    source=memory_id_1,
-    target=memory_id_2,
+    source=ctx_id_1,
+    target=ctx_id_2,
     relationship="related_to",
 )
 ```

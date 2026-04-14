@@ -40,6 +40,7 @@ __all__ = [
     "Memory",
     "Context",
     "Information",
+    "InformationEntry",
     "NexusAdmin",
     "SearchResult",
     "MemoryEntry",

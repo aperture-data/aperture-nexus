@@ -194,9 +194,6 @@ info.log(image=img, embedding=numpy_array, embedding_model="clip-vit-base-patch3
 
 # Mixed — one log entry, multiple modalities
 info.log(text="See attached", blob=pdf_bytes, document_type="pdf")
-
-# Query (for retrieval intent logging)
-info.query("what did we discuss last quarter?")
 ```
 
 ---

@@ -193,6 +193,31 @@ memory = Memory(db_client=existing_connector)
 
 ---
 
+### `memory.authenticate()`
+
+```python
+memory.authenticate(user_id: str, api_key: str) -> Principal
+```
+
+Validate credentials and return an authenticated `Principal`. Looks up the `NexusUser` entity for `user_id` and compares the SHA-256 hash of `api_key` against the stored hash. Requires regular (non-admin) ApertureDB credentials.
+
+In normal use, `api_key` comes from the `NEXUS_API_KEY` environment variable written to `.env` by `adb-nexus init`.
+
+**Returns:** `Principal` — pass to `Context` to identify who is acting.
+
+**Raises:** `NexusPermissionError` if credentials are invalid or the user does not exist; `NexusConnectionError` if ApertureDB is unreachable.
+
+```python
+import os
+principal = memory.authenticate(
+    user_id="alice",
+    api_key=os.environ["NEXUS_API_KEY"],
+)
+ctx = Context(principal=principal, session_name="support-001")
+```
+
+---
+
 ### `memory.commit()`
 
 ```python
@@ -248,7 +273,7 @@ print(task.status)   # "pending"
 await task.wait()
 
 if task.status == "complete":
-    print(f"Stored as memory: {task.memory_id}")
+    print(f"Stored as context: {task.context_id}")
 else:
     print(f"Failed: {task.error_message}")
     task.retry()
@@ -370,7 +395,7 @@ Create a named relationship between two contexts or memories. Builds the knowled
 
 ```python
 memory.connect(source=ctx_q1, target=ctx_q2, relationship="follows")
-memory.connect(source=memory_id_1, target=memory_id_2, relationship="related_to")
+memory.connect(source=ctx_id_1, target=ctx_id_2, relationship="related_to")
 ```
 
 ---
@@ -378,10 +403,18 @@ memory.connect(source=memory_id_1, target=memory_id_2, relationship="related_to"
 ### `memory.remove()`
 
 ```python
-memory.remove(memory_id: str) -> None
+memory.remove(context_id: str) -> None
 ```
 
-Remove a committed memory from ApertureDB.
+Remove a committed context and all its associated content (blobs, images, videos, descriptors) from ApertureDB. Pass the `context_id` returned by `commit()` or `process_and_commit()`.
+
+**Raises:** `NexusValidationError` if `context_id` is empty; `NexusStorageError` if ApertureDB rejects any delete.
+
+```python
+ctx_id = memory.commit(ctx, info)
+# … later, remove it …
+memory.remove(ctx_id)
+```
 
 ---
 
@@ -698,7 +731,7 @@ Returned by `memory.async_process_and_commit()`. State is persisted in ApertureD
 | Property | Type | Description |
 |----------|------|-------------|
 | `task.status` | `str` | `"pending"` \| `"processing"` \| `"complete"` \| `"failed"` |
-| `task.memory_id` | `str \| None` | Available when `status == "complete"` |
+| `task.context_id` | `str \| None` | The committed context ID. Available when `status == "complete"` |
 | `task.completed_at` | `datetime \| None` | Available when `status == "complete"` |
 | `task.error` | `Exception \| None` | Available when `status == "failed"` |
 | `task.error_message` | `str \| None` | Human-readable failure reason. Available when `status == "failed"` |
@@ -717,7 +750,7 @@ task = await memory.async_process_and_commit(ctx, info)
 await task.wait()
 
 if task.status == "complete":
-    print(f"memory_id: {task.memory_id}")
+    print(f"context_id: {task.context_id}")
 elif task.status == "failed":
     print(f"failed: {task.error_message}")
     task.retry()
