@@ -140,6 +140,9 @@ class SearchResult:
 
     metadata: dict = field(default_factory=dict)
 
+    # Internal — set by search(), consumed by memory.remove(results=...)
+    _entry_id: Optional[str] = field(default=None, repr=False, compare=False)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -483,7 +486,7 @@ class Memory:
             info: Buffered multimodal information to commit.
 
         Returns:
-            The ``context_id`` of the committed context.
+            A ``commit_id`` string identifying this specific commit. Pass it to ``memory.remove(commit_id=...)`` to remove everything written in this call.
 
         Raises:
             NexusValidationError: If ``info`` has no entries.
@@ -491,7 +494,7 @@ class Memory:
             NexusConnectionError: If ApertureDB is unreachable.
 
         Example:
-            context_id = memory.commit(ctx, info)
+            commit_id = memory.commit(ctx, info)
             # info is now empty and ready for more log() calls
         """
         if not info._entries:
@@ -501,6 +504,7 @@ class Memory:
             )
 
         self.ensure_schema()
+        commit_id = str(uuid.uuid4())
 
         entries = list(info._entries)          # snapshot before drain
         pending_conns = list(info._pending_connections)
@@ -518,7 +522,7 @@ class Memory:
 
             # Write each content entry
             for entry in entries:
-                self._write_entry(entry, ctx, session_id)
+                self._write_entry(entry, ctx, session_id, commit_id)
 
             # Write any connections buffered via info.connect()
             for pc in pending_conns:
@@ -540,7 +544,7 @@ class Memory:
             "Committed context_id=%r for session_id=%r",
             ctx.id, session_id,
         )
-        return ctx.id
+        return commit_id
 
     # ------------------------------------------------------------------
     # process_and_commit()
@@ -563,7 +567,7 @@ class Memory:
             info: Buffered multimodal information to process and commit.
 
         Returns:
-            The ``context_id`` of the committed context.
+            A ``commit_id`` string. See ``commit()``.
 
         Raises:
             NexusConfigError: If a modality has entries without embeddings
@@ -577,11 +581,11 @@ class Memory:
             # With pre-computed embeddings (no model configured needed)
             info.log(text="hello", embedding=my_vector,
                      embedding_model="text-embedding-3-small")
-            context_id = memory.process_and_commit(ctx, info)
+            commit_id = memory.process_and_commit(ctx, info)
 
             # With model configured in aperture_nexus.json
             info.log(text="hello")
-            context_id = memory.process_and_commit(ctx, info)
+            commit_id = memory.process_and_commit(ctx, info)
         """
         self._generate_missing_embeddings(info._entries)
         return self.commit(ctx, info)
@@ -609,7 +613,7 @@ class Memory:
             task = await memory.async_process_and_commit(ctx, info)
             await task.wait()
             if task.status == "complete":
-                print(task.context_id)
+                print(task.commit_id)
         """
         task_id = str(uuid.uuid4())
         task = MemoryTask(task_id=task_id)
@@ -628,8 +632,8 @@ class Memory:
         async def _run() -> None:
             task._mark_processing()
             try:
-                self.process_and_commit(ctx, info_copy)
-                task._mark_complete(ctx.id)
+                commit_id = self.process_and_commit(ctx, info_copy)
+                task._mark_complete(commit_id)
             except Exception as exc:
                 task._mark_failed(exc)
 
@@ -819,55 +823,147 @@ class Memory:
     # remove()
     # ------------------------------------------------------------------
 
-    def remove(self, context_id: str) -> None:
-        """Remove a committed context and all its associated content.
+    def remove(
+        self,
+        *,
+        commit_id: Optional[str] = None,
+        context_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        before: Optional[datetime] = None,
+        since: Optional[datetime] = None,
+        results: Optional[list] = None,
+    ) -> None:
+        """Remove committed content from ApertureDB.
 
-        Deletes blobs, images, videos, and descriptors carrying this
-        ``context_id``, then removes the ``NexusContext`` entity. The
-        delete is not transactional — if ApertureDB rejects a
-        sub-operation a ``NexusStorageError`` is raised and remaining
-        steps are skipped.
+        Accepts one or more filters that determine what to remove. Filters
+        AND together — e.g. ``before=ts, session_id=sid`` removes only old
+        entries within that session. ``results=`` is exclusive and cannot
+        be combined with other filters.
 
         Args:
-            context_id: The context ID returned by ``commit()``.
+            commit_id: Remove all content written in one ``commit()`` call.
+                Pass the value returned by ``memory.commit()``.
+            context_id: Remove all content committed under this context.
+                Also removes the ``NexusContext`` entity when used alone.
+            session_id: Remove all content committed under this session.
+            before: Remove entries whose ``created_at`` is strictly before
+                this UTC-aware datetime. Keeps recent entries.
+            since: Remove entries whose ``created_at`` is at or after this
+                UTC-aware datetime. Rollback pattern — undo recent commits.
+            results: Remove the specific entries returned by a prior
+                ``memory.search()`` call. Cannot be combined with other
+                filters. Uses entry-level granularity — only the matched
+                entries are removed, not the whole commit or context.
 
         Raises:
-            NexusValidationError: If ``context_id`` is empty.
+            NexusValidationError: If no filter is provided, if ``results``
+                is combined with other filters, if ``before`` and ``since``
+                are both set, or if a timestamp is not timezone-aware.
             NexusStorageError: If ApertureDB rejects any delete.
+            NexusConnectionError: If ApertureDB is unreachable.
 
         Example:
-            memory.remove(ctx.id)
+            # Remove one specific commit
+            commit_id = memory.commit(ctx, info)
+            memory.remove(commit_id=commit_id)
+
+            # Remove everything from a context
+            memory.remove(context_id=ctx.id)
+
+            # Remove everything from a session
+            memory.remove(session_id=ctx.session_id)
+
+            # Remove stale entries (keep last 24 hours)
+            from datetime import datetime, timedelta, timezone
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            memory.remove(before=cutoff, session_id=sid)
+
+            # Search then remove matching entries
+            results = memory.search(query="old pricing model")
+            memory.remove(results=results)
         """
-        if not isinstance(context_id, str) or not context_id.strip():
+        if results is not None:
+            if any(x is not None for x in (commit_id, context_id, session_id, before, since)):
+                raise NexusValidationError(
+                    "results= cannot be combined with other filters. "
+                    "Pass either results= or one or more of: "
+                    "commit_id, context_id, session_id, before, since."
+                )
+            if not results:
+                return
+            self._remove_by_results(results)
+            return
+
+        if not any(x is not None for x in (commit_id, context_id, session_id, before, since)):
+            raise NexusValidationError(
+                "At least one filter is required. Pass commit_id=, "
+                "context_id=, session_id=, before=, since=, or results=."
+            )
+
+        if before is not None and since is not None:
+            raise NexusValidationError(
+                "before= and since= cannot be combined. "
+                "Use before= to discard old entries (keep recent), "
+                "or since= to discard recent entries (rollback pattern)."
+            )
+
+        if before is not None and not (
+            before.tzinfo is not None and before.tzinfo.utcoffset(before) is not None
+        ):
+            raise NexusValidationError(
+                "before= must be a timezone-aware datetime. "
+                "Use datetime.now(timezone.utc) or attach a tzinfo."
+            )
+
+        if since is not None and not (
+            since.tzinfo is not None and since.tzinfo.utcoffset(since) is not None
+        ):
+            raise NexusValidationError(
+                "since= must be a timezone-aware datetime. "
+                "Use datetime.now(timezone.utc) or attach a tzinfo."
+            )
+
+        if commit_id is not None and (not isinstance(commit_id, str) or not commit_id.strip()):
+            raise NexusValidationError(
+                "commit_id must be a non-empty string. "
+                "Pass the value returned by memory.commit()."
+            )
+        if context_id is not None and (not isinstance(context_id, str) or not context_id.strip()):
             raise NexusValidationError(
                 "context_id must be a non-empty string. "
-                "Pass the context_id returned by memory.commit()."
+                "Pass ctx.id or the context_id from a SearchResult."
             )
-        constraints = {"context_id": ["==", context_id]}
-        for cmd_name in ("DeleteBlob", "DeleteImage", "DeleteVideo"):
-            cmd = [{cmd_name: {"constraints": constraints}}]
-            response, _ = self._db.query(cmd)
-            _check_response(
-                response, f"remove/{cmd_name}({context_id!r})"
+        if session_id is not None and (not isinstance(session_id, str) or not session_id.strip()):
+            raise NexusValidationError(
+                "session_id must be a non-empty string. "
+                "Pass ctx.session_id or the session_id from a SearchResult."
             )
-        for set_name in self._list_nexus_descriptor_sets():
-            cmd = [{"DeleteDescriptor": {
-                "set": set_name,
-                "constraints": constraints,
+
+        constraints: dict = {}
+        if commit_id:
+            constraints["commit_id"] = ["==", commit_id]
+        if context_id:
+            constraints["context_id"] = ["==", context_id]
+        if session_id:
+            constraints["session_id"] = ["==", session_id]
+        if before is not None:
+            constraints["created_at"] = ["<", before.isoformat()]
+        if since is not None:
+            constraints["created_at"] = [">=", since.isoformat()]
+
+        self._delete_content_by_constraints(constraints)
+
+        # Remove the NexusContext entity only when removing by context_id alone
+        # (other filter combinations do partial removes — leave the entity intact)
+        if context_id and not any(x is not None for x in (commit_id, session_id, before, since)):
+            cmd = [{"DeleteEntity": {
+                "with_class": _CLASS_CONTEXT,
+                "constraints": {"nexus_ctx_id": ["==", context_id]},
             }}]
             response, _ = self._db.query(cmd)
-            _check_response(
-                response,
-                f"remove/DeleteDescriptor[{set_name}]"
-                f"({context_id!r})",
-            )
-        cmd = [{"DeleteEntity": {
-            "with_class": _CLASS_CONTEXT,
-            "constraints": {"nexus_ctx_id": ["==", context_id]},
-        }}]
-        response, _ = self._db.query(cmd)
-        _check_response(response, f"remove({context_id!r})")
-        logger.debug("Removed context_id=%r", context_id)
+            _check_response(response, f"remove_context_entity({context_id!r})")
+
+        logger.debug("remove() completed with constraints=%r", constraints)
 
     def _list_nexus_descriptor_sets(self) -> list[str]:
         """Return names of all nexus DescriptorSets in ApertureDB."""
@@ -884,6 +980,36 @@ class Memory:
             if isinstance(e.get("_name"), str)
             and e["_name"].startswith("nexus_")
         ]
+
+    def _delete_content_by_constraints(self, constraints: dict) -> None:
+        """Delete all content entities matching the given ApertureDB constraints."""
+        for cmd_name in ("DeleteBlob", "DeleteImage", "DeleteVideo"):
+            cmd = [{cmd_name: {"constraints": constraints}}]
+            response, _ = self._db.query(cmd)
+            _check_response(response, f"remove/{cmd_name}")
+        for set_name in self._list_nexus_descriptor_sets():
+            cmd = [{"DeleteDescriptor": {
+                "set": set_name,
+                "constraints": constraints,
+            }}]
+            response, _ = self._db.query(cmd)
+            _check_response(response, f"remove/DeleteDescriptor[{set_name}]")
+
+    def _remove_by_results(self, results: list) -> None:
+        """Remove specific content entries identified by SearchResult._entry_id."""
+        seen: set = set()
+        for result in results:
+            entry_id = getattr(result, "_entry_id", None)
+            if not entry_id or entry_id in seen:
+                continue
+            seen.add(entry_id)
+            self._delete_content_by_constraints({"entry_id": ["==", entry_id]})
+        if not seen:
+            logger.warning(
+                "remove(results=...) found no _entry_id on any result — "
+                "nothing removed. Results may have been obtained from an "
+                "older index that predates entry_id stamping."
+            )
 
     # ------------------------------------------------------------------
     # retrieve()
@@ -1215,7 +1341,8 @@ class Memory:
             self._ensured_contexts.add(ctx.id)
 
     def _descriptor_props(
-        self, entry, ctx: Context, session_id: str, modality: str
+        self, entry, ctx: Context, session_id: str, modality: str,
+        commit_id: str, entry_id: str,
     ) -> dict:
         """Build the properties dict for an AddDescriptor command."""
         props: dict = {
@@ -1225,6 +1352,8 @@ class Memory:
             "embedding_model": entry.embedding_model,
             "modality": modality,
             "created_at": datetime.utcnow().isoformat(),
+            "commit_id": commit_id,
+            "entry_id": entry_id,
         }
         if entry.metadata:
             props.update(entry.metadata)
@@ -1233,7 +1362,7 @@ class Memory:
             props["text"] = entry.text
         return props
 
-    def _write_entry(self, entry, ctx: Context, session_id: str) -> None:
+    def _write_entry(self, entry, ctx: Context, session_id: str, commit_id: str) -> None:
         """Write one InformationEntry to ApertureDB.
 
         Each content object (Blob, Image, Video) and its Descriptor are
@@ -1243,11 +1372,14 @@ class Memory:
         Descriptor is an orphan and cannot be traced back to the original
         content.
         """
+        entry_id = str(uuid.uuid4())
         common_props = {
             "context_id": ctx.id,
             "session_id": session_id,
             "user_id": ctx.principal.user_id,
             "created_at": datetime.utcnow().isoformat(),
+            "commit_id": commit_id,
+            "entry_id": entry_id,
         }
         # Include session_name so entries can be filtered by it (session_name
         # is also stored on NexusSession, but the filter path queries content
@@ -1273,7 +1405,7 @@ class Memory:
 
             if has_emb:
                 dset = _dset_name("text", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "text")
+                desc_props = self._descriptor_props(entry, ctx, session_id, "text", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = [
                     {"AddBlob": {"properties": props, "_ref": 1}},
@@ -1294,7 +1426,7 @@ class Memory:
 
             if has_emb:
                 dset = _dset_name("image", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "image")
+                desc_props = self._descriptor_props(entry, ctx, session_id, "image", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = [
                     {"AddImage": {"properties": props, "_ref": 1}},
@@ -1317,7 +1449,7 @@ class Memory:
             # but supported.
             if has_emb and entry.video_clip_embeddings is None:
                 dset = _dset_name("video", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "video")
+                desc_props = self._descriptor_props(entry, ctx, session_id, "video", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = [
                     {"AddVideo": {"properties": props, "_ref": 1}},
@@ -1338,7 +1470,7 @@ class Memory:
 
             if has_emb:
                 dset = _dset_name("text", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "text")
+                desc_props = self._descriptor_props(entry, ctx, session_id, "text", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = [
                     {"AddBlob": {"properties": props, "_ref": 1}},
@@ -1354,10 +1486,10 @@ class Memory:
 
         # ---- Per-clip video descriptors --------------------------------------
         if entry.video_clip_embeddings is not None and entry.embedding_model:
-            self._write_video_clip_descriptors(entry, ctx, session_id)
+            self._write_video_clip_descriptors(entry, ctx, session_id, commit_id, entry_id)
 
     def _write_video_clip_descriptors(
-        self, entry, ctx: Context, session_id: str
+        self, entry, ctx: Context, session_id: str, commit_id: str, entry_id: str,
     ) -> None:
         """Write one Descriptor per clip segment for a video entry."""
         dset = _dset_name("video", entry.embedding_model)
@@ -1378,6 +1510,8 @@ class Memory:
                 "start_frame": clip_meta["start_frame"],
                 "stop_frame": clip_meta["stop_frame"],
                 "created_at": datetime.utcnow().isoformat(),
+                "commit_id": commit_id,
+                "entry_id": entry_id,
             }
             if entry.metadata:
                 props.update(entry.metadata)
@@ -1652,8 +1786,10 @@ class Memory:
                         "session_id", "context_id", "user_id",
                         "created_at", "text", "start_frame", "stop_frame",
                         "modality", "embedding_model",
+                        "entry_id", "commit_id",
                     )
                 },
+                _entry_id=desc.get("entry_id"),
             ))
         return results
 
@@ -1720,8 +1856,10 @@ class Memory:
                         if k not in (
                             "context_id", "session_id", "user_id", "created_at",
                             "text_preview", "text", "document_type",
+                            "entry_id", "commit_id",
                         )
                     },
+                    _entry_id=ent.get("entry_id"),
                 ))
         return results[:k]
 
@@ -1734,7 +1872,7 @@ class Memory:
         silent empty results.
         """
         allowed = {
-            "session_id", "session_name", "context_id",
+            "session_id", "session_name", "context_id", "commit_id",
             "user_id", "organization", "department", "purpose",
         }
         unknown = set(filters) - allowed

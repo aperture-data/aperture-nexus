@@ -224,15 +224,15 @@ ctx = Context(principal=principal, session_name="support-001")
 memory.commit(ctx: Context, info: Information) -> str
 ```
 
-Store `Information` in ApertureDB as-is — no model calls, no embeddings. Fast. Returns the `context_id` of the committed context.
+Store `Information` in ApertureDB as-is — no model calls, no embeddings. Fast. Returns a `commit_id` — a new UUID identifying this specific commit call.
 
 Use `commit()` when you need speed and plan to search by metadata (session, organization, time range) rather than semantic similarity.
 
-**Returns:** `str` — the `context_id`
+**Returns:** `str` — the `commit_id`. Pass it to `memory.remove(commit_id=...)` to remove everything written in this call.
 **Raises:** `NexusConnectionError`, `NexusStorageError`, `NexusPermissionError`
 
 ```python
-ctx_id = memory.commit(ctx, info)
+commit_id = memory.commit(ctx, info)
 ```
 
 ---
@@ -247,11 +247,11 @@ Generate embeddings and summaries for all items in `info`, then store everything
 
 Requires at least one model configured in `aperture_nexus.json` or supplied via `info.log(embedding_model=...)`.
 
-**Returns:** `str` — the `context_id`
+**Returns:** `str` — the `commit_id`. See `commit()`.
 **Raises:** `NexusConfigError` if no model is configured; `NexusProcessingError` if model calls fail; `NexusConnectionError`, `NexusStorageError`, `NexusPermissionError`
 
 ```python
-ctx_id = memory.process_and_commit(ctx, info)
+commit_id = memory.process_and_commit(ctx, info)
 ```
 
 ---
@@ -273,7 +273,7 @@ print(task.status)   # "pending"
 await task.wait()
 
 if task.status == "complete":
-    print(f"Stored as context: {task.context_id}")
+    print(f"commit_id: {task.commit_id}")
 else:
     print(f"Failed: {task.error_message}")
     task.retry()
@@ -403,17 +403,50 @@ memory.connect(source=ctx_id_1, target=ctx_id_2, relationship="related_to")
 ### `memory.remove()`
 
 ```python
-memory.remove(context_id: str) -> None
+memory.remove(
+    *,
+    commit_id: str | None = None,
+    context_id: str | None = None,
+    session_id: str | None = None,
+    before: datetime | None = None,
+    since: datetime | None = None,
+    results: list[SearchResult] | None = None,
+) -> None
 ```
 
-Remove a committed context and all its associated content (blobs, images, videos, descriptors) from ApertureDB. Pass the `context_id` returned by `commit()` or `process_and_commit()`.
+Remove committed content from ApertureDB. At least one filter is required. Filters AND together — e.g. `before=ts, session_id=sid` removes only old entries within that session. `results=` is exclusive and cannot be combined with other filters.
 
-**Raises:** `NexusValidationError` if `context_id` is empty; `NexusStorageError` if ApertureDB rejects any delete.
+| Filter | Removes |
+|--------|---------|
+| `commit_id=` | All content written in one `commit()` call |
+| `context_id=` | All content from a context; also removes the `NexusContext` entity when used alone |
+| `session_id=` | All content from a session |
+| `before=` | Entries whose `created_at` is strictly before this UTC-aware datetime (keep recent, discard old) |
+| `since=` | Entries whose `created_at` is at or after this datetime (rollback pattern) |
+| `results=` | Specific entries returned by a prior `memory.search()` call (entry-level granularity) |
+
+**Raises:** `NexusValidationError` if no filter is provided, if `results=` is combined with other filters, if `before=` and `since=` are both set, or if a timestamp is not timezone-aware. `NexusStorageError` if ApertureDB rejects any delete.
 
 ```python
-ctx_id = memory.commit(ctx, info)
-# … later, remove it …
-memory.remove(ctx_id)
+from datetime import datetime, timedelta, timezone
+
+# Remove one specific commit
+commit_id = memory.commit(ctx, info)
+memory.remove(commit_id=commit_id)
+
+# Remove everything from a context
+memory.remove(context_id=ctx.id)
+
+# Remove everything from a session
+memory.remove(session_id=ctx.session_id)
+
+# Prune stale entries (keep last 24 hours)
+cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+memory.remove(before=cutoff, session_id=sid)
+
+# Search then remove matching entries
+results = memory.search(query="old pricing model")
+memory.remove(results=results)
 ```
 
 ---
@@ -731,7 +764,7 @@ Returned by `memory.async_process_and_commit()`. State is persisted in ApertureD
 | Property | Type | Description |
 |----------|------|-------------|
 | `task.status` | `str` | `"pending"` \| `"processing"` \| `"complete"` \| `"failed"` |
-| `task.context_id` | `str \| None` | The committed context ID. Available when `status == "complete"` |
+| `task.commit_id` | `str \| None` | The commit ID returned by the completed `commit()` call. Available when `status == "complete"` |
 | `task.completed_at` | `datetime \| None` | Available when `status == "complete"` |
 | `task.error` | `Exception \| None` | Available when `status == "failed"` |
 | `task.error_message` | `str \| None` | Human-readable failure reason. Available when `status == "failed"` |
@@ -750,7 +783,7 @@ task = await memory.async_process_and_commit(ctx, info)
 await task.wait()
 
 if task.status == "complete":
-    print(f"context_id: {task.context_id}")
+    print(f"commit_id: {task.commit_id}")
 elif task.status == "failed":
     print(f"failed: {task.error_message}")
     task.retry()

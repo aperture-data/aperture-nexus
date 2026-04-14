@@ -11,13 +11,14 @@ Tests cover:
 - search(): ndarray without modality raises; metadata-only; vector search;
   min_score filtering; unknown modality raises; unknown filter key raises
 - connect(): happy path; empty relationship raises
-- remove(): happy path; empty context_id raises
+- remove(): happy path (commit_id, context_id, session_id, before, since, results);
+  no-filter raises; results + filter raises; before+since raises; empty string raises
 - pending_commits() / failed_commits(): task list filtering
 - authenticate(): valid credentials return Principal, wrong key raises,
   unknown user raises, DB error raises NexusConnectionError
 - stats(): raises NexusConfigError when prometheus not installed
 - _resolve_session_id(): uses session_id if set; derives from session_name
-- _build_constraints(): filters known keys, drops unknown keys
+- _build_constraints(): known keys pass, unknown key raises
 - _ensure_descriptor_set(): creates on first use, skips if exists
 
 All tests use mock_connector — no live ApertureDB required.
@@ -166,14 +167,16 @@ _commit_side_effects_existing = _commit_side_effects
 
 
 class TestCommit:
-    def test_happy_path_returns_context_id(self, mock_connector):
+    def test_happy_path_returns_commit_id(self, mock_connector):
         mock_connector.query.side_effect = _commit_side_effects_existing()
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
         info = _make_info(ctx)
         info.log(text="hello")
-        mid = memory.commit(ctx, info)
-        assert isinstance(mid, str) and len(mid) > 10
+        commit_id = memory.commit(ctx, info)
+        assert isinstance(commit_id, str) and len(commit_id) > 10
+        # commit_id is a new UUID — distinct from the context id
+        assert commit_id != ctx.id
 
     def test_drains_info_after_success(self, mock_connector):
         mock_connector.query.side_effect = _commit_side_effects_existing()
@@ -266,7 +269,7 @@ class TestCommit:
             memory.commit(ctx, info)
 
     def test_multiple_commits_on_same_info(self, mock_connector):
-        """Second commit after drain still works (buffer reused)."""
+        """Each commit returns a distinct commit_id even for the same context."""
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
         info = _make_info(ctx)
@@ -276,9 +279,7 @@ class TestCommit:
         mid1 = memory.commit(ctx, info)
         assert len(info) == 0
 
-        # Second round — same ctx returns same context_id
-        # Note: for the second commit, context is already in _ensured_contexts
-        # so the connection step is skipped. Provide only 3 responses.
+        # Second commit — context already ensured, provide 3 responses.
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),  # ensure_session (if_not_found)
             _ok_response("AddEntity"),  # ensure_context (if_not_found)
@@ -287,7 +288,8 @@ class TestCommit:
         info.log(text="second")
         mid2 = memory.commit(ctx, info)
         assert len(info) == 0
-        assert mid1 == mid2  # same ctx returns same context_id
+        # Each commit generates a fresh UUID
+        assert mid1 != mid2
 
 
 # ---------------------------------------------------------------------------
@@ -563,7 +565,7 @@ class TestAsyncProcessAndCommit:
         task = await memory.async_process_and_commit(ctx, info)
         await task.wait()
         assert task.status == "complete"
-        assert isinstance(task.context_id, str)
+        assert isinstance(task.commit_id, str)
 
     @pytest.mark.asyncio
     async def test_task_fails_on_storage_error(self, mock_connector):
@@ -788,13 +790,10 @@ def _find_dset_response(names: list[str]) -> tuple:
 
 
 class TestRemove:
-    def _cascade_side_effect(self, dset_names: list[str]):
-        """
-        Build side_effect matching the actual remove() call sequence:
-          DeleteBlob, DeleteImage, DeleteVideo,
-          FindDescriptorSet,
-          DeleteDescriptor × len(dset_names),
-          DeleteEntity.
+    def _content_delete_responses(self, dset_names: list[str]):
+        """Responses for _delete_content_by_constraints:
+        DeleteBlob, DeleteImage, DeleteVideo,
+        FindDescriptorSet, DeleteDescriptor × len(dset_names).
         """
         responses = [
             _ok_response("DeleteBlob"),
@@ -804,36 +803,134 @@ class TestRemove:
         ]
         for _ in dset_names:
             responses.append(_ok_response("DeleteDescriptor"))
-        responses.append(_ok_response("DeleteEntity"))
         return responses
 
-    def test_removes_existing_context(self, mock_connector):
-        mock_connector.query.side_effect = self._cascade_side_effect([])
+    def _context_delete_responses(self, dset_names: list[str]):
+        """Content deletes + DeleteEntity (context_id= alone path)."""
+        return self._content_delete_responses(dset_names) + [
+            _ok_response("DeleteEntity"),
+        ]
+
+    # -- commit_id= --
+
+    def test_remove_by_commit_id(self, mock_connector):
+        mock_connector.query.side_effect = self._content_delete_responses([])
         memory = _make_memory(mock_connector)
-        memory.remove("ctx-xyz")
-        # FindDescriptorSet + 3 deletes + DeleteEntity = 5 calls
+        memory.remove(commit_id="cid-123")
+        # 3 content deletes + FindDescriptorSet = 4 calls; no DeleteEntity
+        assert mock_connector.query.call_count == 4
+
+    # -- context_id= alone triggers DeleteEntity --
+
+    def test_remove_by_context_id_alone_deletes_entity(self, mock_connector):
+        mock_connector.query.side_effect = self._context_delete_responses([])
+        memory = _make_memory(mock_connector)
+        memory.remove(context_id="ctx-xyz")
+        # 3 content + FindDescriptorSet + DeleteEntity = 5 calls
         assert mock_connector.query.call_count == 5
 
-    def test_cascades_content_and_descriptors(self, mock_connector):
-        dset_names = ["nexus_text__ViT-B/16", "nexus_image__ViT-B/16"]
-        mock_connector.query.side_effect = (
-            self._cascade_side_effect(dset_names)
-        )
+    def test_remove_by_context_id_with_dsets(self, mock_connector):
+        dsets = ["nexus_text__m", "nexus_image__m"]
+        mock_connector.query.side_effect = self._context_delete_responses(dsets)
         memory = _make_memory(mock_connector)
-        memory.remove("ctx-abc")
-        # FindDescriptorSet + 3 content deletes + 2 descriptor deletes
-        # + DeleteEntity = 7 calls
+        memory.remove(context_id="ctx-abc")
+        # 3 content + FindDescriptorSet + 2 descriptor deletes + DeleteEntity = 7
         assert mock_connector.query.call_count == 7
 
-    def test_empty_context_id_raises(self, mock_connector):
+    def test_remove_context_id_combined_skips_entity_delete(self, mock_connector):
+        """context_id + session_id combined: content only, no DeleteEntity."""
+        mock_connector.query.side_effect = self._content_delete_responses([])
         memory = _make_memory(mock_connector)
-        with pytest.raises(NexusValidationError, match="non-empty"):
-            memory.remove("")
+        memory.remove(context_id="ctx-1", session_id="sid-1")
+        assert mock_connector.query.call_count == 4
 
-    def test_whitespace_context_id_raises(self, mock_connector):
+    # -- session_id= --
+
+    def test_remove_by_session_id(self, mock_connector):
+        mock_connector.query.side_effect = self._content_delete_responses([])
+        memory = _make_memory(mock_connector)
+        memory.remove(session_id="sid-abc")
+        assert mock_connector.query.call_count == 4
+
+    # -- before= / since= --
+
+    def test_remove_before_timestamp(self, mock_connector):
+        from datetime import timezone
+        mock_connector.query.side_effect = self._content_delete_responses([])
+        memory = _make_memory(mock_connector)
+        memory.remove(before=datetime(2025, 1, 1, tzinfo=timezone.utc))
+        assert mock_connector.query.call_count == 4
+
+    def test_remove_since_timestamp(self, mock_connector):
+        from datetime import timezone
+        mock_connector.query.side_effect = self._content_delete_responses([])
+        memory = _make_memory(mock_connector)
+        memory.remove(since=datetime(2025, 1, 1, tzinfo=timezone.utc))
+        assert mock_connector.query.call_count == 4
+
+    # -- results= --
+
+    def test_remove_by_results(self, mock_connector):
+        from aperture_nexus.memory import SearchResult
+        mock_connector.query.side_effect = self._content_delete_responses([])
+        memory = _make_memory(mock_connector)
+        result = SearchResult(
+            score=0.9, modality="text", session_id="s", context_id="c",
+            user_id="u", created_at=datetime.utcnow(),
+        )
+        result._entry_id = "eid-1"
+        memory.remove(results=[result])
+        assert mock_connector.query.call_count == 4
+
+    def test_remove_results_deduplicates_entry_ids(self, mock_connector):
+        from aperture_nexus.memory import SearchResult
+        mock_connector.query.side_effect = self._content_delete_responses([]) * 2
+        memory = _make_memory(mock_connector)
+        r1 = SearchResult(score=0.9, modality="text", session_id="s",
+                          context_id="c", user_id="u", created_at=datetime.utcnow())
+        r1._entry_id = "eid-1"
+        r2 = SearchResult(score=0.8, modality="text", session_id="s",
+                          context_id="c", user_id="u", created_at=datetime.utcnow())
+        r2._entry_id = "eid-1"   # same entry_id — should only delete once
+        memory.remove(results=[r1, r2])
+        assert mock_connector.query.call_count == 4  # one round only
+
+    def test_remove_empty_results_is_noop(self, mock_connector):
+        memory = _make_memory(mock_connector)
+        memory.remove(results=[])   # should not raise or call DB
+        assert mock_connector.query.call_count == 0
+
+    # -- validation --
+
+    def test_no_filter_raises(self, mock_connector):
+        memory = _make_memory(mock_connector)
+        with pytest.raises(NexusValidationError, match="At least one filter"):
+            memory.remove()
+
+    def test_results_combined_with_filter_raises(self, mock_connector):
+        from aperture_nexus.memory import SearchResult
+        memory = _make_memory(mock_connector)
+        r = SearchResult(score=1.0, modality="text", session_id="s",
+                         context_id="c", user_id="u", created_at=datetime.utcnow())
+        with pytest.raises(NexusValidationError, match="cannot be combined"):
+            memory.remove(results=[r], session_id="sid")
+
+    def test_before_and_since_combined_raises(self, mock_connector):
+        from datetime import timezone
+        memory = _make_memory(mock_connector)
+        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        with pytest.raises(NexusValidationError, match="cannot be combined"):
+            memory.remove(before=ts, since=ts)
+
+    def test_naive_before_datetime_raises(self, mock_connector):
+        memory = _make_memory(mock_connector)
+        with pytest.raises(NexusValidationError, match="timezone-aware"):
+            memory.remove(before=datetime(2025, 1, 1))  # no tzinfo
+
+    def test_empty_commit_id_raises(self, mock_connector):
         memory = _make_memory(mock_connector)
         with pytest.raises(NexusValidationError, match="non-empty"):
-            memory.remove("   ")
+            memory.remove(commit_id="")
 
     def test_storage_error_propagated(self, mock_connector):
         mock_connector.query.side_effect = [
@@ -842,7 +939,7 @@ class TestRemove:
         ]
         memory = _make_memory(mock_connector)
         with pytest.raises(NexusStorageError, match="gone"):
-            memory.remove("ghost-id")
+            memory.remove(commit_id="cid-x")
 
 
 # ---------------------------------------------------------------------------
@@ -1135,6 +1232,7 @@ class TestBuildConstraints:
             "session_id": "s-1",
             "session_name": "my-session",
             "context_id": "ctx-1",
+            "commit_id": "cid-1",
             "user_id": "alice",
             "organization": "AcmeCorp",
             "department": "support",

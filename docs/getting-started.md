@@ -154,8 +154,10 @@ info = Information(context_id=ctx.id)
 info.log(text="aperture-nexus stores text, images, audio, video, and more")
 info.log(text="Each entry is linked to a context and session")
 
-# Commit to ApertureDB (raw storage — fast, no model calls)
-ctx_id = memory.commit(ctx, info)
+# Commit to ApertureDB (raw storage — fast, no model calls).
+# Returns a commit_id — a UUID identifying this specific commit.
+# Use it with memory.remove(commit_id=...) to remove exactly what was written here.
+commit_id = memory.commit(ctx, info)
 print("Memory committed.")
 
 # Search by metadata filter — no embedding model needed.

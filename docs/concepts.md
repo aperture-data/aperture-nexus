@@ -206,7 +206,7 @@ memory.commit(ctx, info)   # only "fresh start" is stored
 
 `commit()` always adds new entries — there is no in-place update. If
 you commit the same context twice you get more entries, not replaced
-ones. `memory.remove(context_id)` deletes a committed context and all its associated content entirely.
+ones. `memory.remove()` deletes committed content at multiple levels of granularity: by `commit_id` (one commit), `context_id` (all of a context's content), `session_id` (entire session), timestamp (`before=`/`since=`), or by passing `SearchResult` objects from a prior search.
 `Memory.update()` with a `superseded_by` lineage edge for partial
 updates is planned for v2.
 
