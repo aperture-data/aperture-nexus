@@ -34,20 +34,16 @@ The first run downloads Docker images if not already cached — allow
 **3–5 minutes**. Subsequent runs start in seconds.
 
 The walkthrough pauses at each step so you can read what's happening before
-it proceeds. ApertureDB starts automatically as a dependency. Explore stored
-data at **http://localhost:8087** (ApertureDB web UI) while the demo is running.
-
-When the demo finishes, the ApertureDB stack keeps running so you can explore
-the web UI at **http://localhost:8087**. Stop it when you're done:
-
-```
-docker compose down      # stop (data is preserved)
-docker compose down -v   # stop and wipe all data
-```
+it proceeds. All services — ApertureDB, the Lenz gateway, and the web UI —
+start automatically. Explore stored data at **http://localhost:8087**
+(ApertureDB web UI) while the demo is running.
 
 > **Note:** Use `run --rm` (above), not `docker compose up`. The `up` variant
 > does not allocate a terminal, so the demo cannot pause for input and will
 > scroll straight through.
+
+When the demo finishes, the stack keeps running so you can explore the web UI.
+Stop it when you're done:
 
 ```
 docker compose down      # stop (data is preserved)

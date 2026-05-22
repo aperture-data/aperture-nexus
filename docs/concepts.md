@@ -324,7 +324,7 @@ This means:
 ### ApertureDB Web UI
 
 ApertureDB ships with its own web UI at `http://localhost:8087` (when
-running via `docker compose up -d`). It shows raw ApertureDB objects
+running via `docker compose up -d` or the demo). It shows raw ApertureDB objects
 — Entities, Connections, Images, Videos, Descriptors — not
 aperture-nexus concepts. It is useful for:
 - Verifying that aperture-nexus is storing data correctly

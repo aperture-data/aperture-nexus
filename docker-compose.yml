@@ -1,6 +1,6 @@
 # aperture-nexus + ApertureDB — local development stack
 #
-# Starts ApertureDB community edition, the Lenz HTTP gateway, and the
+# Starts ApertureDB community edition, the Lenz TCP gateway, and the
 # ApertureDB Web UI so you can inspect your data through a browser.
 #
 # IMPORTANT: The ApertureDB community edition image is licensed for
@@ -21,8 +21,11 @@
 #   APERTUREDB_PORT=12345 WEBUI_PORT=9090 docker compose up -d
 #
 # The ApertureDB TCP endpoint used by the adb CLI and aperture-nexus is
-# exposed through Lenz (the HTTP/TCP gateway), not directly. Configure
-# your adb client to point at localhost:${APERTUREDB_PORT:-55556}.
+# exposed through Lenz (the TCP gateway), not directly. Configure your
+# adb client to point at localhost:${APERTUREDB_PORT:-55556}.
+#
+# Mac note: port 55555 is reserved by macOS. This stack exposes 55556
+# for lenz and 8087 for the web UI — neither conflicts with that.
 
 name: aperture-nexus-local
 
@@ -107,6 +110,10 @@ services:
       aperturedb:
         condition: service_healthy
       lenz:
+        condition: service_started
+      webui:
+        condition: service_started
+      nginx:
         condition: service_started
     stdin_open: true
     tty: true

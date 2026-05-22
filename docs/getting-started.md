@@ -18,6 +18,10 @@ cd aperture-nexus
 docker compose --profile demo run --rm nexus-demo
 ```
 
+This starts all services automatically (ApertureDB, Lenz gateway, and
+the web UI). While the demo is running you can explore stored data at
+`http://localhost:8087`.
+
 ---
 
 ## Prerequisites

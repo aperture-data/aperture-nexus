@@ -9,6 +9,7 @@ Ctrl+C at any point cleans up all demo data from ApertureDB before exiting.
 After the demo, explore stored data at http://localhost:8087 (ApertureDB web UI).
 """
 
+import shutil
 import signal
 import socket
 import sys
@@ -74,7 +75,7 @@ signal.signal(signal.SIGTERM, _on_signal)
 
 # ── Terminal helpers ──────────────────────────────────────────────────────────
 
-W = 60
+W = min(shutil.get_terminal_size(fallback=(80, 24)).columns, 100)
 
 BOLD  = "\033[1m"
 DIM   = "\033[2m"
@@ -278,7 +279,7 @@ def run_demo() -> None:
     info1 = Information(context_id=ctx1.id)
     for entry in entries:
         info1.log(text=entry)
-        print(f"    {_c(DIM, '·')}  {entry[:W - 8]}")
+        print(f"    {_c(DIM, '·')}  {entry}")
 
     _memory.commit(ctx1, info1)
     blank()
@@ -316,8 +317,7 @@ def run_demo() -> None:
         ok(f"{len(results)} entries retrieved across all sessions:\n")
         for r in results:
             if r.text:
-                short = (r.text[:W - 12] + "…") if len(r.text) > W - 11 else r.text
-                print(f"    {_c(GREEN, '▸')}  {short}")
+                print(f"    {_c(GREEN, '▸')}  {r.text}")
     else:
         ok("Entries committed. (Search returned empty — DB may still be indexing.)")
 
