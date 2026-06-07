@@ -381,6 +381,67 @@ directly, or use `memory.search()` with `modality=` and use the
 
 ---
 
+### `memory.search_contexts()`
+
+```python
+memory.search_contexts(
+    query: str,
+    filters: dict | None = None,
+    k: int = 10,
+    embedding_model: str | None = None,
+) -> list[ContextResult]
+```
+
+Search committed **contexts** by semantic similarity of their `purpose` field. Complements `memory.search()`, which searches stored content (blobs, images, etc.) — `search_contexts()` searches the context graph nodes themselves.
+
+Only contexts committed via `process_and_commit()` with a `purpose` set are indexed. `commit()` does not embed context nodes.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | `str` | Text query matched against context purposes. |
+| `filters` | `dict \| None` | Metadata constraints. Supported keys: `session_id`, `user_id`, `organization`, `department`. |
+| `k` | `int` | Maximum results. Default: `10`. |
+| `embedding_model` | `str \| None` | Override the configured text model. Must match the model used at index time. |
+
+**Returns:** `list[ContextResult]`, ordered by descending similarity score.
+
+**Raises:** `NexusConfigError` (no text model configured), `NexusProcessingError` (embedding call failed), `NexusConnectionError`.
+
+```python
+results = memory.search_contexts("customer order inquiry")
+for r in results:
+    print(r.purpose, r.session_id, r.score)
+
+# Narrow to a specific session
+results = memory.search_contexts(
+    "warehouse inventory shortage",
+    filters={"session_id": sid},
+    embedding_model="ViT-B/16",
+)
+```
+
+---
+
+### `ContextResult`
+
+Returned by `memory.search_contexts()`.
+
+```python
+@dataclass
+class ContextResult:
+    score: float            # similarity (higher = more similar)
+    context_id: str
+    session_id: str
+    user_id: str | None
+    purpose: str | None     # the purpose set on the Context
+    created_at: datetime
+
+    organization: str | None = None
+    department: str | None = None
+```
+
+---
+
 ### `memory.connect()`
 
 ```python
