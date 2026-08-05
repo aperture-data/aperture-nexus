@@ -3,7 +3,7 @@ present.py — aperture-nexus presentation demo.
 
 Knowledge → Memory → Context → Cognition
 
-Four auto-running acts with manual Continue prompts between them.
+Four auto-running sections with manual Continue prompts between them.
 A silent seed phase pre-loads org knowledge before the demo begins.
 Increase your terminal font to 18–20pt before running.
 
@@ -52,13 +52,6 @@ def clear():
 
 def blank(n=1):
     print("\n" * (n - 1))
-
-def slow(text, delay=0.022, indent="    "):
-    print(indent, end="", flush=True)
-    for ch in text:
-        print(ch, end="", flush=True)
-        time.sleep(delay)
-    print()
 
 def reveal(text, indent="    ", pause=0.5):
     print(f"{indent}{text}")
@@ -135,21 +128,69 @@ def ensure_stack():
     time.sleep(1)
 
 
-# ── Image helpers ─────────────────────────────────────────────────────────────
+# ── Damage photo generators ───────────────────────────────────────────────────
+#
+# Each pattern draws a visually distinct damage type so CLIP can separate them.
+# Text labels in the image reinforce the CLIP match on targeted queries.
 
-def _make_image(label, color, size=(400, 300)):
+def _make_damage_image(label, base, pattern, size=(420, 320)):
     from PIL import Image as PILImage, ImageDraw, ImageFont
-    img  = PILImage.new("RGB", size, color=color)
+    img  = PILImage.new("RGB", size, color=base)
     draw = ImageDraw.Draw(img)
-    draw.rectangle([8, 8, size[0] - 9, size[1] - 9], outline=(255, 255, 255), width=4)
+    W, H = size
+
+    if pattern == "scratch":
+        # Parallel diagonal silver lines + one prominent scratch
+        for x in range(-H, W + H, 22):
+            draw.line([(x, 0), (x + H, H)], fill=(140, 145, 162), width=1)
+        draw.line([(28, 58), (W-28, H-58)], fill=(182, 190, 212), width=6)
+        draw.line([(30, 58), (W-26, H-56)], fill=(228, 232, 245), width=2)
+        draw.rectangle([10, 10, W-11, H-11], outline=(158, 164, 188), width=3)
+
+    elif pattern == "flaking":
+        # Corner paint chips exposing lighter substrate + scattered spots
+        sub = tuple(min(255, c + 88) for c in base)
+        chips = [(12,12,64,40),(W-76,12,64,40),(12,H-52,64,40),(W-76,H-52,64,40)]
+        for cx, cy, cw, ch in chips:
+            draw.rectangle([cx, cy, cx+cw, cy+ch], fill=sub)
+            draw.polygon(
+                [(cx, cy+ch),(cx+14, cy+ch-11),(cx+30, cy+ch+6),
+                 (cx+48, cy+ch-8),(cx+cw, cy+ch)],
+                fill=base,
+            )
+        for x, y, r in [(118,88,9),(198,200,8),(292,112,10),(158,222,7),(332,186,6),(212,132,5)]:
+            draw.ellipse([x-r,y-r,x+r,y+r], fill=sub)
+        draw.rectangle([10, 10, W-11, H-11], outline=(192, 175, 148), width=3)
+
+    elif pattern == "discolor":
+        # Amber-brown blotch — concentric ellipses fading from center
+        cx, cy = int(W * 0.52), int(H * 0.44)
+        for r in range(105, 5, -5):
+            t = 1.0 - r / 105.0
+            c = (
+                int(base[0] + (212 - base[0]) * t * 0.82),
+                int(base[1] + (118 - base[1]) * t * 0.66),
+                int(base[2] + (16  - base[2]) * t * 0.48),
+            )
+            draw.ellipse([cx-r, cy-int(r*0.62), cx+r, cy+int(r*0.62)], fill=c)
+        draw.rectangle([10, 10, W-11, H-11], outline=(158, 145, 188), width=3)
+
+    elif pattern == "crack":
+        # Jagged fracture line with drop shadow
+        pts = [(30,148),(88,96),(134,162),(190,82),(246,150),(304,72),(360,132),(W-22,120)]
+        draw.line([(x+5,y+5) for x,y in pts], fill=(15, 17, 28), width=7)
+        draw.line(pts, fill=(198, 208, 230), width=4)
+        draw.line(pts, fill=(238, 242, 255), width=1)
+        draw.rectangle([10, 10, W-11, H-11], outline=(168, 174, 204), width=3)
+
     try:
         font = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 26,
         )
     except Exception:
         font = ImageFont.load_default()
-    draw.text((size[0] // 2, size[1] // 2), label, fill=(255, 255, 255),
-              font=font, anchor="mm")
+    draw.text((W // 2, H - 22), label, fill=(255, 255, 255), font=font, anchor="mm")
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -200,47 +241,62 @@ def cleanup(admin, memory):
             pass
 
 
-# ── Seed phase (silent) ───────────────────────────────────────────────────────
+# ── Seed data ─────────────────────────────────────────────────────────────────
+#
+# Three support tickets with 3 photos each, committed via process_and_commit()
+# so CLIP embeddings are indexed before the demo starts.
 
 PRIOR_REPORTS = [
     {
         "agent":   "alice-support",
         "session": "ticket-7101",
-        "purpose": "Surface scratch on SkyDock Pro unit — customer complaint",
-        "entries": [
-            "Customer received SkyDock Pro with a visible surface scratch across the lid.",
-            "Unit photographed upon receipt. Damage appears pre-shipping.",
+        "purpose": "Surface scratch damage on SkyDock Pro lid — pre-shipping",
+        "notes": [
+            "Customer received SkyDock Pro with a diagonal scratch running the full length of the lid.",
+            "Scratch depth varies — heavier at the entry and exit points, tool or edge contact.",
+            "Unit was new in sealed original box. Damage is pre-shipping. Three photos attached.",
         ],
-        "image_label": "SCRATCH",
-        "image_color": (140, 50, 50),
+        "photos": [
+            ("scratch abrasion",     (50, 55, 70), "scratch"),
+            ("scratch mark",         (46, 51, 66), "scratch"),
+            ("surface scratch",      (54, 59, 74), "scratch"),
+        ],
     },
     {
         "agent":   "bob-support",
         "session": "ticket-7245",
-        "purpose": "SkyDock Pro coating defect reported — paint flaking at corners",
-        "entries": [
-            "Customer reports paint flaking at all four corners of the SkyDock Pro.",
-            "Third report this month. Engineering flagged for QA review.",
+        "purpose": "Paint flaking at corners — coating defect, SkyDock Pro batch A2",
+        "notes": [
+            "Paint flaking at all four corners, exposing bare aluminum underneath.",
+            "Customer reports flaking is progressing inward — started at corners two weeks ago.",
+            "Third identical report this month, all from batch A2-2025. QA team notified.",
         ],
-        "image_label": "FLAKING",
-        "image_color": (130, 80, 20),
+        "photos": [
+            ("paint flaking chips",  (78, 54, 28), "flaking"),
+            ("coating peeling",      (82, 58, 32), "flaking"),
+            ("flaking edge damage",  (74, 50, 24), "flaking"),
+        ],
     },
     {
         "agent":   "carol-support",
         "session": "ticket-7389",
-        "purpose": "SkyDock Pro discoloration — heat damage suspected",
-        "entries": [
-            "Discoloration on top surface, customer suspects heat damage from shipping.",
-            "Similar to tickets 7101 and 7245. Pattern: same product batch.",
+        "purpose": "Heat discoloration on SkyDock Pro top surface — shipping damage suspected",
+        "notes": [
+            "Amber-brown discoloration covers approximately 40% of the top surface.",
+            "Customer suspects heat exposure during shipping — unit stored in vehicle.",
+            "Pattern matches tickets 7101 and 7245. Same batch. Escalated to engineering.",
         ],
-        "image_label": "DISCOLOR",
-        "image_color": (90, 60, 130),
+        "photos": [
+            ("heat discoloration",   (44, 40, 74), "discolor"),
+            ("heat stain amber",     (48, 44, 78), "discolor"),
+            ("thermal burn mark",    (40, 36, 70), "discolor"),
+        ],
     },
 ]
 
 
 def seed_knowledge(admin, memory):
-    """Pre-load 3 prior support reports from 3 different agents into org memory."""
+    """Pre-load 3 prior support reports with 3 photos each into org memory (CLIP-indexed)."""
     from aperture_nexus import Context, Information
 
     clip_mem = _make_clip_memory()
@@ -248,13 +304,10 @@ def seed_knowledge(admin, memory):
 
     for report in PRIOR_REPORTS:
         user_id   = report["agent"]
-        user_name = agent_map[user_id]
-
-        api_key   = _create_principal(admin, user_id, user_name)
+        api_key   = _create_principal(admin, user_id, agent_map[user_id])
         _all_principals.append(user_id)
 
         principal = memory.authenticate(user_id=user_id, api_key=api_key)
-
         ctx = Context(
             principal=principal,
             session_name=report["session"],
@@ -263,12 +316,13 @@ def seed_knowledge(admin, memory):
         _all_contexts.append(ctx)
 
         info = Information(context_id=ctx.id)
-        for text in report["entries"]:
-            info.log(text=text)
-        info.log(
-            text=f"Product photo — {report['image_label'].lower()} visible on unit surface.",
-            image=_make_image(report["image_label"], report["image_color"]),
-        )
+        for note in report["notes"]:
+            info.log(text=note)
+        for photo_label, photo_color, pattern in report["photos"]:
+            info.log(
+                text=f"Customer photo: {photo_label.strip().lower()}",
+                image=_make_damage_image(photo_label, photo_color, pattern),
+            )
 
         clip_mem.process_and_commit(ctx, info)
 
@@ -281,88 +335,100 @@ def _make_clip_memory():
     return m
 
 
-# ── Act 1 — Knowledge ─────────────────────────────────────────────────────────
+# ── Knowledge ─────────────────────────────────────────────────────────────────
 
-def act_knowledge(memory):
+def show_knowledge(memory):
     banner("KNOWLEDGE", "What your organization already knows")
 
-    section("Before this call — org memory already holds prior reports")
+    section("Before this call — 3 prior sessions already in memory")
     reveal(
-        f"  {DIM}Three support agents handled similar cases this month.{RESET}",
+        f"  {DIM}Three support engineers handled similar cases this month.{RESET}",
         indent="", pause=0.5,
     )
     blank()
-    code('results = memory.search(filters={"organization": "acme-corp"})')
-    results = memory.search(filters={"organization": ORG})
+    code('results = memory.search(filters={"organization": "acme-corp"}, k=50)')
+    results = memory.search(filters={"organization": ORG}, k=50)
     blank()
 
-    text_entries  = [r for r in results if r.modality == "text"]
-    image_entries = [r for r in results if r.modality == "image"]
+    text_r  = [r for r in results if r.modality == "text"]
+    image_r = [r for r in results if r.modality == "image"]
+    sessions = {r.session_id for r in results}
 
     ok(
-        f"{len(results)} entries found  ·  "
-        f"{len(text_entries)} text  ·  {len(image_entries)} images\n"
+        f"{len(results)} entries  ·  "
+        f"{len(text_r)} notes  ·  {len(image_r)} photos  ·  "
+        f"{len(sessions)} sessions\n"
     )
     time.sleep(0.3)
 
-    # Group by session for display
-    by_session = {}
+    # One line per session
+    by_session: dict = {}
     for r in results:
         by_session.setdefault(r.session_id, []).append(r)
 
     agent_names = {uid: uname for uid, uname in SEED_AGENTS}
+    damage_type = {
+        "alice-support": "scratch",
+        "bob-support":   "flaking",
+        "carol-support": "discolor",
+    }
+
     for sid, entries in list(by_session.items())[:3]:
-        user_id    = entries[0].user_id or "unknown"
-        name       = agent_names.get(user_id, user_id)
-        modalities = ", ".join(sorted({e.modality for e in entries}))
-        texts      = [e for e in entries if e.text]
-        first      = texts[0].text if texts else ""
-        short      = (first[:62] + "…") if len(first) > 63 else first
+        uid   = entries[0].user_id or "unknown"
+        name  = agent_names.get(uid, uid)
+        dtype = damage_type.get(uid, "unknown")
+        texts = [e for e in entries if e.text]
+        note  = texts[0].text if texts else ""
+        short = (note[:64] + "…") if len(note) > 65 else note
+        imgs  = sum(1 for e in entries if e.modality == "image")
         reveal(
-            f"    {GREEN}▸{RESET}  {BOLD}{name}{RESET}  {DIM}({modalities}){RESET}",
+            f"    {GREEN}▸{RESET}  {BOLD}{name}{RESET}  "
+            f"{DIM}{len(texts)} notes · {imgs} photos · {dtype}{RESET}",
             indent="", pause=0.2,
         )
         reveal(f"       {DIM}{short}{RESET}", indent="", pause=0.5)
 
     time.sleep(0.8)
     web_ui_prompt()
-    print(f"  {DIM}  FindBlob → see the support notes{RESET}")
-    print(f"  {DIM}  FindImage → see the defect photos from all three agents{RESET}")
+    print(f"  {DIM}  FindBlob → read the support notes for each ticket{RESET}")
+    print(f"  {DIM}  FindImage → browse all 9 defect photos side by side{RESET}")
 
 
-# ── Act 2 — Memory ────────────────────────────────────────────────────────────
+# ── Memory ────────────────────────────────────────────────────────────────────
 
-def act_memory(memory, principal):
+def show_memory(memory, principal):
     from aperture_nexus import Context, Information
 
     banner("MEMORY", "A new call comes in — capture it")
 
-    section("A fourth agent opens a new session")
+    section("Open a session for the new ticket")
     code("ctx = Context(")
     code(f'    principal   = principal,')
     code('    session_name= "ticket-7502",')
-    code('    purpose     = "SkyDock Pro lid — crack reported after drop",')
+    code('    purpose     = "SkyDock Pro lid cracked after drop — P1 enterprise",')
     code(")")
     time.sleep(0.8)
 
     ctx = Context(
         principal=principal,
         session_name="ticket-7502",
-        purpose="SkyDock Pro lid — crack reported after drop",
+        purpose="SkyDock Pro lid cracked after drop — P1 enterprise",
     )
     _all_contexts.append(ctx)
     result("context_id", ctx.id)
     result("session   ", ctx.session_name)
     time.sleep(0.5)
 
-    section("Log what happens on the call")
+    section("Log everything that happens on the call")
     entries = [
-        ("Customer says SkyDock Pro lid cracked after a single drop from desk height.",
+        ("Lid cracked on first drop from desk height — 75 cm fall, single impact.",
          None),
-        ("Customer is on enterprise plan — priority escalated to P1.",
+        ("Enterprise customer — 500-unit deployment. Priority escalated to P1.",
          None),
-        ("Customer sent photo — crack runs along the hinge seam.",
-         _make_image("CRACKED", (50, 50, 160))),
+        ("Customer sent two photos: full crack and hinge detail.",
+         _make_damage_image("CRACK  full",  (35, 38, 58), "crack")),
+        (None,
+         _make_damage_image("CRACK  hinge", (32, 35, 55), "crack")),
     ]
 
     code("info = Information(context_id=ctx.id)")
@@ -370,67 +436,69 @@ def act_memory(memory, principal):
     info = Information(context_id=ctx.id)
 
     for text, img in entries:
-        short = (text[:55] + "…") if len(text) > 56 else text
-        if img is not None:
+        if text and img is not None:
+            short = (text[:54] + "…") if len(text) > 55 else text
             code(f'info.log(text="{short}", image=<photo>)')
-        else:
-            code(f'info.log(text="{short}")')
-        if img is not None:
             info.log(text=text, image=img)
-        else:
+        elif text:
+            short = (text[:54] + "…") if len(text) > 55 else text
+            code(f'info.log(text="{short}")')
             info.log(text=text)
-        time.sleep(0.5)
+        else:
+            code('info.log(image=<second photo>)')
+            info.log(image=img)
+        time.sleep(0.45)
 
     blank()
-    section("Commit to ApertureDB — no model calls, instant")
+    section("Commit — raw storage, no model calls, instant")
     code("commit_id = memory.commit(ctx, info)")
     commit_id = memory.commit(ctx, info)
     blank()
     result("commit_id", commit_id[:24] + "…")
-    result("stored   ", "2 text entries  ·  1 text+image entry  ·  0 model calls")
+    result("stored   ", "2 text entries  ·  1 text+image  ·  1 image  ·  0 model calls")
     time.sleep(1)
 
     web_ui_prompt()
-    print(f"  {DIM}  FindImage → 4 defect photos now in ApertureDB{RESET}")
+    print(f"  {DIM}  FindImage → 11 defect photos now stored across 4 sessions{RESET}")
     print(f"  {DIM}  FindEntity with_class NexusContext → 4 sessions in the graph{RESET}")
 
 
-# ── Act 3 — Context ───────────────────────────────────────────────────────────
+# ── Context ───────────────────────────────────────────────────────────────────
 
-def act_context(memory):
-    banner("CONTEXT", "Every session, every agent — one search")
+def show_context(memory):
+    banner("CONTEXT", "Every session, every contributor — one search")
 
-    section("Search across all sessions in the organization")
+    section("Pull all sessions from the organization")
     reveal(
-        f"  {DIM}No session ID required. Filter by org — Memory handles the rest.{RESET}",
+        f"  {DIM}No session ID needed. Memory knows who captured what and why.{RESET}",
         indent="", pause=0.5,
     )
     blank()
-    code('results = memory.search(filters={"organization": "acme-corp"})')
-    results = memory.search(filters={"organization": ORG})
+    code('results = memory.search(filters={"organization": "acme-corp"}, k=50)')
+    results = memory.search(filters={"organization": ORG}, k=50)
     blank()
 
-    text_r  = [r for r in results if r.modality == "text"]
-    image_r = [r for r in results if r.modality == "image"]
-    users   = {r.user_id for r in results}
+    text_r   = [r for r in results if r.modality == "text"]
+    image_r  = [r for r in results if r.modality == "image"]
+    users    = {r.user_id for r in results}
     sessions = {r.session_id for r in results}
 
     ok(
         f"{len(results)} entries  ·  "
-        f"{len(text_r)} text  ·  {len(image_r)} images  ·  "
+        f"{len(text_r)} notes  ·  {len(image_r)} photos  ·  "
         f"{len(users)} contributors  ·  {len(sessions)} sessions\n"
     )
     time.sleep(0.3)
 
     agent_names = {uid: uname for uid, uname in SEED_AGENTS}
-    agent_names[DEMO_USER] = "You (presenter)"
+    agent_names[DEMO_USER] = "You (new ticket)"
 
-    seen_users = set()
+    seen: set = set()
     for r in results:
         uid = r.user_id or "unknown"
-        if uid in seen_users:
+        if uid in seen:
             continue
-        seen_users.add(uid)
+        seen.add(uid)
         name  = agent_names.get(uid, uid)
         count = sum(1 for x in results if x.user_id == uid)
         reveal(
@@ -441,82 +509,88 @@ def act_context(memory):
 
     time.sleep(1.2)
 
-    section("Context wraps every entry with identity, session, and purpose")
+    section("Context is graph-native — identity, session, and purpose travel with every entry")
     reveal(
-        f"  {DIM}No joins, no foreign keys — it's graph-native.{RESET}",
-        indent="", pause=0.5,
+        f"  {DIM}No joins. No foreign keys.{RESET}",
+        indent="", pause=0.4,
     )
     reveal(
-        f"  {DIM}Permissions, provenance, and routing all follow automatically.{RESET}",
+        f"  {DIM}Permissions, provenance, and routing follow automatically.{RESET}",
         indent="", pause=0.8,
     )
 
 
-# ── Act 4 — Cognition ─────────────────────────────────────────────────────────
+# ── Cognition ─────────────────────────────────────────────────────────────────
 
-def act_cognition(memory):
+def show_cognition(memory):
     banner("COGNITION", "Pluggable models  ·  Semantic search  ·  Any embedding")
 
-    section("CLIP: text query  →  ranked image results")
+    clip_mem = _make_clip_memory()
+
+    section("CLIP: three queries, three damage types — same index, different results")
     reveal(
-        f"  {DIM}Text and images share the same embedding space.{RESET}",
+        f"  {DIM}Text and images share the same vector space.{RESET}",
         indent="", pause=0.4,
     )
     reveal(
-        f"  {DIM}One natural-language query finds matching images.{RESET}",
+        f"  {DIM}k=3 — each query pulls the photos that match best.{RESET}",
         indent="", pause=0.6,
     )
     blank()
 
-    query = "cracked or scratched product surface"
-    code("clip_memory = Memory()")
-    code('clip_memory._cfg.models.image_embedding = "ViT-B/16"')
-    blank()
-    code(f'results = clip_memory.search(')
-    code(f'    query    = "{query}",')
-    code(f'    modality = "image",')
-    code(f')')
-    blank()
-    time.sleep(0.8)
+    agent_names = {uid: uname for uid, uname in SEED_AGENTS}
 
-    clip_mem = _make_clip_memory()
-    img_results = clip_mem.search(
-        query=query,
-        modality="image",
-        embedding_model="ViT-B/16",
-        k=10,
-    )
+    queries = [
+        ("surface scratch abrasion on product", "scratch"),
+        ("paint flaking chips coating failure", "flaking"),
+        ("heat discoloration thermal stain",    "discolor"),
+    ]
 
-    ok(f'"{query}"  →  {len(img_results)} image result(s)\n')
-    for r in img_results:
-        bar_len = int(r.score * 40)
-        bar = f"{GREEN}{'█' * bar_len}{RESET}{DIM}{'░' * (40 - bar_len)}{RESET}"
-        reveal(
-            f"    {GREEN}[image]{RESET}  score: {BOLD}{r.score:.3f}{RESET}  {bar}",
-            indent="", pause=0.4,
+    for query, expected in queries:
+        code(f'memory.search(query="{query}", modality="image", k=3)')
+        blank()
+        time.sleep(0.5)
+
+        img_results = clip_mem.search(
+            query=query,
+            modality="image",
+            embedding_model="ViT-B/16",
+            k=3,
         )
-    time.sleep(1.2)
+
+        ok(f'"{query}"\n')
+        for r in img_results:
+            bar_len = int(r.score * 32)
+            bar = f"{GREEN}{'█' * bar_len}{RESET}{DIM}{'░' * (32 - bar_len)}{RESET}"
+            name = agent_names.get(r.user_id or "", r.user_id or "unknown")
+            reveal(
+                f"    {GREEN}[image]{RESET}  score: {BOLD}{r.score:.3f}{RESET}"
+                f"  {bar}  {DIM}{name}{RESET}",
+                indent="", pause=0.35,
+            )
+        blank()
+        time.sleep(0.8)
 
     blank()
-    section("search_contexts()  —  find sessions by purpose")
+    section("search_contexts()  —  sessions matched by purpose, not keywords")
     reveal(
-        f"  {DIM}Contexts are graph nodes. Embed their purpose — search by meaning.{RESET}",
+        f"  {DIM}Context graph nodes have purpose embeddings. Query by meaning.{RESET}",
         indent="", pause=0.6,
     )
     blank()
-    code('ctx_results = memory.search_contexts("SkyDock surface defect")')
+    code('ctx_results = memory.search_contexts("SkyDock surface defect", k=5)')
     blank()
     time.sleep(0.5)
 
     ctx_results = clip_mem.search_contexts(
         "SkyDock surface defect",
         embedding_model="ViT-B/16",
-        k=10,
+        k=5,
     )
 
-    ok(f"{len(ctx_results)} context(s) matched  ·  ranked by semantic similarity\n")
-    for r in ctx_results[:4]:
-        short = (r.purpose[:58] + "…") if r.purpose and len(r.purpose) > 59 else (r.purpose or "—")
+    ok(f"{len(ctx_results)} session(s) matched  ·  ranked by semantic similarity\n")
+    for r in ctx_results:
+        short = (r.purpose[:60] + "…") if r.purpose and len(r.purpose) > 61 else (r.purpose or "—")
         reveal(
             f"    {GREEN}▸{RESET}  score: {BOLD}{r.score:.3f}{RESET}"
             f"  {DIM}{short}{RESET}",
@@ -525,7 +599,7 @@ def act_cognition(memory):
     time.sleep(1.2)
 
     blank()
-    section("Any model plugs in here — one config change")
+    section("Any model plugs in here — one line in aperture_nexus.json")
     models = [
         ("Vision / multimodal", "CLIP  ViT-B/16  ·  ViT-L/14"),
         ("Dense text",          "BGE-M3  ·  E5-large"),
@@ -541,7 +615,7 @@ def act_cognition(memory):
 
     blank()
     reveal(
-        f"  {DIM}Switch models in aperture_nexus.json — stored data stays intact.{RESET}",
+        f"  {DIM}Switch models — stored data stays intact.{RESET}",
         indent="", pause=1.0,
     )
 
@@ -557,19 +631,17 @@ def main():
     admin  = NexusAdmin()
     memory = Memory()
 
-    # Silent seed — pre-load org knowledge before the demo starts
-    print(f"  {DIM}Seeding organization knowledge (3 prior reports)…{RESET}", flush=True)
+    print(f"  {DIM}Seeding organization knowledge (3 tickets × 3 photos)…{RESET}", flush=True)
     try:
         seed_knowledge(admin, memory)
-        print(f"  {GREEN}✓{RESET}  3 prior support sessions loaded  ·  org: {ORG}")
+        print(f"  {GREEN}✓{RESET}  9 defect photos + notes loaded  ·  org: {ORG}")
     except Exception as e:
         print(f"\n  {YELLOW}Seed failed: {e}{RESET}")
         sys.exit(1)
 
-    # Demo principal for live act
     print(f"  {DIM}Creating demo principal…{RESET}", flush=True)
     try:
-        api_key = _create_principal(admin, DEMO_USER, "Demo Support Agent")
+        api_key   = _create_principal(admin, DEMO_USER, "Demo Support Agent")
         _all_principals.append(DEMO_USER)
         principal = memory.authenticate(user_id=DEMO_USER, api_key=api_key)
     except Exception as e:
@@ -581,16 +653,16 @@ def main():
     time.sleep(1)
 
     try:
-        act_knowledge(memory)
-        cont("Act 2 — Memory: new call comes in")
+        show_knowledge(memory)
+        cont("Memory: new ticket comes in")
 
-        act_memory(memory, principal)
-        cont("Act 3 — Context: cross-session retrieval")
+        show_memory(memory, principal)
+        cont("Context: cross-session retrieval")
 
-        act_context(memory)
-        cont("Act 4 — Cognition: semantic search + pluggable models")
+        show_context(memory)
+        cont("Cognition: semantic search")
 
-        act_cognition(memory)
+        show_cognition(memory)
 
     finally:
         blank()
