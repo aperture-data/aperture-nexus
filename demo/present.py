@@ -3,11 +3,17 @@ present.py — aperture-nexus presentation demo.
 
 Knowledge → Memory → Context → Cognition
 
-Four auto-running sections with manual Continue prompts between them.
+Four sections with manual Continue prompts between them.
 A silent seed phase pre-loads org knowledge before the demo begins.
 Increase your terminal font to 18–20pt before running.
 
-    python demo/present.py
+    python3 demo/present.py               # interactive (default)
+    python3 demo/present.py --no-pause    # auto-advance for recording
+
+Recording a backup with asciinema:
+    COLUMNS=100 LINES=42 asciinema rec demo/present.cast \\
+        -c "python3 demo/present.py --no-pause" --overwrite
+    agg --speed 1.0 --font-size 14 demo/present.cast demo/present.gif
 
 ApertureDB must be running (docker compose up -d).
 Requires: pip install "aperture-nexus[clip]"
@@ -95,7 +101,12 @@ def web_ui_prompt():
     print(f"  {BOLD}{YELLOW}{'─' * (w - 4)}{RESET}")
     blank()
 
+NO_PAUSE = "--no-pause" in sys.argv
+
 def cont(label="next"):
+    if NO_PAUSE:
+        time.sleep(2.0)
+        return
     blank()
     try:
         input(f"  {BOLD}▸  Press Enter to {label}…{RESET}  ")
@@ -226,6 +237,54 @@ def _create_principal(admin, user_id, user_name):
             user_id=user_id, user_name=user_name,
             organization=ORG, department=DEPT,
         )
+
+
+def startup_wipe(admin, memory):
+    """Remove all acme-corp data left by any previous run before seeding fresh."""
+    print(f"  {DIM}  Wiping previous run data…{RESET}", end=" ", flush=True)
+
+    # Collect context_ids from any surviving entries in the org
+    wiped = 0
+    try:
+        results = memory.search(filters={"organization": ORG}, k=500)
+        for ctx_id in {r.context_id for r in results}:
+            try:
+                memory.remove(context_id=ctx_id)
+                wiped += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Delete known seed principals (idempotent — silently skips if absent)
+    for uid, _ in SEED_AGENTS:
+        try:
+            admin.delete_principal(user_id=uid)
+        except Exception:
+            pass
+
+    # Find and delete any stale presenter-* principals via direct DB query
+    try:
+        from aperturedb.CommonLibrary import create_connector
+        client = create_connector()
+        resp, _ = client.query([{
+            "FindEntity": {
+                "with_class": "NexusUser",
+                "results": {"list": ["user_id"]},
+            }
+        }])
+        for p in resp[0].get("FindEntity", {}).get("entities", []):
+            uid = p.get("user_id", "")
+            if uid.startswith("presenter-"):
+                try:
+                    admin.delete_principal(user_id=uid)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    suffix = f"({wiped} contexts removed)" if wiped else "(nothing to remove)"
+    print(f"{GREEN}done{RESET}  {DIM}{suffix}{RESET}")
 
 
 def cleanup(admin, memory):
@@ -368,32 +427,60 @@ def _make_clip_memory():
 
 # ── Schema graph ─────────────────────────────────────────────────────────────
 
-SCHEMA_HTML = "/tmp/nexus_schema.html"
+SCHEMA_PNG = "/tmp/nexus_schema"
 
-def open_schema_graph():
-    """Render the live ApertureDB schema using graph_viz and open it in a browser."""
-    import sys
-    import contextlib
-    # graph_viz.py sits at the repo root, one level above demo/
+def generate_schema_png():
+    """Render the live ApertureDB schema as a dark-themed PNG using graphviz."""
+    import sys as _sys
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
+    if repo_root not in _sys.path:
+        _sys.path.insert(0, repo_root)
     try:
-        import graph_viz
+        from graphviz import Digraph
         from aperturedb.CommonLibrary import create_connector
+        import graph_viz
+
         client = create_connector()
-        # Suppress IPython display() output — it's a no-op in a terminal anyway
-        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            graph_viz.render_schema(
-                client,
-                title="aperture-nexus · ApertureDB Schema",
-                filename=SCHEMA_HTML,
-                open_browser=True,
-                embed=False,
-            )
-        print(f"  {GREEN}✓{RESET}  Schema graph → {DIM}{SCHEMA_HTML}{RESET}")
+        nodes, edges = graph_viz.get_schema_graph(client)
+
+        dot = Digraph(
+            "nexus-schema",
+            graph_attr={
+                "bgcolor": "#0b1020", "rankdir": "LR",
+                "fontname": "Helvetica", "pad": "0.7",
+                "splines": "ortho", "nodesep": "0.6", "ranksep": "1.4",
+            },
+            node_attr={
+                "fontname": "Helvetica", "fontsize": "13",
+                "penwidth": "0", "margin": "0.24,0.16", "height": "0.55",
+            },
+            edge_attr={
+                "fontname": "Helvetica", "fontsize": "10",
+                "fontcolor": "#7788bb", "arrowsize": "0.7", "penwidth": "1.4",
+            },
+        )
+
+        for n in nodes:
+            cls, label = n["id"], n["label"]
+            if cls.startswith("Nexus"):
+                dot.node(cls, label=label, shape="box", style="filled,rounded",
+                         fillcolor="#1a5fa8", fontcolor="white", color="#1a5fa8")
+            else:
+                display = label.lstrip("_")
+                dot.node(cls, label=display, shape="box", style="filled,rounded",
+                         fillcolor="#1c2540", fontcolor="#7788bb", color="#1c2540")
+
+        for src, dst, label, is_system_color in edges:
+            color = "#222e50" if is_system_color else "#2f4fa0"
+            dot.edge(src, dst, label=label, color=color, fontcolor="#7788bb")
+
+        dot.render(SCHEMA_PNG, format="png", cleanup=True)
+        png = SCHEMA_PNG + ".png"
+        subprocess.Popen(["xdg-open", png],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"  {GREEN}✓{RESET}  Schema diagram → {DIM}{png}{RESET}")
     except Exception as e:
-        print(f"  {YELLOW}⚠  Schema graph skipped: {e}{RESET}")
+        print(f"  {YELLOW}⚠  Schema diagram skipped: {e}{RESET}")
 
 
 # ── Knowledge ─────────────────────────────────────────────────────────────────
@@ -454,8 +541,8 @@ def show_knowledge(memory):
     print(f"  {DIM}  FindBlob → read the support notes for each ticket{RESET}")
     print(f"  {DIM}  FindImage → browse all 9 defect photos side by side{RESET}")
     blank()
-    open_schema_graph()
-    print(f"  {DIM}  Schema diagram shows NexusPrincipal → NexusContext → Descriptors{RESET}")
+    generate_schema_png()
+    print(f"  {DIM}  Schema: NexusSession → NexusContext → Descriptors → Blobs / Images{RESET}")
 
 
 # ── Memory ────────────────────────────────────────────────────────────────────
@@ -694,6 +781,8 @@ def main():
 
     admin  = NexusAdmin()
     memory = Memory()
+
+    startup_wipe(admin, memory)
 
     print(f"  {DIM}Seeding organization knowledge (3 tickets × 3 photos)…{RESET}", flush=True)
     try:
