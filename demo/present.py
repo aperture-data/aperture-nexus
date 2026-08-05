@@ -368,20 +368,30 @@ def _make_clip_memory():
 
 # ── Schema graph ─────────────────────────────────────────────────────────────
 
-SCHEMA_PATH = "/tmp/nexus_schema"
+SCHEMA_HTML = "/tmp/nexus_schema.html"
 
 def open_schema_graph():
-    """Render the live ApertureDB schema to a PNG and open it."""
+    """Render the live ApertureDB schema using graph_viz and open it in a browser."""
+    import sys
+    import contextlib
+    # graph_viz.py sits at the repo root, one level above demo/
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
     try:
+        import graph_viz
         from aperturedb.CommonLibrary import create_connector
-        from aperturedb.Utils import Utils
-        conn  = create_connector()
-        utils = Utils(conn)
-        src   = utils.visualize_schema(filename=SCHEMA_PATH, format="png")
-        png   = SCHEMA_PATH + ".png"
-        subprocess.Popen(["xdg-open", png],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print(f"  {GREEN}✓{RESET}  Schema diagram → {DIM}{png}{RESET}")
+        client = create_connector()
+        # Suppress IPython display() output — it's a no-op in a terminal anyway
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            graph_viz.render_schema(
+                client,
+                title="aperture-nexus · ApertureDB Schema",
+                filename=SCHEMA_HTML,
+                open_browser=True,
+                embed=False,
+            )
+        print(f"  {GREEN}✓{RESET}  Schema graph → {DIM}{SCHEMA_HTML}{RESET}")
     except Exception as e:
         print(f"  {YELLOW}⚠  Schema graph skipped: {e}{RESET}")
 
