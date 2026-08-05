@@ -446,17 +446,17 @@ def generate_schema_png():
         dot = Digraph(
             "nexus-schema",
             graph_attr={
-                "bgcolor": "#0b1020", "rankdir": "LR",
-                "fontname": "Helvetica", "pad": "0.7",
-                "splines": "ortho", "nodesep": "0.6", "ranksep": "1.4",
+                "bgcolor": "#0d1117", "rankdir": "LR",
+                "fontname": "Helvetica", "pad": "0.8",
+                "splines": "polyline", "nodesep": "0.7", "ranksep": "1.6",
             },
             node_attr={
                 "fontname": "Helvetica", "fontsize": "13",
-                "penwidth": "0", "margin": "0.24,0.16", "height": "0.55",
+                "penwidth": "1.5", "margin": "0.28,0.18", "height": "0.6",
             },
             edge_attr={
                 "fontname": "Helvetica", "fontsize": "10",
-                "fontcolor": "#7788bb", "arrowsize": "0.7", "penwidth": "1.4",
+                "fontcolor": "#aabbdd", "arrowsize": "0.8", "penwidth": "1.8",
             },
         )
 
@@ -464,15 +464,15 @@ def generate_schema_png():
             cls, label = n["id"], n["label"]
             if cls.startswith("Nexus"):
                 dot.node(cls, label=label, shape="box", style="filled,rounded",
-                         fillcolor="#1a5fa8", fontcolor="white", color="#1a5fa8")
+                         fillcolor="#1a6abf", fontcolor="white", color="#4499ee")
             else:
                 display = label.lstrip("_")
                 dot.node(cls, label=display, shape="box", style="filled,rounded",
-                         fillcolor="#1c2540", fontcolor="#7788bb", color="#1c2540")
+                         fillcolor="#1e2d4a", fontcolor="#aabbdd", color="#3a5580")
 
         for src, dst, label, is_system_color in edges:
-            color = "#222e50" if is_system_color else "#2f4fa0"
-            dot.edge(src, dst, label=label, color=color, fontcolor="#7788bb")
+            color = "#4466aa" if is_system_color else "#55aaff"
+            dot.edge(src, dst, label=label, color=color, fontcolor="#aabbdd")
 
         dot.render(SCHEMA_PNG, format="png", cleanup=True)
         png = SCHEMA_PNG + ".png"
