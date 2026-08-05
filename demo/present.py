@@ -302,9 +302,39 @@ def seed_knowledge(admin, memory):
     clip_mem = _make_clip_memory()
     agent_map = {uid: uname for uid, uname in SEED_AGENTS}
 
+    # Pre-generate all PIL images so the CLIP commits don't stall on image I/O
+    print(f"  {DIM}  Pre-generating damage photos…{RESET}", end=" ", flush=True)
     for report in PRIOR_REPORTS:
+        report["_images"] = [
+            _make_damage_image(label, color, pattern)
+            for label, color, pattern in report["photos"]
+        ]
+    print(f"{GREEN}done{RESET}")
+
+    # Warm up CLIP so the first ticket doesn't absorb the model-load cost
+    print(f"  {DIM}  Loading CLIP model…{RESET}", end=" ", flush=True)
+    t_clip = time.time()
+    try:
+        clip_mem.search(query="warmup", modality="text",
+                        embedding_model="ViT-B/16", k=1)
+    except Exception:
+        pass
+    print(f"{GREEN}done{RESET}  {DIM}{time.time() - t_clip:.1f}s{RESET}")
+
+    n = len(PRIOR_REPORTS)
+    for i, report in enumerate(PRIOR_REPORTS, 1):
         user_id   = report["agent"]
-        api_key   = _create_principal(admin, user_id, agent_map[user_id])
+        user_name = agent_map[user_id]
+        bar_done  = "█" * i
+        bar_left  = "░" * (n - i)
+
+        print(
+            f"  {DIM}  [{bar_done}{bar_left}] {i}/{n}  {user_name:<14}{RESET}",
+            end=" ", flush=True,
+        )
+        t0 = time.time()
+
+        api_key   = _create_principal(admin, user_id, user_name)
         _all_principals.append(user_id)
 
         principal = memory.authenticate(user_id=user_id, api_key=api_key)
@@ -318,13 +348,14 @@ def seed_knowledge(admin, memory):
         info = Information(context_id=ctx.id)
         for note in report["notes"]:
             info.log(text=note)
-        for photo_label, photo_color, pattern in report["photos"]:
+        for (photo_label, _, _), img_bytes in zip(report["photos"], report["_images"]):
             info.log(
                 text=f"Customer photo: {photo_label.strip().lower()}",
-                image=_make_damage_image(photo_label, photo_color, pattern),
+                image=img_bytes,
             )
 
         clip_mem.process_and_commit(ctx, info)
+        print(f"{GREEN}✓{RESET}  {DIM}{time.time() - t0:.1f}s{RESET}")
 
 
 def _make_clip_memory():
@@ -333,6 +364,26 @@ def _make_clip_memory():
     m._cfg.models.text_embedding  = "ViT-B/16"
     m._cfg.models.image_embedding = "ViT-B/16"
     return m
+
+
+# ── Schema graph ─────────────────────────────────────────────────────────────
+
+SCHEMA_PATH = "/tmp/nexus_schema"
+
+def open_schema_graph():
+    """Render the live ApertureDB schema to a PNG and open it."""
+    try:
+        from aperturedb.CommonLibrary import create_connector
+        from aperturedb.Utils import Utils
+        conn  = create_connector()
+        utils = Utils(conn)
+        src   = utils.visualize_schema(filename=SCHEMA_PATH, format="png")
+        png   = SCHEMA_PATH + ".png"
+        subprocess.Popen(["xdg-open", png],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"  {GREEN}✓{RESET}  Schema diagram → {DIM}{png}{RESET}")
+    except Exception as e:
+        print(f"  {YELLOW}⚠  Schema graph skipped: {e}{RESET}")
 
 
 # ── Knowledge ─────────────────────────────────────────────────────────────────
@@ -392,6 +443,9 @@ def show_knowledge(memory):
     web_ui_prompt()
     print(f"  {DIM}  FindBlob → read the support notes for each ticket{RESET}")
     print(f"  {DIM}  FindImage → browse all 9 defect photos side by side{RESET}")
+    blank()
+    open_schema_graph()
+    print(f"  {DIM}  Schema diagram shows NexusPrincipal → NexusContext → Descriptors{RESET}")
 
 
 # ── Memory ────────────────────────────────────────────────────────────────────
