@@ -294,17 +294,22 @@ reference on these primitives.
 
 | aperture-nexus | ApertureDB primitive | Notes |
 |----------------|---------------------|-------|
-| Principal / User | `Entity` (`_nexus_class: "User"`) | One per `user_id` |
-| Session | `Entity` (`_nexus_class: "Session"`) | Shared across participants |
+| Principal / User | `Entity` (`NexusUser`) | One per `user_id` |
+| Session | `Entity` (`NexusSession`) | Shared across participants |
 | User ↔ Session | `Connection` (`participates_in`) | Many-to-many |
-| Context | `Entity` (`_nexus_class: "Context"`) | session_id, purpose, org |
-| Committed Memory | `Entity` (`_nexus_class: "Memory"`) | Links Context + entries |
-| Text (chunked) | `Entity` + `Descriptor` per chunk | Embedding in DescriptorSet |
+| Context | `Entity` (`NexusContext`) | session_id, purpose, org |
+| User → Context | `Connection` (`nexus_user_context`) | Principal authored this context |
+| Session → Context | `Connection` (`nexus_session_context`) | Context belongs to session |
+| Commit | `Entity` (`NexusCommit`) | One per `commit()` call; groups all entries written together |
+| Context → Commit | `Connection` (`nexus_context_commit`) | Context owns its commits |
+| Commit → entry | `Connection` (`nexus_commit_entry`) | Tracks what was written per commit; enables `remove(commit_id=...)` |
+| Context → entry | `Connection` (`nexus_context_entry`) | Direct edge for fast context-scoped traversal |
+| Text (chunked) | `Blob` + `Descriptor` per chunk | Embedding in DescriptorSet |
 | Image | `Image` + `Descriptor` | ApertureDB native Image type |
 | Video | `Video` → `Clip` entities → `Descriptor` | Per clip |
 | Blob (pdf, mp3…) | `Blob` with `document_type` | Raw bytes; no embedding |
 | Pre-computed embedding | `Descriptor` directly | Model recorded as property |
-| MemoryTask | `Entity` (`_nexus_class: "MemoryTask"`) | Async status tracking |
+| MemoryTask | `Entity` (`NexusMemoryTask`) | Async status tracking |
 
 ### DescriptorSets
 

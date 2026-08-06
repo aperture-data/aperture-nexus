@@ -479,8 +479,8 @@ Remove committed content from ApertureDB. At least one filter is required. Filte
 
 | Filter | Removes |
 |--------|---------|
-| `commit_id=` | All content written in one `commit()` call |
-| `context_id=` | All content from a context; also removes the `NexusContext` entity when used alone |
+| `commit_id=` | All content written in one `commit()` call, plus the `NexusCommit` entity for that commit |
+| `context_id=` | All content from a context; also removes the `NexusCommit` entities and the `NexusContext` entity when used alone |
 | `session_id=` | All content from a session |
 | `before=` | Entries whose `created_at` is strictly before this UTC-aware datetime (keep recent, discard old) |
 | `since=` | Entries whose `created_at` is at or after this datetime (rollback pattern) |
@@ -571,7 +571,7 @@ Either `session_id` or `session_name` is required. If `session_name` is provided
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `principal` | `Principal` | The authenticated user or agent. Required. |
-| `session_id` | `str \| None` | ID of an existing session. Use `memory.generate_session_id()` for multi-participant sessions. |
+| `session_id` | `str \| None` | ID of an existing session. Use `generate_session_id()` (from `aperture_nexus`) for multi-participant sessions. |
 | `session_name` | `str \| None` | Human-readable session name. Must be unique within a principal's scope. |
 | `purpose` | `str \| None` | The task or intent behind this interaction — a short phrase describing what is being done (e.g. `"debug failing export"`, `"Q3 budget review"`, `"customer support ticket #4821"`). Stored as metadata; filterable at search time via `filters={"purpose": "..."}`. |
 | `organization` | `str \| None` | Group scope for permission and search filtering. |
@@ -596,7 +596,8 @@ ctx = Context(
 )
 
 # One of many participants in a shared session
-sid = memory.generate_session_id()
+from aperture_nexus import generate_session_id
+sid = generate_session_id()
 ctx_customer = Context(principal=customer_principal, session_id=sid, purpose="Order inquiry")
 ctx_ai       = Context(principal=ai_principal,       session_id=sid, purpose="First response")
 ```

@@ -70,6 +70,7 @@ your own integration.
 | [Getting Started](getting-started.md) | Step-by-step to your first stored memory |
 | [API Reference](api-reference.md) | `Memory`, `Context`, `Information`, `MemoryTask` |
 | [Configuration](configuration.md) | Every field in `aperture_nexus.json` |
+| [Customer Support Agent](customer-support-agent.md) | Multi-agent pipeline with multimodal memory and semantic image search |
 
 See [`examples/`](https://github.com/vishakha041/aperture-nexus/tree/main/examples)
 for runnable scripts covering each data modality.
