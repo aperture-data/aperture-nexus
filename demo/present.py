@@ -446,17 +446,17 @@ def generate_schema_png():
         dot = Digraph(
             "nexus-schema",
             graph_attr={
-                "bgcolor": "#0d1117", "rankdir": "LR",
-                "fontname": "Helvetica", "pad": "0.8",
-                "splines": "polyline", "nodesep": "0.7", "ranksep": "1.6",
+                "bgcolor": "white", "rankdir": "LR",
+                "fontname": "Helvetica", "pad": "0.9",
+                "splines": "polyline", "nodesep": "0.8", "ranksep": "1.8",
             },
             node_attr={
                 "fontname": "Helvetica", "fontsize": "13",
-                "penwidth": "1.5", "margin": "0.28,0.18", "height": "0.6",
+                "penwidth": "0", "margin": "0.3,0.18", "height": "0.6",
             },
             edge_attr={
                 "fontname": "Helvetica", "fontsize": "10",
-                "fontcolor": "#aabbdd", "arrowsize": "0.8", "penwidth": "1.8",
+                "fontcolor": "#334155", "arrowsize": "0.85", "penwidth": "1.8",
             },
         )
 
@@ -464,15 +464,15 @@ def generate_schema_png():
             cls, label = n["id"], n["label"]
             if cls.startswith("Nexus"):
                 dot.node(cls, label=label, shape="box", style="filled,rounded",
-                         fillcolor="#1a6abf", fontcolor="white", color="#4499ee")
+                         fillcolor="#1d4ed8", fontcolor="white", color="#1d4ed8")
             else:
                 display = label.lstrip("_")
                 dot.node(cls, label=display, shape="box", style="filled,rounded",
-                         fillcolor="#1e2d4a", fontcolor="#aabbdd", color="#3a5580")
+                         fillcolor="#475569", fontcolor="white", color="#475569")
 
         for src, dst, label, is_system_color in edges:
-            color = "#4466aa" if is_system_color else "#55aaff"
-            dot.edge(src, dst, label=label, color=color, fontcolor="#aabbdd")
+            color = "#94a3b8" if is_system_color else "#2563eb"
+            dot.edge(src, dst, label=label, color=color, fontcolor="#334155")
 
         dot.render(SCHEMA_PNG, format="png", cleanup=True)
         png = SCHEMA_PNG + ".png"

@@ -12,11 +12,16 @@ participants, and time horizons via filters and vector search.
 ApertureDB entity classes used here:
     NexusSession — one per unique session_id
     NexusContext — one per Context passed to commit()
+    NexusCommit  — one per commit() call; groups all entries written together
 
 ApertureDB connection classes used here:
-    nexus_session_context — Session → Context
-    nexus_entry           — Context → Blob / Image / Video
-    nexus_link            — Context → Context (user-defined relationship)
+    nexus_session_context — NexusSession → NexusContext
+    nexus_user_context    — NexusUser → NexusContext
+    nexus_context_commit  — NexusContext → NexusCommit
+    nexus_commit_entry    — NexusCommit → Blob / Image / Video
+    nexus_context_entry   — NexusContext → Blob / Image / Video (direct, for fast traversal)
+    nexus_descriptor      — Descriptor → Blob / Image / Video
+    nexus_link            — NexusContext → NexusContext (user-defined relationship)
 
 Multimodal content storage:
     Text  → AddBlob   (document_type="text", context_id/session_id stamped)
@@ -67,12 +72,16 @@ logger = logging.getLogger(__name__)
 # ApertureDB entity class names
 _CLASS_SESSION = "NexusSession"
 _CLASS_CONTEXT = "NexusContext"
+_CLASS_COMMIT  = "NexusCommit"
 
 # ApertureDB connection class names (snake_case, nexus-prefixed)
-_CONN_SESSION_CONTEXT = "nexus_session_context"  # Session → Context
-_CONN_ENTRY = "nexus_entry"                       # Context → Blob/Image/Video
-_CONN_LINK = "nexus_link"                         # Context → Context
-_CONN_DESCRIPTOR = "nexus_descriptor"             # Descriptor → Blob/Image/Video
+_CONN_SESSION_CONTEXT = "nexus_session_context"  # NexusSession → NexusContext
+_CONN_USER_CONTEXT    = "nexus_user_context"     # NexusUser → NexusContext
+_CONN_CONTEXT_COMMIT  = "nexus_context_commit"   # NexusContext → NexusCommit
+_CONN_COMMIT_ENTRY    = "nexus_commit_entry"     # NexusCommit → Blob/Image/Video
+_CONN_CONTEXT_ENTRY   = "nexus_context_entry"   # NexusContext → Blob/Image/Video
+_CONN_LINK            = "nexus_link"             # NexusContext → NexusContext
+_CONN_DESCRIPTOR      = "nexus_descriptor"       # Descriptor → Blob/Image/Video
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +399,8 @@ class Memory:
             (_CLASS_CONTEXT, "nexus_ctx_id"),
             (_CLASS_CONTEXT, "session_id"),
             (_CLASS_CONTEXT, "user_id"),
+            (_CLASS_COMMIT,  "commit_id"),
+            (_CLASS_COMMIT,  "context_id"),
         ]
         for cls, prop in indexes:
             cmd = [{"CreateIndex": {
@@ -540,9 +551,10 @@ class Memory:
         session_id = self._resolve_session_id(ctx)
 
         try:
-            # Ensure session and context entities exist
+            # Ensure session, context, and commit entities exist
             self._ensure_session(ctx, session_id)
             self._ensure_context(ctx, session_id)
+            self._ensure_commit(ctx, session_id, commit_id)
 
             # Ensure all required DescriptorSets exist before writing.
             # Must happen after embeddings are generated (process_and_commit)
@@ -1098,9 +1110,23 @@ class Memory:
 
         self._delete_content_by_constraints(constraints)
 
-        # Remove the NexusContext entity only when removing by context_id alone
-        # (other filter combinations do partial removes — leave the entity intact)
+        # Remove NexusCommit entity/entities when scope is precise enough
+        if commit_id and not any(x is not None for x in (context_id, session_id, before, since)):
+            cmd = [{"DeleteEntity": {
+                "with_class": _CLASS_COMMIT,
+                "constraints": {"commit_id": ["==", commit_id]},
+            }}]
+            response, _ = self._db.query(cmd)
+            _check_response(response, f"remove_commit_entity({commit_id!r})")
+
+        # Remove NexusContext (and its commits) only when removing by context_id alone
         if context_id and not any(x is not None for x in (commit_id, session_id, before, since)):
+            cmd = [{"DeleteEntity": {
+                "with_class": _CLASS_COMMIT,
+                "constraints": {"context_id": ["==", context_id]},
+            }}]
+            response, _ = self._db.query(cmd)
+            _check_response(response, f"remove_commits_for_context({context_id!r})")
             cmd = [{"DeleteEntity": {
                 "with_class": _CLASS_CONTEXT,
                 "constraints": {"nexus_ctx_id": ["==", context_id]},
@@ -1473,6 +1499,14 @@ class Memory:
                     }
                 },
                 {
+                    "FindEntity": {
+                        "with_class": _CLASS_USER,
+                        "constraints": {"user_id": ["==", ctx.principal.user_id]},
+                        "_ref": 3,
+                        "results": {"count": True},
+                    }
+                },
+                {
                     "AddConnection": {
                         "class": _CONN_SESSION_CONTEXT,
                         "src": 1,
@@ -1480,10 +1514,69 @@ class Memory:
                         "properties": {"created_at": datetime.utcnow().isoformat()},
                     }
                 },
+                {
+                    "AddConnection": {
+                        "class": _CONN_USER_CONTEXT,
+                        "src": 3,
+                        "dst": 2,
+                    }
+                },
             ]
             response, _ = self._db.query(conn_cmd)
-            _check_response(response, "nexus_session_context")
+            _check_response(response, "nexus_session_context+nexus_user_context")
             self._ensured_contexts.add(ctx.id)
+
+    def _ensure_commit(self, ctx: Context, session_id: str, commit_id: str) -> None:
+        """Create a NexusCommit entity and connect it to its context."""
+        props: dict = {
+            "commit_id": commit_id,
+            "context_id": ctx.id,
+            "session_id": session_id,
+            "user_id": ctx.principal.user_id,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        cmd = [
+            {"AddEntity": {"class": _CLASS_COMMIT, "properties": props, "_ref": 1}},
+            {
+                "FindEntity": {
+                    "with_class": _CLASS_CONTEXT,
+                    "constraints": {"nexus_ctx_id": ["==", ctx.id]},
+                    "_ref": 2,
+                    "results": {"count": True},
+                }
+            },
+            {"AddConnection": {"class": _CONN_CONTEXT_COMMIT, "src": 2, "dst": 1}},
+        ]
+        response, _ = self._db.query(cmd)
+        _check_response(response, "ensure_commit")
+
+    def _graph_prefix(self, commit_id: str, ctx_id: str) -> list[dict]:
+        """Two leading FindEntity cmds anchoring commit (_ref=1) and context (_ref=2)."""
+        return [
+            {
+                "FindEntity": {
+                    "with_class": _CLASS_COMMIT,
+                    "constraints": {"commit_id": ["==", commit_id]},
+                    "_ref": 1,
+                    "results": {"count": True},
+                }
+            },
+            {
+                "FindEntity": {
+                    "with_class": _CLASS_CONTEXT,
+                    "constraints": {"nexus_ctx_id": ["==", ctx_id]},
+                    "_ref": 2,
+                    "results": {"count": True},
+                }
+            },
+        ]
+
+    def _graph_links(self, content_ref: int) -> list[dict]:
+        """AddConnection cmds from commit (ref=1) and context (ref=2) to a content entity."""
+        return [
+            {"AddConnection": {"class": _CONN_COMMIT_ENTRY, "src": 1, "dst": content_ref}},
+            {"AddConnection": {"class": _CONN_CONTEXT_ENTRY, "src": 2, "dst": content_ref}},
+        ]
 
     def _write_context_embedding(
         self, ctx: Context, session_id: str
@@ -1608,6 +1701,10 @@ class Memory:
 
         has_emb = entry.embedding is not None and entry.embedding_model
 
+        # FindEntity refs 1 (NexusCommit) and 2 (NexusContext) are prepended to
+        # every write so graph connections can be added in the same transaction.
+        prefix = self._graph_prefix(commit_id, ctx.id)
+
         # ---- Text blob -------------------------------------------------------
         if entry.text is not None:
             text_bytes = entry.text.encode("utf-8")
@@ -1619,15 +1716,17 @@ class Memory:
                 dset = _dset_name("text", entry.embedding_model)
                 desc_props = self._descriptor_props(entry, ctx, session_id, "text", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
-                cmd = [
-                    {"AddBlob": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
-                ]
+                cmd = prefix + [
+                    {"AddBlob": {"properties": props, "_ref": 3}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 4}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 4, "dst": 3}},
+                ] + self._graph_links(3)
                 response, _ = self._db.query(cmd, [text_bytes, emb_bytes])
                 _check_response(response, "write_text_entry+descriptor")
             else:
-                cmd = [{"AddBlob": {"properties": props}}]
+                cmd = prefix + [
+                    {"AddBlob": {"properties": props, "_ref": 3}},
+                ] + self._graph_links(3)
                 response, _ = self._db.query(cmd, [text_bytes])
                 _check_response(response, "write_text_entry")
 
@@ -1640,15 +1739,17 @@ class Memory:
                 dset = _dset_name("image", entry.embedding_model)
                 desc_props = self._descriptor_props(entry, ctx, session_id, "image", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
-                cmd = [
-                    {"AddImage": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
-                ]
+                cmd = prefix + [
+                    {"AddImage": {"properties": props, "_ref": 3}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 4}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 4, "dst": 3}},
+                ] + self._graph_links(3)
                 response, _ = self._db.query(cmd, [image_bytes, emb_bytes])
                 _check_response(response, "write_image_entry+descriptor")
             else:
-                cmd = [{"AddImage": {"properties": props}}]
+                cmd = prefix + [
+                    {"AddImage": {"properties": props, "_ref": 3}},
+                ] + self._graph_links(3)
                 response, _ = self._db.query(cmd, [image_bytes])
                 _check_response(response, "write_image_entry")
 
@@ -1663,15 +1764,17 @@ class Memory:
                 dset = _dset_name("video", entry.embedding_model)
                 desc_props = self._descriptor_props(entry, ctx, session_id, "video", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
-                cmd = [
-                    {"AddVideo": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
-                ]
+                cmd = prefix + [
+                    {"AddVideo": {"properties": props, "_ref": 3}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 4}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 4, "dst": 3}},
+                ] + self._graph_links(3)
                 response, _ = self._db.query(cmd, [video_bytes, emb_bytes])
                 _check_response(response, "write_video_entry+descriptor")
             else:
-                cmd = [{"AddVideo": {"properties": props}}]
+                cmd = prefix + [
+                    {"AddVideo": {"properties": props, "_ref": 3}},
+                ] + self._graph_links(3)
                 response, _ = self._db.query(cmd, [video_bytes])
                 _check_response(response, "write_video_entry")
 
@@ -1684,15 +1787,17 @@ class Memory:
                 dset = _dset_name("text", entry.embedding_model)
                 desc_props = self._descriptor_props(entry, ctx, session_id, "text", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
-                cmd = [
-                    {"AddBlob": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
-                ]
+                cmd = prefix + [
+                    {"AddBlob": {"properties": props, "_ref": 3}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 4}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 4, "dst": 3}},
+                ] + self._graph_links(3)
                 response, _ = self._db.query(cmd, [blob_bytes, emb_bytes])
                 _check_response(response, "write_blob_entry+descriptor")
             else:
-                cmd = [{"AddBlob": {"properties": props}}]
+                cmd = prefix + [
+                    {"AddBlob": {"properties": props, "_ref": 3}},
+                ] + self._graph_links(3)
                 response, _ = self._db.query(cmd, [blob_bytes])
                 _check_response(response, "write_blob_entry")
 

@@ -80,11 +80,35 @@ def _ok_response(cmd_name: str = "AddEntity") -> tuple:
     return ([{cmd_name: {"status": 0}}], [])
 
 
-def _ok_atomic_write_response(content_cmd: str = "AddBlob") -> tuple:
-    """Response for a 3-command atomic content+descriptor+connection batch."""
+def _ok_commit_response() -> tuple:
+    """3-command batch: AddEntity(NexusCommit) + FindEntity + AddConnection."""
     return ([
-        {content_cmd: {"status": 0}},
+        {"AddEntity":    {"status": 0}},
+        {"FindEntity":   {"status": 0}},
+        {"AddConnection": {"status": 0}},
+    ], [])
+
+
+def _ok_entry_response(content_cmd: str = "AddBlob") -> tuple:
+    """5-command batch: 2×FindEntity(commit+ctx) + content + 2×AddConnection."""
+    return ([
+        {"FindEntity":    {"status": 0}},
+        {"FindEntity":    {"status": 0}},
+        {content_cmd:     {"status": 0}},
+        {"AddConnection": {"status": 0}},
+        {"AddConnection": {"status": 0}},
+    ], [])
+
+
+def _ok_atomic_write_response(content_cmd: str = "AddBlob") -> tuple:
+    """7-command batch: 2×FindEntity + content + descriptor + 3×AddConnection."""
+    return ([
+        {"FindEntity":    {"status": 0}},
+        {"FindEntity":    {"status": 0}},
+        {content_cmd:     {"status": 0}},
         {"AddDescriptor": {"status": 0}},
+        {"AddConnection": {"status": 0}},
+        {"AddConnection": {"status": 0}},
         {"AddConnection": {"status": 0}},
     ], [])
 
@@ -131,28 +155,29 @@ def _make_info(ctx=None):
 
 
 def _ok_conn_response() -> tuple:
-    """3-command batch: FindEntity + FindEntity + AddConnection."""
+    """5-command batch: 3×FindEntity + 2×AddConnection (session_context + user_context)."""
     return ([
-        {"FindEntity": {"status": 0}},
-        {"FindEntity": {"status": 0}},
+        {"FindEntity":    {"status": 0}},
+        {"FindEntity":    {"status": 0}},
+        {"FindEntity":    {"status": 0}},
+        {"AddConnection": {"status": 0}},
         {"AddConnection": {"status": 0}},
     ], [])
 
 
 # Standard sequence for a commit() with one text entry.
-# Session/context use if_not_found — one AddEntity each (no prior FindEntity).
-# After context AddEntity, a nexus_session_context connection is written (3 cmds).
-# ApertureDB returns status=0 whether it created or skipped the entity.
-#   1. AddEntity session  (if_not_found) → ok
-#   2. AddEntity context  (if_not_found) → ok
-#   3. nexus_session_context connection  → ok (FindEntity+FindEntity+AddConnection)
-#   4. AddBlob  text                     → ok
+#   1. AddEntity session  (if_not_found)
+#   2. AddEntity context  (if_not_found)
+#   3. nexus_session_context + nexus_user_context  (3×FindEntity + 2×AddConnection)
+#   4. ensure_commit NexusCommit entity            (AddEntity + FindEntity + AddConnection)
+#   5. write_entry text blob                       (2×FindEntity + AddBlob + 2×AddConnection)
 def _commit_side_effects():
     return [
-        _ok_response("AddEntity"),  # ensure_session (if_not_found)
-        _ok_response("AddEntity"),  # ensure_context (if_not_found)
-        _ok_conn_response(),        # nexus_session_context connection
-        _ok_response("AddBlob"),    # write text entry
+        _ok_response("AddEntity"),      # ensure_session
+        _ok_response("AddEntity"),      # ensure_context
+        _ok_conn_response(),            # session_context + user_context connections
+        _ok_commit_response(),          # ensure_commit
+        _ok_entry_response("AddBlob"),  # write text entry
     ]
 
 
@@ -194,7 +219,9 @@ class TestCommit:
             _ok_response("AddEntity"),  # ensure_context (if_not_found)
             ([{"FindEntity": {"status": -1, "info": "schema error"}},
               {"FindEntity": {"status": 0}},
-              {"AddConnection": {"status": 0}}], []),  # nexus_session_context fails
+              {"FindEntity": {"status": 0}},
+              {"AddConnection": {"status": 0}},
+              {"AddConnection": {"status": 0}}], []),  # session_context+user_context fails
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -219,7 +246,7 @@ class TestCommit:
         info = _make_info(ctx)
         info.log(text="hello")
         memory.commit(ctx, info)
-        assert mock_connector.query.call_count == 4
+        assert mock_connector.query.call_count == 5
 
     def test_skips_session_creation_when_present(self, mock_connector):
         # if_not_found: same query count whether session exists or not
@@ -229,14 +256,19 @@ class TestCommit:
         info = _make_info(ctx)
         info.log(text="hello")
         memory.commit(ctx, info)
-        assert mock_connector.query.call_count == 4
+        assert mock_connector.query.call_count == 5
 
     def test_storage_error_propagated(self, mock_connector):
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),  # ensure_session
             _ok_response("AddEntity"),  # ensure_context
-            _ok_conn_response(),        # nexus_session_context connection
-            ([{"AddBlob": {"status": -1, "info": "conflict"}}], []),  # blob write fails
+            _ok_conn_response(),        # session_context + user_context connections
+            _ok_commit_response(),      # ensure_commit
+            ([{"FindEntity": {"status": 0}},
+              {"FindEntity": {"status": 0}},
+              {"AddBlob": {"status": -1, "info": "conflict"}},
+              {"AddConnection": {"status": 0}},
+              {"AddConnection": {"status": 0}}], []),  # blob write fails
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -253,9 +285,9 @@ class TestCommit:
         info = _make_info(ctx)
         info.log(text="hello", metadata={"ticket_id": "T-99", "priority": 1})
         memory.commit(ctx, info)
-        # The 4th call is AddBlob — check its properties contain metadata
-        blob_call_args = mock_connector.query.call_args_list[3][0][0]
-        props = blob_call_args[0]["AddBlob"]["properties"]
+        # The 5th call is the write_entry batch; AddBlob is at index 2 (after 2 FindEntity)
+        blob_call_args = mock_connector.query.call_args_list[4][0][0]
+        props = blob_call_args[2]["AddBlob"]["properties"]
         assert props["ticket_id"] == "T-99"
         assert props["priority"] == 1
 
@@ -279,11 +311,12 @@ class TestCommit:
         mid1 = memory.commit(ctx, info)
         assert len(info) == 0
 
-        # Second commit — context already ensured, provide 3 responses.
+        # Second commit — context already ensured (skip conn cmd), provide 4 responses.
         mock_connector.query.side_effect = [
-            _ok_response("AddEntity"),  # ensure_session (if_not_found)
-            _ok_response("AddEntity"),  # ensure_context (if_not_found)
-            _ok_response("AddBlob"),    # write text entry
+            _ok_response("AddEntity"),      # ensure_session (if_not_found)
+            _ok_response("AddEntity"),      # ensure_context (if_not_found; conn skipped)
+            _ok_commit_response(),          # ensure_commit (new commit_id)
+            _ok_entry_response("AddBlob"),  # write text entry
         ]
         info.log(text="second")
         mid2 = memory.commit(ctx, info)
@@ -299,14 +332,13 @@ class TestCommit:
 
 class TestCommitWithDescriptors:
     def test_writes_descriptor_for_precomputed_embedding(self, mock_connector):
-        # New atomic write: commit() calls _ensure_descriptor_sets first,
-        # then _write_entry does [AddBlob + AddDescriptor + AddConnection] atomically.
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),                  # ensure_session
             _ok_response("AddEntity"),                  # ensure_context
-            _ok_conn_response(),                        # nexus_session_context connection
+            _ok_conn_response(),                        # session_context + user_context
+            _ok_commit_response(),                      # ensure_commit
             _find_descriptor_set_response(count=1),     # _ensure_descriptor_sets (dset exists)
-            _ok_atomic_write_response("AddBlob"),       # [AddBlob+AddDescriptor+AddConnection]
+            _ok_atomic_write_response("AddBlob"),       # 2×Find+AddBlob+AddDesc+3×AddConn
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -314,18 +346,17 @@ class TestCommitWithDescriptors:
         vec = np.ones(128, dtype=np.float32)
         info.log(text="hello", embedding=vec, embedding_model="test-model")
         memory.commit(ctx, info)
-        assert mock_connector.query.call_count == 5
+        assert mock_connector.query.call_count == 6
 
     def test_creates_descriptor_set_on_first_use(self, mock_connector):
-        # _ensure_descriptor_sets (inside commit) creates the dset before the
-        # atomic [AddBlob + AddDescriptor + AddConnection] write.
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),                  # ensure_session
             _ok_response("AddEntity"),                  # ensure_context
-            _ok_conn_response(),                        # nexus_session_context connection
+            _ok_conn_response(),                        # session_context + user_context
+            _ok_commit_response(),                      # ensure_commit
             _find_descriptor_set_response(count=0),     # _ensure_descriptor_sets: not found
             _ok_response("AddDescriptorSet"),           # create dset
-            _ok_atomic_write_response("AddBlob"),       # [AddBlob+AddDescriptor+AddConnection]
+            _ok_atomic_write_response("AddBlob"),       # 2×Find+AddBlob+AddDesc+3×AddConn
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -333,7 +364,7 @@ class TestCommitWithDescriptors:
         vec = np.ones(64, dtype=np.float32)
         info.log(text="hello", embedding=vec, embedding_model="test-model")
         memory.commit(ctx, info)
-        assert mock_connector.query.call_count == 6
+        assert mock_connector.query.call_count == 7
 
 
 # ---------------------------------------------------------------------------
@@ -353,14 +384,13 @@ class TestProcessAndCommit:
             memory.process_and_commit(ctx, info)
 
     def test_uses_precomputed_embedding_without_model(self, mock_connector):
-        # process_and_commit generates embeddings then calls commit(), which
-        # calls _ensure_descriptor_sets internally before the atomic write.
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),                # ensure_session
             _ok_response("AddEntity"),                # ensure_context
-            _ok_conn_response(),                      # nexus_session_context connection
+            _ok_conn_response(),                      # session_context + user_context
+            _ok_commit_response(),                    # ensure_commit
             _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets (in commit)
-            _ok_atomic_write_response("AddBlob"),     # [AddBlob+AddDescriptor+AddConnection]
+            _ok_atomic_write_response("AddBlob"),     # 2×Find+AddBlob+AddDesc+3×AddConn
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -371,12 +401,12 @@ class TestProcessAndCommit:
         assert isinstance(mid, str)
 
     def test_blob_only_entry_does_not_need_embedding(self, mock_connector):
-        # blob-only entry: no embedding needed — commit proceeds
         mock_connector.query.side_effect = [
-            _ok_response("AddEntity"),  # ensure_session
-            _ok_response("AddEntity"),  # ensure_context
-            _ok_conn_response(),        # nexus_session_context connection
-            _ok_response("AddBlob"),
+            _ok_response("AddEntity"),      # ensure_session
+            _ok_response("AddEntity"),      # ensure_context
+            _ok_conn_response(),            # session_context + user_context
+            _ok_commit_response(),          # ensure_commit
+            _ok_entry_response("AddBlob"),  # write blob entry
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -413,9 +443,10 @@ class TestVideoClipEmbeddings:
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),                 # ensure_session (if_not_found)
             _ok_response("AddEntity"),                 # ensure_context (if_not_found)
-            _ok_conn_response(),                       # nexus_session_context connection
+            _ok_conn_response(),                       # session_context + user_context
+            _ok_commit_response(),                     # ensure_commit
             _find_descriptor_set_response(count=1),   # _ensure_descriptor_sets (in commit)
-            _ok_response("AddVideo"),                  # video blob
+            _ok_entry_response("AddVideo"),            # video blob + graph links
             _find_descriptor_set_response(count=1),   # _write_video_clip_descriptors dset check
             _ok_response("AddDescriptor"),             # clip 1
             _ok_response("AddDescriptor"),             # clip 2
@@ -487,9 +518,10 @@ class TestVideoClipEmbeddings:
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),                 # ensure_session (if_not_found)
             _ok_response("AddEntity"),                 # ensure_context (if_not_found)
-            _ok_conn_response(),                       # nexus_session_context connection
+            _ok_conn_response(),                       # session_context + user_context
+            _ok_commit_response(),                     # ensure_commit
             _find_descriptor_set_response(count=1),   # _ensure_descriptor_sets (in commit)
-            _ok_atomic_write_response("AddVideo"),     # [AddVideo+AddDescriptor+AddConnection]
+            _ok_atomic_write_response("AddVideo"),     # 2×Find+AddVideo+AddDesc+3×AddConn
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -553,10 +585,11 @@ class TestAsyncProcessAndCommit:
     @pytest.mark.asyncio
     async def test_task_completes_successfully(self, mock_connector):
         mock_connector.query.side_effect = [
-            _ok_response("AddEntity"),  # ensure_session (if_not_found)
-            _ok_response("AddEntity"),  # ensure_context (if_not_found)
-            _ok_conn_response(),        # nexus_session_context connection
-            _ok_response("AddBlob"),
+            _ok_response("AddEntity"),      # ensure_session (if_not_found)
+            _ok_response("AddEntity"),      # ensure_context (if_not_found)
+            _ok_conn_response(),            # session_context + user_context
+            _ok_commit_response(),          # ensure_commit
+            _ok_entry_response("AddBlob"),  # write blob entry
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -582,10 +615,11 @@ class TestAsyncProcessAndCommit:
     @pytest.mark.asyncio
     async def test_task_registered_in_memory_instance(self, mock_connector):
         mock_connector.query.side_effect = [
-            _ok_response("AddEntity"),  # ensure_session (if_not_found)
-            _ok_response("AddEntity"),  # ensure_context (if_not_found)
-            _ok_conn_response(),        # nexus_session_context connection
-            _ok_response("AddBlob"),
+            _ok_response("AddEntity"),      # ensure_session (if_not_found)
+            _ok_response("AddEntity"),      # ensure_context (if_not_found)
+            _ok_conn_response(),            # session_context + user_context
+            _ok_commit_response(),          # ensure_commit
+            _ok_entry_response("AddBlob"),  # write blob entry
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
@@ -805,37 +839,44 @@ class TestRemove:
             responses.append(_ok_response("DeleteDescriptor"))
         return responses
 
-    def _context_delete_responses(self, dset_names: list[str]):
-        """Content deletes + DeleteEntity (context_id= alone path)."""
+    def _commit_id_delete_responses(self, dset_names: list[str]):
+        """Content deletes + DeleteEntity(NexusCommit) for commit_id= alone path."""
         return self._content_delete_responses(dset_names) + [
-            _ok_response("DeleteEntity"),
+            _ok_response("DeleteEntity"),  # NexusCommit
+        ]
+
+    def _context_delete_responses(self, dset_names: list[str]):
+        """Content deletes + DeleteEntity(NexusCommit) + DeleteEntity(NexusContext)."""
+        return self._content_delete_responses(dset_names) + [
+            _ok_response("DeleteEntity"),  # NexusCommit entities for this context
+            _ok_response("DeleteEntity"),  # NexusContext entity
         ]
 
     # -- commit_id= --
 
     def test_remove_by_commit_id(self, mock_connector):
-        mock_connector.query.side_effect = self._content_delete_responses([])
+        mock_connector.query.side_effect = self._commit_id_delete_responses([])
         memory = _make_memory(mock_connector)
         memory.remove(commit_id="cid-123")
-        # 3 content deletes + FindDescriptorSet = 4 calls; no DeleteEntity
-        assert mock_connector.query.call_count == 4
+        # 3 content deletes + FindDescriptorSet + DeleteNexusCommit = 5 calls
+        assert mock_connector.query.call_count == 5
 
-    # -- context_id= alone triggers DeleteEntity --
+    # -- context_id= alone triggers DeleteEntity for commits then context --
 
     def test_remove_by_context_id_alone_deletes_entity(self, mock_connector):
         mock_connector.query.side_effect = self._context_delete_responses([])
         memory = _make_memory(mock_connector)
         memory.remove(context_id="ctx-xyz")
-        # 3 content + FindDescriptorSet + DeleteEntity = 5 calls
-        assert mock_connector.query.call_count == 5
+        # 3 content + FindDescriptorSet + DeleteNexusCommit + DeleteNexusContext = 6
+        assert mock_connector.query.call_count == 6
 
     def test_remove_by_context_id_with_dsets(self, mock_connector):
         dsets = ["nexus_text__m", "nexus_image__m"]
         mock_connector.query.side_effect = self._context_delete_responses(dsets)
         memory = _make_memory(mock_connector)
         memory.remove(context_id="ctx-abc")
-        # 3 content + FindDescriptorSet + 2 descriptor deletes + DeleteEntity = 7
-        assert mock_connector.query.call_count == 7
+        # 3 content + FindDescriptorSet + 2 desc deletes + DeleteNexusCommit + DeleteNexusContext = 8
+        assert mock_connector.query.call_count == 8
 
     def test_remove_context_id_combined_skips_entity_delete(self, mock_connector):
         """context_id + session_id combined: content only, no DeleteEntity."""
@@ -1461,10 +1502,14 @@ class TestAtomicDescriptorWrite:
             if any("AddBlob" in c for c in cmd)
         )
         cmd_names = [list(c.keys())[0] for c in atomic]
-        assert cmd_names == ["AddBlob", "AddDescriptor", "AddConnection"]
+        # Prefix has 2×FindEntity for commit+context; content, descriptor, and all
+        # connections are in the same call — still atomic.
+        assert "AddBlob" in cmd_names
+        assert "AddDescriptor" in cmd_names
+        assert cmd_names.count("AddConnection") == 3  # nexus_descriptor + 2 graph links
 
     def test_image_entry_with_embedding_is_atomic(self, mock_connector):
-        """Image entry with embedding: [AddImage+AddDescriptor+AddConnection] in one call."""
+        """Image entry with embedding: all in one client.query() call."""
         import io as _io
         import PIL.Image as PILImage
 
@@ -1493,10 +1538,12 @@ class TestAtomicDescriptorWrite:
             if any("AddImage" in c for c in cmd)
         )
         cmd_names = [list(c.keys())[0] for c in atomic]
-        assert cmd_names == ["AddImage", "AddDescriptor", "AddConnection"]
+        assert "AddImage" in cmd_names
+        assert "AddDescriptor" in cmd_names
+        assert cmd_names.count("AddConnection") == 3
 
     def test_connection_uses_nexus_descriptor_class(self, mock_connector):
-        """The AddConnection in the atomic write uses class='nexus_descriptor'."""
+        """The nexus_descriptor AddConnection in the atomic write has correct refs."""
         captured = []
 
         def _capture(cmd, blobs=None):
@@ -1519,13 +1566,17 @@ class TestAtomicDescriptorWrite:
             cmd for cmd in captured
             if any("AddBlob" in c for c in cmd)
         )
-        conn = next(c["AddConnection"] for c in atomic if "AddConnection" in c)
+        # nexus_descriptor connection links Descriptor (_ref=4) → Blob (_ref=3)
+        conn = next(
+            c["AddConnection"] for c in atomic
+            if "AddConnection" in c and c["AddConnection"].get("class") == "nexus_descriptor"
+        )
         assert conn["class"] == "nexus_descriptor"
-        assert conn["src"] == 2   # Descriptor _ref
-        assert conn["dst"] == 1   # Blob _ref
+        assert conn["src"] == 4   # Descriptor _ref
+        assert conn["dst"] == 3   # Blob _ref
 
     def test_text_entry_without_embedding_is_single_blob(self, mock_connector):
-        """Text entry without embedding: just AddBlob, no atomic batch."""
+        """Text entry without embedding: AddBlob is present with no AddDescriptor."""
         captured = []
 
         def _capture(cmd, blobs=None):
@@ -1545,8 +1596,9 @@ class TestAtomicDescriptorWrite:
             cmd for cmd in captured
             if any("AddBlob" in c for c in cmd)
         )
-        assert len(blob_call) == 1
-        assert "AddBlob" in blob_call[0]
+        cmd_names = [list(c.keys())[0] for c in blob_call]
+        assert "AddBlob" in cmd_names
+        assert "AddDescriptor" not in cmd_names
 
     def test_org_and_dept_written_to_content_entity(self, mock_connector):
         """organization and department from the principal land on content entities."""
@@ -1574,7 +1626,8 @@ class TestAtomicDescriptorWrite:
             cmd for cmd in captured
             if any("AddBlob" in c for c in cmd)
         )
-        props = blob_call[0]["AddBlob"]["properties"]
+        blob_cmd = next(c for c in blob_call if "AddBlob" in c)
+        props = blob_cmd["AddBlob"]["properties"]
         assert props["organization"] == "AcmeCorp"
         assert props["department"] == "support"
 
@@ -1700,7 +1753,8 @@ class TestModalityPriority:
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),                # session
             _ok_response("AddEntity"),                # context
-            _ok_conn_response(),                      # session_context conn
+            _ok_conn_response(),                      # session_context + user_context
+            _ok_commit_response(),                    # ensure_commit
             _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets (image dset)
             _ok_atomic_write_response("AddBlob"),     # text blob + descriptor
             _ok_atomic_write_response("AddImage"),    # image + descriptor
@@ -1753,7 +1807,8 @@ class TestContextEmbedding:
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),               # ensure_session
             _ok_response("AddEntity"),               # ensure_context
-            _ok_conn_response(),                     # nexus_session_context
+            _ok_conn_response(),                     # session_context + user_context
+            _ok_commit_response(),                   # ensure_commit
             _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets
             _ok_atomic_write_response("AddBlob"),    # text blob+descriptor
             # _write_context_embedding:
@@ -1774,11 +1829,10 @@ class TestContextEmbedding:
             mid = memory.process_and_commit(ctx, info)
 
         assert isinstance(mid, str)
-        # _write_context_embedding called embed_text with the purpose
         mock_embedder.embed_text.assert_called_once_with(
             ["Customer reporting missing order"]
         )
-        assert mock_connector.query.call_count == 7
+        assert mock_connector.query.call_count == 8
 
     def test_skips_context_embedding_when_no_purpose(self, mock_connector):
         """No context embedding is written when ctx.purpose is not set."""
@@ -1788,7 +1842,8 @@ class TestContextEmbedding:
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),               # ensure_session
             _ok_response("AddEntity"),               # ensure_context
-            _ok_conn_response(),                     # nexus_session_context
+            _ok_conn_response(),                     # session_context + user_context
+            _ok_commit_response(),                   # ensure_commit
             _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets
             _ok_atomic_write_response("AddBlob"),    # text blob+descriptor
             # no extra queries — context embedding skipped
@@ -1806,9 +1861,8 @@ class TestContextEmbedding:
             mid = memory.process_and_commit(ctx, info)
 
         assert isinstance(mid, str)
-        # embed_text should only have been called for content, not context
         mock_embedder.embed_text.assert_not_called()
-        assert mock_connector.query.call_count == 5
+        assert mock_connector.query.call_count == 6
 
     def test_skips_context_embedding_when_no_model(self, mock_connector):
         """No context embedding when text_embedding model is not configured."""
@@ -1818,6 +1872,7 @@ class TestContextEmbedding:
             _ok_response("AddEntity"),
             _ok_response("AddEntity"),
             _ok_conn_response(),
+            _ok_commit_response(),
             _find_descriptor_set_response(count=1),
             _ok_atomic_write_response("AddBlob"),
         ]
@@ -1830,7 +1885,7 @@ class TestContextEmbedding:
         info.log(text="hello", embedding=vec, embedding_model="other-model")
         mid = memory.process_and_commit(ctx, info)
         assert isinstance(mid, str)
-        assert mock_connector.query.call_count == 5  # no extra descriptor query
+        assert mock_connector.query.call_count == 6  # no extra descriptor query
 
     def test_context_descriptor_properties_include_purpose(self, mock_connector):
         """Descriptor written for the context carries purpose and ctx metadata."""
