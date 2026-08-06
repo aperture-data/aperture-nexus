@@ -311,6 +311,12 @@ reference on these primitives.
 | Pre-computed embedding | `Descriptor` directly | Model recorded as property |
 | MemoryTask | `Entity` (`NexusMemoryTask`) | Async status tracking |
 
+The graph below shows the schema as it appears in ApertureDB after a
+commit — blue nodes are aperture-nexus entities, slate nodes are
+ApertureDB native storage primitives:
+
+![aperture-nexus ApertureDB schema graph](../demo/nexus_schema.png)
+
 ### DescriptorSets
 
 ApertureDB requires a **DescriptorSet** before any vectors can be
