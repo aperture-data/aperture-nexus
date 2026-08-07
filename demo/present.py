@@ -470,12 +470,25 @@ def generate_schema_png():
                 dot.node(cls, label=display, shape="box", style="filled,rounded",
                          fillcolor="#475569", fontcolor="white", color="#475569")
 
+        import re as _re
+        seen_edges = set()
         for src, dst, label, is_system_color in edges:
+            clean = _re.sub(r"\s*\(\d+\)$", "", label)
+            key = (src, dst, clean)
+            if key in seen_edges:
+                continue
+            seen_edges.add(key)
             color = "#94a3b8" if is_system_color else "#2563eb"
-            dot.edge(src, dst, label=label, color=color, fontcolor="#334155")
+            dot.edge(src, dst, label=clean, color=color, fontcolor="#334155")
 
         dot.render(SCHEMA_PNG, format="png", cleanup=True)
         png = SCHEMA_PNG + ".png"
+
+        # Also write to demo/ so the committed copy stays current
+        demo_png = os.path.join(repo_root, "demo", "nexus_schema.png")
+        import shutil as _shutil
+        _shutil.copy2(png, demo_png)
+
         subprocess.Popen(["xdg-open", png],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"  {GREEN}✓{RESET}  Schema diagram → {DIM}{png}{RESET}")
