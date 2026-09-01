@@ -276,6 +276,17 @@ Full documentation is in the [`docs/`](docs/) folder:
 | [Concepts](docs/concepts.md) | The KMC model, ApertureDB storage mapping, architecture diagrams |
 | [API Reference](docs/api-reference.md) | `Memory`, `Context`, `Information`, `MemoryTask`, exceptions |
 | [Configuration](docs/configuration.md) | Every field in `aperture_nexus.json` with defaults and env var overrides |
+| [Customer Support Agent](docs/customer-support-agent.md) | Multi-agent multimodal pipeline with CLIP semantic search — worked example |
+
+### Knowledge graph at a glance
+
+Every `commit()` creates a `NexusCommit` entity connected to its `NexusContext`,
+`NexusUser`, and content (blobs, images, videos). The full graph:
+
+![aperture-nexus schema graph](demo/nexus_schema.png)
+
+See [Concepts → ApertureDB Storage Mapping](docs/concepts.md#aperturedb-storage-mapping)
+for the per-connection breakdown.
 
 ---
 

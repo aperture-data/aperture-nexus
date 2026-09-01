@@ -1134,6 +1134,23 @@ class Memory:
             response, _ = self._db.query(cmd)
             _check_response(response, f"remove_context_entity({context_id!r})")
 
+        # Cascade delete NexusCommit, NexusContext, and NexusSession when
+        # removing by session_id alone — mirrors the context_id cascade
+        if session_id and not any(x is not None for x in (commit_id, context_id, before, since)):
+            for cls in (_CLASS_COMMIT, _CLASS_CONTEXT):
+                cmd = [{"DeleteEntity": {
+                    "with_class": cls,
+                    "constraints": {"session_id": ["==", session_id]},
+                }}]
+                response, _ = self._db.query(cmd)
+                _check_response(response, f"remove_{cls}_for_session({session_id!r})")
+            cmd = [{"DeleteEntity": {
+                "with_class": _CLASS_SESSION,
+                "constraints": {"session_id": ["==", session_id]},
+            }}]
+            response, _ = self._db.query(cmd)
+            _check_response(response, f"remove_session_entity({session_id!r})")
+
         logger.debug("remove() completed with constraints=%r", constraints)
 
     def _list_nexus_descriptor_sets(self) -> list[str]:
@@ -1430,14 +1447,19 @@ class Memory:
     # ------------------------------------------------------------------
 
     def _resolve_session_id(self, ctx: Context) -> str:
-        """Return the session_id to use, deriving from session_name if needed."""
+        """Return the session_id to use, deriving from session_name if needed.
+
+        Populates ctx.session_id in place when derived, so callers can use
+        ctx.session_id afterwards for cleanup, search, etc."""
         if ctx.session_id:
             return ctx.session_id
         # Derive a deterministic ID from session_name + user_id so the same
         # named session always maps to the same ID for this principal.
         import hashlib
         raw = f"{ctx.principal.user_id}:{ctx.session_name}"
-        return hashlib.sha256(raw.encode()).hexdigest()[:32]
+        derived = hashlib.sha256(raw.encode()).hexdigest()[:32]
+        ctx.session_id = derived
+        return derived
 
     def _ensure_session(self, ctx: Context, session_id: str) -> None:
         """Create a NexusSession entity if one doesn't exist yet."""

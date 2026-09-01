@@ -259,20 +259,24 @@ the `Context` that logged it.
 
 ```mermaid
 graph LR
-    Alice["Alice\n(Principal)"]
-    AI["AI Agent\n(Principal)"]
-    Human["Support Rep\n(Principal)"]
-    S["Session\nsid=abc-123"]
-    M1["Memory: order inquiry"]
-    M2["Memory: first response"]
-    M3["Memory: escalation note"]
+    Alice["Alice\n(NexusUser)"]
+    AI["AI Agent\n(NexusUser)"]
+    Human["Support Rep\n(NexusUser)"]
+    S["NexusSession\nsid=abc-123"]
+    CtxA["NexusContext\nctx_alice"]
+    CtxAI["NexusContext\nctx_ai"]
+    CtxH["NexusContext\nctx_human"]
+    Commit["NexusCommit(s)\n+ Blob / Image / Video entries"]
 
-    Alice  -->|"ctx_alice"| S
-    AI     -->|"ctx_ai"| S
-    Human  -->|"ctx_human"| S
-    S --> M1
-    S --> M2
-    S --> M3
+    Alice --> CtxA
+    AI    --> CtxAI
+    Human --> CtxH
+    S --> CtxA
+    S --> CtxAI
+    S --> CtxH
+    CtxA  --> Commit
+    CtxAI --> Commit
+    CtxH  --> Commit
 ```
 
 Searching with `filters={"session_id": sid}` returns memories from

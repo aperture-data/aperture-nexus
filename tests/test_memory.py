@@ -852,6 +852,15 @@ class TestRemove:
             _ok_response("DeleteEntity"),  # NexusContext entity
         ]
 
+    def _session_delete_responses(self, dset_names: list[str]):
+        """Content deletes + DeleteEntity(NexusCommit) + DeleteEntity(NexusContext)
+        + DeleteEntity(NexusSession) for the session_id= alone cascade."""
+        return self._content_delete_responses(dset_names) + [
+            _ok_response("DeleteEntity"),  # NexusCommit entities for this session
+            _ok_response("DeleteEntity"),  # NexusContext entities for this session
+            _ok_response("DeleteEntity"),  # NexusSession entity
+        ]
+
     # -- commit_id= --
 
     def test_remove_by_commit_id(self, mock_connector):
@@ -887,10 +896,19 @@ class TestRemove:
 
     # -- session_id= --
 
-    def test_remove_by_session_id(self, mock_connector):
-        mock_connector.query.side_effect = self._content_delete_responses([])
+    def test_remove_by_session_id_alone_cascades_entities(self, mock_connector):
+        """session_id alone: content + DeleteEntity(Commit, Context, Session)."""
+        mock_connector.query.side_effect = self._session_delete_responses([])
         memory = _make_memory(mock_connector)
         memory.remove(session_id="sid-abc")
+        # 3 content deletes + FindDescriptorSet + 3 DeleteEntity = 7 calls
+        assert mock_connector.query.call_count == 7
+
+    def test_remove_by_session_id_combined_skips_entity_delete(self, mock_connector):
+        """session_id + context_id combined: content only, no cascade."""
+        mock_connector.query.side_effect = self._content_delete_responses([])
+        memory = _make_memory(mock_connector)
+        memory.remove(session_id="sid-1", context_id="ctx-1")
         assert mock_connector.query.call_count == 4
 
     # -- before= / since= --

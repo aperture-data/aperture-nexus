@@ -480,8 +480,8 @@ Remove committed content from ApertureDB. At least one filter is required. Filte
 | Filter | Removes |
 |--------|---------|
 | `commit_id=` | All content written in one `commit()` call, plus the `NexusCommit` entity for that commit |
-| `context_id=` | All content from a context; also removes the `NexusCommit` entities and the `NexusContext` entity when used alone |
-| `session_id=` | All content from a session |
+| `context_id=` | All content from a context; also cascades to `NexusCommit` and `NexusContext` entities when used alone |
+| `session_id=` | All content from a session; also cascades to `NexusCommit`, `NexusContext`, and `NexusSession` entities when used alone |
 | `before=` | Entries whose `created_at` is strictly before this UTC-aware datetime (keep recent, discard old) |
 | `since=` | Entries whose `created_at` is at or after this datetime (rollback pattern) |
 | `results=` | Specific entries returned by a prior `memory.search()` call (entry-level granularity) |

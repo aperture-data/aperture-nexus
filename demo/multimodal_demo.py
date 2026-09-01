@@ -10,7 +10,15 @@ Then: text-query → image results via CLIP semantic search.
 Prerequisites:
     pip install "aperture-nexus[clip]"
     docker compose up -d
-    adb-nexus init   (or set APERTUREDB_JSON + NEXUS_API_KEY)
+
+Connection is resolved by the ApertureDB SDK's create_connector(), which
+reads (in priority order) APERTUREDB_KEY, APERTUREDB_JSON, APERTUREDB_CONFIG,
+or the active `adb config`. If nothing is set, this script falls back to
+the local Docker stack defaults so it runs out of the box.
+
+For a deeper dive on connection options and the JSON API, see
+the aperturedb-connector skill (aperturedb-connector-skill.md) or run
+`adb-nexus init` to bootstrap a persistent config + .env.
 
 Run:
     python demo/multimodal_demo.py
@@ -21,13 +29,27 @@ import os
 import sys
 
 # ── Connection ────────────────────────────────────────────────────────────────
+#
+# create_connector() from aperturedb.CommonLibrary already handles the full
+# priority chain (APERTUREDB_KEY → APERTUREDB_JSON → APERTUREDB_CONFIG → adb
+# config). We only fill in a local-Docker default when nothing at all is set,
+# so the demo runs zero-config against `docker compose up -d`.
 
-# Works against the local Docker stack out of the box.
-if not os.environ.get("APERTUREDB_KEY") and not os.environ.get("APERTUREDB_JSON"):
+def _ensure_connection() -> None:
+    if any(os.environ.get(v) for v in ("APERTUREDB_KEY", "APERTUREDB_JSON", "APERTUREDB_CONFIG")):
+        return
+    from aperturedb.CommonLibrary import create_connector
+    try:
+        create_connector()  # succeeds if an active `adb config` exists
+        return
+    except Exception:
+        pass
     os.environ["APERTUREDB_JSON"] = (
         '{"host":"localhost","port":55556,'
         '"username":"admin","password":"admin","use_ssl":false}'
     )
+
+_ensure_connection()
 
 from aperture_nexus import Memory, Context, Information, NexusAdmin
 from aperture_nexus.exceptions import NexusStorageError, NexusValidationError
@@ -48,18 +70,38 @@ def dim(msg):  print(f"  {DIM}{msg}{RESET}")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_FONT_CANDIDATES = (
+    # Linux (Debian/Ubuntu)
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    # Linux (Fedora/RHEL)
+    "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+    # macOS
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    # Windows
+    "C:\\Windows\\Fonts\\arialbd.ttf",
+)
+
+
+def _load_font(size: int):
+    from PIL import ImageFont
+    for path in _FONT_CANDIDATES:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    # Last resort — 8pt bitmap font. The demo will still work, just look tiny.
+    return ImageFont.load_default()
+
+
 def _make_product_image(label: str, color: tuple) -> bytes:
-    """Generate a labelled product photo — no disk I/O."""
-    from PIL import Image as PILImage, ImageDraw, ImageFont
+    """Generate a labelled product photo — no disk I/O. Works on Linux, macOS, Windows."""
+    from PIL import Image as PILImage, ImageDraw
     img = PILImage.new("RGB", (320, 240), color=color)
     draw = ImageDraw.Draw(img)
     draw.rectangle([10, 10, 309, 229], outline=(255, 255, 255), width=3)
-    # Draw label in the centre — use default font if truetype unavailable
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
-    except Exception:
-        font = ImageFont.load_default()
-    draw.text((160, 120), label, fill=(255, 255, 255), font=font, anchor="mm")
+    draw.text((160, 120), label, fill=(255, 255, 255), font=_load_font(24), anchor="mm")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -184,9 +226,12 @@ def run():
 
 
 def _cleanup(admin, memory, *contexts):
-    for ctx in contexts:
+    # Session-scoped removal cascades: content + NexusCommit + NexusContext + NexusSession.
+    # Deduplicate in case multiple contexts share a session.
+    session_ids = {ctx.session_id for ctx in contexts if ctx.session_id}
+    for sid in session_ids:
         try:
-            memory.remove(context_id=ctx.id)
+            memory.remove(session_id=sid)
         except Exception:
             pass
     try:
