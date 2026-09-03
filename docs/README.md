@@ -21,7 +21,7 @@ vector search and knowledge graph.
 
 The KMC model reflects how enterprises actually work with knowledge.
 **Knowledge** is the stable baseline in ApertureDB — catalogs,
-policies, historical facts, loaded once. **Memory** is the new
+policies, historical facts. **Memory** is the new
 information Nexus commits to ApertureDB — stored traces with graph
 connections, accumulating over time; think human memory, the traces
 themselves, not the act. **Context** — who, what, when, why, and how
@@ -33,7 +33,7 @@ flowchart LR
     I["Information\nlocal Nexus buffer\ntext · image · video · blob"]
     C["Context (C)\nwho · what · when · why · how"]
     Eng["Memory engine\ncommit · search · connect"]
-    K["Knowledge (K)\nApertureDB baseline\nloaded once"]
+    K["Knowledge (K)\nApertureDB\nloaded baseline"]
     M["Memory (M)\naccumulated in ApertureDB\nwith connections"]
 
     C -->|"stamps every commit"| Eng
@@ -45,7 +45,7 @@ flowchart LR
 
 | KMC | Concept | In code / storage |
 |-----|---------|-------------------|
-| **K** | Stable baseline in ApertureDB — loaded once, shared across the organization | ApertureDB corpus; read via `Memory` |
+| **K** | Loaded baseline in ApertureDB, shared across the organization | ApertureDB corpus; read via `Memory` |
 | **M** | New information committed to ApertureDB — stored traces with graph connections, accumulating over time | `Memory` engine class writes; `Information` is the staging buffer |
 | **C** | Who, what, when, why, and how — the retrieval frame | `Context` |
 

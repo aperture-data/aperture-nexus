@@ -11,9 +11,10 @@ around the **KMC model** — three concepts that reflect how enterprises
 actually work with knowledge.
 
 - **Knowledge** — the stable, institutional baseline in ApertureDB:
-  catalogs, policies, historical records, past decisions. Loaded once
-  and shared as first-class graph data. Static in that it is not
-  built up by ongoing agent activity.
+  catalogs, policies, historical records, past decisions. A loaded
+  baseline, shared as first-class graph data, distinct from Memory
+  in that it is not built up by ongoing agent activity (though it
+  can be refreshed or extended from other sources over time).
 - **Memory** — new information committed to ApertureDB via Nexus.
   Each memory is a stored trace with its own graph connections,
   accumulating over time and searchable alongside Knowledge. Think
@@ -140,7 +141,7 @@ flowchart TD
     C["Context (C)\nwho · what · when · why · how"]
     I["Information\nlocal Nexus buffer — text · image · video · blob"]
     Eng["Memory engine\n(commits and searches)"]
-    K["Knowledge (K)\nApertureDB baseline\nloaded once"]
+    K["Knowledge (K)\nApertureDB\nloaded baseline"]
     M["Memory (M)\nstored memories in ApertureDB\naccumulated, with connections"]
 
     P -->|"acts within"| S
