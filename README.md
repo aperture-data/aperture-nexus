@@ -146,9 +146,13 @@ raw storage, or supply pre-computed embeddings, you can skip this section.
 
 ### CLIP: One Model for Text, Images, and Video
 
-CLIP works across all modalities in a shared embedding space: a text query
-can find images, and an image query can find text. It is the simplest
-configuration and the recommended starting point.
+CLIP is trained on text-image pairs and puts both in a shared embedding
+space, so a text query can find images and an image query can find
+text. It is the simplest configuration and the recommended starting
+point. Video is not native to CLIP; Nexus makes it work by sampling
+frames (requires `opencv-python`), embedding each with the CLIP image
+encoder, and mean-pooling per clip. Retrieval quality on video is a
+function of the image encoder alone.
 
 Install:
 
