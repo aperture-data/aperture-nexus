@@ -1,22 +1,32 @@
 """
-present.py — aperture-nexus presentation demo.
+customer_support_demo.py — aperture-nexus customer support walkthrough.
 
 Knowledge → Memory → Context → Cognition
 
-Four sections with manual Continue prompts between them.
-A silent seed phase pre-loads org knowledge before the demo begins.
-Increase your terminal font to 18–20pt before running.
+Four sections with manual Continue prompts between them. A silent seed
+phase pre-loads org knowledge (3 prior tickets, 9 defect photos) before
+the demo begins. Increase your terminal font to 18–20pt before running.
 
-    python3 demo/present.py               # interactive (default)
-    python3 demo/present.py --no-pause    # auto-advance for recording
+    python3 demo/customer_support_demo.py              # interactive
+    python3 demo/customer_support_demo.py --no-pause   # auto for recording
 
-Recording a backup with asciinema:
-    COLUMNS=100 LINES=42 asciinema rec demo/present.cast \\
-        -c "python3 demo/present.py --no-pause" --overwrite
-    agg --speed 1.0 --font-size 14 demo/present.cast demo/present.gif
+Recording a 2x-speed GIF for social / docs:
+    COLUMNS=100 LINES=42 asciinema rec \\
+        demo/customer_support_demo.cast \\
+        -c "python3 demo/customer_support_demo.py --no-pause" --overwrite
+    agg --speed 2.0 --font-size 14 \\
+        demo/customer_support_demo.cast demo/customer_support_demo.gif
 
-ApertureDB must be running (docker compose up -d).
-Requires: pip install "aperture-nexus[clip]"
+Connection is resolved by the ApertureDB SDK (create_connector), which
+reads APERTUREDB_KEY → APERTUREDB_JSON → APERTUREDB_CONFIG → active
+`adb config`. If none are set, the demo falls back to the local Docker
+stack defaults so it runs zero-config. See the aperturedb-connector
+skill (aperturedb-connector-skill.md) for setup options, or run
+`adb-nexus init` to bootstrap a persistent config + .env.
+
+Prerequisites:
+    pip install "aperture-nexus[clip]"
+    docker compose up -d
 """
 
 import io
@@ -26,18 +36,34 @@ import sys
 import time
 import subprocess
 import warnings
-import uuid
 
 warnings.filterwarnings("ignore")
 logging.disable(logging.WARNING)
 
-# ── Connection defaults (local Docker stack) ──────────────────────────────────
+# ── Connection ────────────────────────────────────────────────────────────────
+#
+# Defer to the SDK's create_connector for the standard priority chain
+# (KEY → JSON → CONFIG → adb config). Only fill in a local-Docker default
+# when nothing at all resolves, so the demo runs out of the box.
 
-if not os.environ.get("APERTUREDB_KEY") and not os.environ.get("APERTUREDB_JSON"):
+def _ensure_connection() -> None:
+    if any(
+        os.environ.get(v)
+        for v in ("APERTUREDB_KEY", "APERTUREDB_JSON", "APERTUREDB_CONFIG")
+    ):
+        return
+    from aperturedb.CommonLibrary import create_connector
+    try:
+        create_connector()
+        return
+    except Exception:
+        pass
     os.environ["APERTUREDB_JSON"] = (
         '{"host":"localhost","port":55556,'
         '"username":"admin","password":"admin","use_ssl":false}'
     )
+
+_ensure_connection()
 
 # ── Terminal styling ──────────────────────────────────────────────────────────
 
@@ -144,8 +170,33 @@ def ensure_stack():
 # Each pattern draws a visually distinct damage type so CLIP can separate them.
 # Text labels in the image reinforce the CLIP match on targeted queries.
 
+_FONT_CANDIDATES = (
+    # Linux (Debian/Ubuntu)
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    # Linux (Fedora/RHEL)
+    "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+    # macOS
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    # Windows
+    "C:\\Windows\\Fonts\\arialbd.ttf",
+)
+
+
+def _load_font(size: int):
+    from PIL import ImageFont
+    for path in _FONT_CANDIDATES:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    # Last resort — 8pt bitmap. The demo will still work, just look tiny.
+    return ImageFont.load_default()
+
+
 def _make_damage_image(label, base, pattern, size=(420, 320)):
-    from PIL import Image as PILImage, ImageDraw, ImageFont
+    from PIL import Image as PILImage, ImageDraw
     img  = PILImage.new("RGB", size, color=base)
     draw = ImageDraw.Draw(img)
     W, H = size
@@ -194,13 +245,13 @@ def _make_damage_image(label, base, pattern, size=(420, 320)):
         draw.line(pts, fill=(238, 242, 255), width=1)
         draw.rectangle([10, 10, W-11, H-11], outline=(168, 174, 204), width=3)
 
-    try:
-        font = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 26,
-        )
-    except Exception:
-        font = ImageFont.load_default()
-    draw.text((W // 2, H - 22), label, fill=(255, 255, 255), font=font, anchor="mm")
+    draw.text(
+        (W // 2, H - 22),
+        label,
+        fill=(255, 255, 255),
+        font=_load_font(26),
+        anchor="mm",
+    )
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -218,7 +269,9 @@ SEED_AGENTS = [
     ("carol-support", "Carol Wu"),
 ]
 
-DEMO_USER = f"presenter-{uuid.uuid4().hex[:6]}"
+# Deterministic name so cleanup can find and remove it across runs without
+# having to enumerate NexusUser entities. Idempotent-create handles reruns.
+DEMO_USER = "demo-presenter"
 
 _all_principals = []   # user_id strings — for cleanup
 _all_contexts   = []   # context objects — for cleanup
@@ -240,57 +293,52 @@ def _create_principal(admin, user_id, user_name):
 
 
 def startup_wipe(admin, memory):
-    """Remove all acme-corp data left by any previous run before seeding fresh."""
+    """Remove data left by any previous run before seeding fresh.
+
+    Uses only public API — memory.search + memory.remove(session_id=)
+    cascade through content, NexusCommit, NexusContext, NexusSession —
+    plus admin.delete_principal for the known demo principals.
+    """
     print(f"  {DIM}  Wiping previous run data…{RESET}", end=" ", flush=True)
 
-    # Collect context_ids from any surviving entries in the org
-    wiped = 0
+    wiped_sessions = 0
     try:
         results = memory.search(filters={"organization": ORG}, k=500)
-        for ctx_id in {r.context_id for r in results}:
+        for sid in {r.session_id for r in results if r.session_id}:
             try:
-                memory.remove(context_id=ctx_id)
-                wiped += 1
+                memory.remove(session_id=sid)
+                wiped_sessions += 1
             except Exception:
                 pass
     except Exception:
         pass
 
-    # Delete known seed principals (idempotent — silently skips if absent)
+    # Delete known demo principals (idempotent — silently skips if absent).
     for uid, _ in SEED_AGENTS:
         try:
             admin.delete_principal(user_id=uid)
         except Exception:
             pass
-
-    # Find and delete any stale presenter-* principals via direct DB query
     try:
-        from aperturedb.CommonLibrary import create_connector
-        client = create_connector()
-        resp, _ = client.query([{
-            "FindEntity": {
-                "with_class": "NexusUser",
-                "results": {"list": ["user_id"]},
-            }
-        }])
-        for p in resp[0].get("FindEntity", {}).get("entities", []):
-            uid = p.get("user_id", "")
-            if uid.startswith("presenter-"):
-                try:
-                    admin.delete_principal(user_id=uid)
-                except Exception:
-                    pass
+        admin.delete_principal(user_id=DEMO_USER)
     except Exception:
         pass
 
-    suffix = f"({wiped} contexts removed)" if wiped else "(nothing to remove)"
+    suffix = (
+        f"({wiped_sessions} sessions removed)"
+        if wiped_sessions
+        else "(nothing to remove)"
+    )
     print(f"{GREEN}done{RESET}  {DIM}{suffix}{RESET}")
 
 
 def cleanup(admin, memory):
-    for ctx in _all_contexts:
+    # Session-scoped removal cascades through commits, contexts, and the
+    # session entity itself. Deduplicate in case contexts share a session.
+    session_ids = {ctx.session_id for ctx in _all_contexts if ctx.session_id}
+    for sid in session_ids:
         try:
-            memory.remove(context_id=ctx.id)
+            memory.remove(session_id=sid)
         except Exception:
             pass
     for uid in _all_principals:

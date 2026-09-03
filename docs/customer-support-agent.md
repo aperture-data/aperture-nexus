@@ -10,7 +10,7 @@ This example walks through a realistic enterprise support pipeline: multiple age
 share a session, commit text and product photos to memory, and retrieve context
 across tickets using both metadata filters and CLIP semantic image search.
 
-![aperture-nexus customer support demo](../demo/present.gif)
+![aperture-nexus customer support demo](../demo/customer_support_demo.gif)
 
 ---
 
@@ -257,11 +257,11 @@ admin.delete_principal(user_id="ai-triage")
 
 The full script — with seeded org knowledge across three agents, damage photo
 generation, and the live CLIP demo — is in
-[`demo/present.py`](https://github.com/aperturedata/aperture-nexus/blob/main/demo/present.py).
+[`demo/customer_support_demo.py`](https://github.com/aperturedata/aperture-nexus/blob/main/demo/customer_support_demo.py).
 
 Run it against a local Docker stack:
 
 ```bash
 docker compose up -d
-python demo/present.py
+python demo/customer_support_demo.py
 ```
