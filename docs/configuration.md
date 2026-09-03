@@ -12,7 +12,7 @@ Generate your config file with:
 adb-nexus init
 ```
 
-This creates `aperture_nexus.json` in your current directory. The config file is optional — aperture-nexus works with built-in defaults if no file is found, but you must supply model names to use `process_and_commit()`.
+This creates `aperture_nexus.json` in your current directory. The config file is optional; aperture-nexus works with built-in defaults if no file is found, but you must supply model names to use `process_and_commit()`.
 
 ---
 
@@ -23,8 +23,8 @@ aperture-nexus looks for your config file in this order (first found wins):
 1. Explicit path: `Memory(config="path/to/config.json")`
 2. `APERTURE_NEXUS_CONFIG` environment variable
 3. `./aperture_nexus.json` (current working directory)
-4. `~/.aperture_nexus/config.json` (user home — works on local, VM, and container)
-5. Built-in defaults (no models — `process_and_commit()` raises `NexusConfigError`)
+4. `~/.aperture_nexus/config.json` (user home; works on local, VM, and container)
+5. Built-in defaults (no models; `process_and_commit()` raises `NexusConfigError`)
 
 No root access is required for any of these paths.
 
@@ -136,7 +136,7 @@ Videos are split into clip segments. Each segment gets one embedding (mean of CL
 
 ## `logging`
 
-Controls aperture-nexus internal logging only — does not affect your application's logging.
+Controls aperture-nexus internal logging only; does not affect your application's logging.
 
 | Field | Default | Options |
 |-------|---------|---------|
@@ -180,7 +180,7 @@ If `enabled` is `true` but the package is not installed, `NexusConfigError` is r
 
 Web UI and REST API for browsing sessions, searching memory, and monitoring tasks. Requires `pip install aperture-nexus[ui]`.
 
-**Security rule:** When `host` is not `127.0.0.1`, `api_key` MUST be set. aperture-nexus raises `NexusConfigError` at startup if this is violated. Set the key via environment variable — never put it in `aperture_nexus.json`:
+**Security rule:** When `host` is not `127.0.0.1`, `api_key` MUST be set. aperture-nexus raises `NexusConfigError` at startup if this is violated. Set the key via environment variable; never put it in `aperture_nexus.json`:
 
 ```bash
 export APERTURE_NEXUS_UI_API_KEY="your-secret-key"
@@ -192,7 +192,7 @@ adb-nexus ui --host 0.0.0.0 --port 8080
 | `enabled` | `false` | Enable the web UI and REST API. |
 | `host` | `"127.0.0.1"` | Bind address. `127.0.0.1` = local only. `0.0.0.0` = all interfaces (requires `api_key`). |
 | `port` | `8000` | Port to serve on. Must be > 1024. |
-| `api_key` | `null` | Required for non-local deployments. Use `APERTURE_NEXUS_UI_API_KEY` — never hardcode. |
+| `api_key` | `null` | Required for non-local deployments. Use `APERTURE_NEXUS_UI_API_KEY`; never hardcode. |
 
 ---
 
@@ -205,7 +205,7 @@ Environment variables always take precedence over the config file.
 | `APERTURE_NEXUS_CONFIG` | Config file path |
 | `APERTURE_NEXUS_LOG_LEVEL` | `logging.level` |
 | `APERTURE_NEXUS_UI_API_KEY` | `ui.api_key` |
-| `APERTUREDB_KEY` | ApertureDB connection (encoded key — takes priority over all other DB vars) |
+| `APERTUREDB_KEY` | ApertureDB connection (encoded key; takes priority over all other DB vars) |
 | `APERTUREDB_HOST` | ApertureDB host |
 | `APERTUREDB_PORT` | ApertureDB port |
 | `APERTUREDB_USER` | ApertureDB username |

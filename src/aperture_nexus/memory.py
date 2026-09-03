@@ -12,11 +12,16 @@ participants, and time horizons via filters and vector search.
 ApertureDB entity classes used here:
     NexusSession — one per unique session_id
     NexusContext — one per Context passed to commit()
+    NexusCommit  — one per commit() call; groups all entries written together
 
 ApertureDB connection classes used here:
-    nexus_session_context — Session → Context
-    nexus_entry           — Context → Blob / Image / Video
-    nexus_link            — Context → Context (user-defined relationship)
+    nexus_session_context — NexusSession → NexusContext
+    nexus_user_context    — NexusUser → NexusContext
+    nexus_context_commit  — NexusContext → NexusCommit
+    nexus_commit_entry    — NexusCommit → Blob / Image / Video
+    nexus_context_entry   — NexusContext → Blob / Image / Video (direct, for fast traversal)
+    nexus_descriptor_entry — Descriptor → Blob / Image / Video
+    nexus_link            — NexusContext → NexusContext (user-defined relationship)
 
 Multimodal content storage:
     Text  → AddBlob   (document_type="text", context_id/session_id stamped)
@@ -67,12 +72,27 @@ logger = logging.getLogger(__name__)
 # ApertureDB entity class names
 _CLASS_SESSION = "NexusSession"
 _CLASS_CONTEXT = "NexusContext"
+_CLASS_COMMIT  = "NexusCommit"
 
-# ApertureDB connection class names (snake_case, nexus-prefixed)
-_CONN_SESSION_CONTEXT = "nexus_session_context"  # Session → Context
-_CONN_ENTRY = "nexus_entry"                       # Context → Blob/Image/Video
-_CONN_LINK = "nexus_link"                         # Context → Context
-_CONN_DESCRIPTOR = "nexus_descriptor"             # Descriptor → Blob/Image/Video
+# ApertureDB connection class names (snake_case, nexus-prefixed, follow
+# the pattern nexus_<src>_<dst> so the name states the direction).
+_CONN_SESSION_CONTEXT   = "nexus_session_context"    # NexusSession → NexusContext
+_CONN_USER_CONTEXT      = "nexus_user_context"       # NexusUser → NexusContext
+_CONN_CONTEXT_COMMIT    = "nexus_context_commit"     # NexusContext → NexusCommit
+_CONN_COMMIT_ENTRY      = "nexus_commit_entry"       # NexusCommit → Blob/Image/Video
+_CONN_CONTEXT_ENTRY     = "nexus_context_entry"      # NexusContext → Blob/Image/Video
+_CONN_LINK              = "nexus_link"               # NexusContext → NexusContext
+_CONN_DESCRIPTOR_ENTRY  = "nexus_descriptor_entry"   # Descriptor → Blob/Image/Video
+
+# _ref layout used inside a single _write_entry transaction. Every
+# transaction begins with two FindEntity commands (the "graph prefix")
+# anchoring the parent commit and context, then adds the new content
+# entity and its descriptor. Naming these keeps the numeric _refs from
+# colliding if a future edit adds another command to the transaction.
+_REF_COMMIT     = 1   # FindEntity(NexusCommit) from _graph_prefix
+_REF_CONTEXT    = 2   # FindEntity(NexusContext) from _graph_prefix
+_REF_CONTENT    = 3   # AddBlob / AddImage / AddVideo
+_REF_DESCRIPTOR = 4   # AddDescriptor (when the entry has an embedding)
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +158,46 @@ class SearchResult:
     start_frame: Optional[int] = None
     stop_frame: Optional[int] = None
 
+    # Raw content bytes for image / video / blob results. Populated
+    # when search() runs with return_content=True (the default) by
+    # traversing nexus_descriptor_entry from the matched Descriptor to
+    # its source content in the same query. For text results, use the
+    # text field (content stays None because text is already inline).
+    content: Optional[bytes] = None
+
     metadata: dict = field(default_factory=dict)
+
+    # Internal — set by search(), consumed by memory.remove(results=...)
+    _entry_id: Optional[str] = field(default=None, repr=False, compare=False)
+
+
+@dataclass
+class ContextResult:
+    """One result from Memory.search_contexts().
+
+    Returned by ``search_contexts()`` which searches context graph
+    nodes by semantic similarity of their ``purpose`` field.
+
+    Attributes:
+        score: Similarity score (higher = more similar).
+        context_id: The context ID.
+        session_id: Session the context belongs to.
+        user_id: Principal who created this context.
+        purpose: The stated purpose of this context.
+        created_at: When the context was committed.
+        organization: Organization of the principal, if set.
+        department: Department of the principal, if set.
+    """
+
+    score: float
+    context_id: str
+    session_id: str
+    user_id: Optional[str]
+    purpose: Optional[str]
+    created_at: datetime
+
+    organization: Optional[str] = None
+    department: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +283,26 @@ def _to_image_bytes(image: Any) -> bytes:
         pil.save(buf, format="PNG")
         return buf.getvalue()
     raise NexusValidationError(
-        f"Cannot convert image type {type(image).__name__!r} to bytes."
+        f"Cannot convert image type {type(image).__name__!r} to bytes. "
+        "Pass a file path, URL, bytes, PIL Image, or numpy array."
+    )
+
+
+def _to_blob_bytes(blob: Any) -> bytes:
+    """Convert any supported blob type to bytes."""
+    if isinstance(blob, bytes):
+        return blob
+    if isinstance(blob, str):
+        if blob.startswith("http://") or blob.startswith("https://"):
+            import requests
+            resp = requests.get(blob, timeout=60)
+            resp.raise_for_status()
+            return resp.content
+        with open(blob, "rb") as f:
+            return f.read()
+    raise NexusValidationError(
+        f"Cannot convert blob type {type(blob).__name__!r} to bytes. "
+        "Pass a file path, URL, or bytes."
     )
 
 
@@ -241,7 +319,8 @@ def _to_video_bytes(video: Any) -> bytes:
         with open(video, "rb") as f:
             return f.read()
     raise NexusValidationError(
-        f"Cannot convert video type {type(video).__name__!r} to bytes."
+        f"Cannot convert video type {type(video).__name__!r} to bytes. "
+        "Pass a file path, URL, or bytes."
     )
 
 
@@ -338,6 +417,8 @@ class Memory:
             (_CLASS_CONTEXT, "nexus_ctx_id"),
             (_CLASS_CONTEXT, "session_id"),
             (_CLASS_CONTEXT, "user_id"),
+            (_CLASS_COMMIT,  "commit_id"),
+            (_CLASS_COMMIT,  "context_id"),
         ]
         for cls, prop in indexes:
             cmd = [{"CreateIndex": {
@@ -463,7 +544,7 @@ class Memory:
             info: Buffered multimodal information to commit.
 
         Returns:
-            The ``context_id`` of the committed context.
+            A ``commit_id`` string identifying this specific commit. Pass it to ``memory.remove(commit_id=...)`` to remove everything written in this call.
 
         Raises:
             NexusValidationError: If ``info`` has no entries.
@@ -471,7 +552,7 @@ class Memory:
             NexusConnectionError: If ApertureDB is unreachable.
 
         Example:
-            context_id = memory.commit(ctx, info)
+            commit_id = memory.commit(ctx, info)
             # info is now empty and ready for more log() calls
         """
         if not info._entries:
@@ -481,15 +562,17 @@ class Memory:
             )
 
         self.ensure_schema()
+        commit_id = str(uuid.uuid4())
 
         entries = list(info._entries)          # snapshot before drain
         pending_conns = list(info._pending_connections)
         session_id = self._resolve_session_id(ctx)
 
         try:
-            # Ensure session and context entities exist
+            # Ensure session, context, and commit entities exist
             self._ensure_session(ctx, session_id)
             self._ensure_context(ctx, session_id)
+            self._ensure_commit(ctx, session_id, commit_id)
 
             # Ensure all required DescriptorSets exist before writing.
             # Must happen after embeddings are generated (process_and_commit)
@@ -498,7 +581,7 @@ class Memory:
 
             # Write each content entry
             for entry in entries:
-                self._write_entry(entry, ctx, session_id)
+                self._write_entry(entry, ctx, session_id, commit_id)
 
             # Write any connections buffered via info.connect()
             for pc in pending_conns:
@@ -520,7 +603,7 @@ class Memory:
             "Committed context_id=%r for session_id=%r",
             ctx.id, session_id,
         )
-        return ctx.id
+        return commit_id
 
     # ------------------------------------------------------------------
     # process_and_commit()
@@ -543,7 +626,7 @@ class Memory:
             info: Buffered multimodal information to process and commit.
 
         Returns:
-            The ``context_id`` of the committed context.
+            A ``commit_id`` string. See ``commit()``.
 
         Raises:
             NexusConfigError: If a modality has entries without embeddings
@@ -557,14 +640,17 @@ class Memory:
             # With pre-computed embeddings (no model configured needed)
             info.log(text="hello", embedding=my_vector,
                      embedding_model="text-embedding-3-small")
-            context_id = memory.process_and_commit(ctx, info)
+            commit_id = memory.process_and_commit(ctx, info)
 
             # With model configured in aperture_nexus.json
             info.log(text="hello")
-            context_id = memory.process_and_commit(ctx, info)
+            commit_id = memory.process_and_commit(ctx, info)
         """
         self._generate_missing_embeddings(info._entries)
-        return self.commit(ctx, info)
+        context_id = self.commit(ctx, info)
+        session_id = self._resolve_session_id(ctx)
+        self._write_context_embedding(ctx, session_id)
+        return context_id
 
     # ------------------------------------------------------------------
     # async_process_and_commit()
@@ -589,7 +675,7 @@ class Memory:
             task = await memory.async_process_and_commit(ctx, info)
             await task.wait()
             if task.status == "complete":
-                print(task.context_id)
+                print(task.commit_id)
         """
         task_id = str(uuid.uuid4())
         task = MemoryTask(task_id=task_id)
@@ -608,8 +694,8 @@ class Memory:
         async def _run() -> None:
             task._mark_processing()
             try:
-                self.process_and_commit(ctx, info_copy)
-                task._mark_complete(ctx.id)
+                commit_id = self.process_and_commit(ctx, info_copy)
+                task._mark_complete(commit_id)
             except Exception as exc:
                 task._mark_failed(exc)
 
@@ -639,6 +725,7 @@ class Memory:
         k: int = 10,
         embedding_model: Optional[str] = None,
         min_score: Optional[float] = None,
+        return_content: bool = True,
     ) -> list[SearchResult]:
         """Search stored memories by semantic similarity, metadata, or both.
 
@@ -659,13 +746,22 @@ class Memory:
                 returns results by metadata filter only.
             modality: Required when ``query`` is ``np.ndarray``. One of
                 ``"text"``, ``"image"``, ``"video"``.
-            filters: Metadata constraints. Keys: ``session_id``,
-                ``user_id``, ``organization``, ``department``, ``purpose``.
+            filters: Metadata constraints. Supported keys:
+                ``session_id``, ``session_name``, ``context_id``,
+                ``user_id``, ``organization``, ``department``,
+                ``purpose``. Unknown keys raise
+                ``NexusValidationError``.
             k: Maximum results to return. Default: 10.
             embedding_model: Override the configured embedding model for
                 this query. Must match the model used at index time.
             min_score: Minimum similarity score. Results below this are
                 excluded.
+            return_content: When True (default), each SearchResult from a
+                semantic (KNN) query has ``content`` populated with the
+                raw bytes of the matched image / video / blob via a
+                single-round-trip graph traversal of
+                ``nexus_descriptor_entry``. Set to False to skip the
+                second hop when only metadata + text preview is needed.
 
         Returns:
             List of ``SearchResult``, ordered by descending similarity.
@@ -702,7 +798,7 @@ class Memory:
             )
 
         if query is None:
-            return self._search_by_metadata(filters or {}, k)
+            return self._search_by_metadata(filters or {}, k, modality)
 
         vector, resolved_modality = self._resolve_query_vector(
             query, modality, embedding_model
@@ -710,6 +806,7 @@ class Memory:
         return self._search_by_vector(
             vector, resolved_modality, filters or {}, k, min_score,
             embedding_model=embedding_model,
+            return_content=return_content,
         )
 
     # ------------------------------------------------------------------
@@ -746,7 +843,8 @@ class Memory:
         """
         if not isinstance(relationship, str) or not relationship.strip():
             raise NexusValidationError(
-                "relationship must be a non-empty string."
+                "relationship must be a non-empty string. "
+                "Examples: 'follows', 'caused_by', 'references'."
             )
 
         src_id = source.id if isinstance(source, Context) else source
@@ -792,57 +890,294 @@ class Memory:
         )
 
     # ------------------------------------------------------------------
+    # search_contexts()
+    # ------------------------------------------------------------------
+
+    def search_contexts(
+        self,
+        query: str,
+        filters: Optional[dict] = None,
+        k: int = 10,
+        embedding_model: Optional[str] = None,
+    ) -> list[ContextResult]:
+        """Search committed contexts by semantic similarity of their purpose.
+
+        Searches the ``nexus_context`` DescriptorSet populated by
+        ``process_and_commit()`` when a context has a ``purpose`` set.
+        Only contexts committed via ``process_and_commit()`` with a
+        purpose appear here — ``commit()`` does not embed context nodes.
+
+        Args:
+            query: Text query to match against context purposes.
+            filters: Metadata constraints applied to results. Supported
+                keys: ``session_id``, ``user_id``, ``organization``,
+                ``department``.
+            k: Maximum results to return. Default: 10.
+            embedding_model: Override the configured text embedding
+                model. Must match the model used at index time.
+
+        Returns:
+            List of ``ContextResult``, ordered by descending similarity.
+
+        Raises:
+            NexusConfigError: If no text embedding model is configured
+                and ``embedding_model`` is not provided.
+            NexusProcessingError: If the embedding model call fails.
+            NexusConnectionError: If ApertureDB is unreachable.
+
+        Example:
+            results = memory.search_contexts("customer order inquiry")
+            for r in results:
+                print(r.purpose, r.session_id, r.score)
+        """
+        model = embedding_model or self._cfg.models.text_embedding
+        if not model:
+            raise NexusConfigError(
+                "No text embedding model configured for search_contexts(). "
+                "Set models.text_embedding in aperture_nexus.json "
+                "(e.g. \"ViT-B/16\"), or pass embedding_model= to "
+                "search_contexts(). Install CLIP with: "
+                "pip install aperture-nexus[clip]."
+            )
+
+        from aperture_nexus._embeddings import is_clip_model, get_clip_embedder
+        if not is_clip_model(model):
+            raise NexusConfigError(
+                f"Automatic embedding for search_contexts() via "
+                f"model={model!r} is not yet available. Use a CLIP "
+                f"model (e.g. 'ViT-B/16') or pass a pre-embedded "
+                f"query vector via embedding_model= and query=np.ndarray."
+            )
+
+        embedder = get_clip_embedder(model)
+        try:
+            vector = embedder.embed_text([query])[0]
+        except (NexusConfigError, NexusValidationError):
+            raise
+        except Exception as e:
+            raise NexusProcessingError(
+                f"CLIP text embedding for search_contexts failed: {e}."
+            ) from e
+
+        dset = _dset_name("context", model)
+        constraints = self._build_constraints(filters or {})
+        cmd_body: dict = {
+            "set": dset,
+            "k_neighbors": k,
+            "results": {"all_properties": True},
+            "distances": True,
+        }
+        if constraints:
+            cmd_body["constraints"] = constraints
+
+        cmd = [{"FindDescriptor": cmd_body}]
+        emb_bytes = _embedding_to_bytes(vector)
+
+        try:
+            response, _ = self._db.query(cmd, [emb_bytes])
+        except Exception as e:
+            raise NexusConnectionError(
+                f"ApertureDB search_contexts query failed: {e}."
+            ) from e
+
+        if not isinstance(response, list) or not response:
+            return []
+        body = response[0].get("FindDescriptor", {})
+        if body.get("status", 0) != 0:
+            return []
+
+        results = []
+        for desc in body.get("entities", []):
+            results.append(ContextResult(
+                score=float(desc.get("_distance", 0.0)),
+                context_id=desc.get("context_id", ""),
+                session_id=desc.get("session_id", ""),
+                user_id=desc.get("user_id"),
+                purpose=desc.get("purpose"),
+                organization=desc.get("organization"),
+                department=desc.get("department"),
+                created_at=datetime.fromisoformat(
+                    desc.get("created_at", datetime.utcnow().isoformat())
+                ),
+            ))
+        return results
+
+    # ------------------------------------------------------------------
     # remove()
     # ------------------------------------------------------------------
 
-    def remove(self, context_id: str) -> None:
-        """Remove a committed context and all its associated content.
+    def remove(
+        self,
+        *,
+        commit_id: Optional[str] = None,
+        context_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        before: Optional[datetime] = None,
+        since: Optional[datetime] = None,
+        results: Optional[list] = None,
+    ) -> None:
+        """Remove committed content from ApertureDB.
 
-        Deletes blobs, images, videos, and descriptors carrying this
-        ``context_id``, then removes the ``NexusContext`` entity. The
-        delete is not transactional — if ApertureDB rejects a
-        sub-operation a ``NexusStorageError`` is raised and remaining
-        steps are skipped.
+        Accepts one or more filters that determine what to remove. Filters
+        AND together — e.g. ``before=ts, session_id=sid`` removes only old
+        entries within that session. ``results=`` is exclusive and cannot
+        be combined with other filters.
 
         Args:
-            context_id: The context ID returned by ``commit()``.
+            commit_id: Remove all content written in one ``commit()`` call.
+                Pass the value returned by ``memory.commit()``.
+            context_id: Remove all content committed under this context.
+                Also removes the ``NexusContext`` entity when used alone.
+            session_id: Remove all content committed under this session.
+            before: Remove entries whose ``created_at`` is strictly before
+                this UTC-aware datetime. Keeps recent entries.
+            since: Remove entries whose ``created_at`` is at or after this
+                UTC-aware datetime. Rollback pattern — undo recent commits.
+            results: Remove the specific entries returned by a prior
+                ``memory.search()`` call. Cannot be combined with other
+                filters. Uses entry-level granularity — only the matched
+                entries are removed, not the whole commit or context.
 
         Raises:
-            NexusValidationError: If ``context_id`` is empty.
+            NexusValidationError: If no filter is provided, if ``results``
+                is combined with other filters, if ``before`` and ``since``
+                are both set, or if a timestamp is not timezone-aware.
             NexusStorageError: If ApertureDB rejects any delete.
+            NexusConnectionError: If ApertureDB is unreachable.
 
         Example:
-            memory.remove(ctx.id)
+            # Remove one specific commit
+            commit_id = memory.commit(ctx, info)
+            memory.remove(commit_id=commit_id)
+
+            # Remove everything from a context
+            memory.remove(context_id=ctx.id)
+
+            # Remove everything from a session
+            memory.remove(session_id=ctx.session_id)
+
+            # Remove stale entries (keep last 24 hours)
+            from datetime import datetime, timedelta, timezone
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            memory.remove(before=cutoff, session_id=sid)
+
+            # Search then remove matching entries
+            results = memory.search(query="old pricing model")
+            memory.remove(results=results)
         """
-        if not isinstance(context_id, str) or not context_id.strip():
+        if results is not None:
+            if any(x is not None for x in (commit_id, context_id, session_id, before, since)):
+                raise NexusValidationError(
+                    "results= cannot be combined with other filters. "
+                    "Pass either results= or one or more of: "
+                    "commit_id, context_id, session_id, before, since."
+                )
+            if not results:
+                return
+            self._remove_by_results(results)
+            return
+
+        if not any(x is not None for x in (commit_id, context_id, session_id, before, since)):
             raise NexusValidationError(
-                "context_id must be a non-empty string."
+                "At least one filter is required. Pass commit_id=, "
+                "context_id=, session_id=, before=, since=, or results=."
             )
-        constraints = {"context_id": ["==", context_id]}
-        for cmd_name in ("DeleteBlob", "DeleteImage", "DeleteVideo"):
-            cmd = [{cmd_name: {"constraints": constraints}}]
-            response, _ = self._db.query(cmd)
-            _check_response(
-                response, f"remove/{cmd_name}({context_id!r})"
+
+        if before is not None and since is not None:
+            raise NexusValidationError(
+                "before= and since= cannot be combined. "
+                "Use before= to discard old entries (keep recent), "
+                "or since= to discard recent entries (rollback pattern)."
             )
-        for set_name in self._list_nexus_descriptor_sets():
-            cmd = [{"DeleteDescriptor": {
-                "set": set_name,
-                "constraints": constraints,
+
+        if before is not None and not (
+            before.tzinfo is not None and before.tzinfo.utcoffset(before) is not None
+        ):
+            raise NexusValidationError(
+                "before= must be a timezone-aware datetime. "
+                "Use datetime.now(timezone.utc) or attach a tzinfo."
+            )
+
+        if since is not None and not (
+            since.tzinfo is not None and since.tzinfo.utcoffset(since) is not None
+        ):
+            raise NexusValidationError(
+                "since= must be a timezone-aware datetime. "
+                "Use datetime.now(timezone.utc) or attach a tzinfo."
+            )
+
+        if commit_id is not None and (not isinstance(commit_id, str) or not commit_id.strip()):
+            raise NexusValidationError(
+                "commit_id must be a non-empty string. "
+                "Pass the value returned by memory.commit()."
+            )
+        if context_id is not None and (not isinstance(context_id, str) or not context_id.strip()):
+            raise NexusValidationError(
+                "context_id must be a non-empty string. "
+                "Pass ctx.id or the context_id from a SearchResult."
+            )
+        if session_id is not None and (not isinstance(session_id, str) or not session_id.strip()):
+            raise NexusValidationError(
+                "session_id must be a non-empty string. "
+                "Pass ctx.session_id or the session_id from a SearchResult."
+            )
+
+        constraints: dict = {}
+        if commit_id:
+            constraints["commit_id"] = ["==", commit_id]
+        if context_id:
+            constraints["context_id"] = ["==", context_id]
+        if session_id:
+            constraints["session_id"] = ["==", session_id]
+        if before is not None:
+            constraints["created_at"] = ["<", before.isoformat()]
+        if since is not None:
+            constraints["created_at"] = [">=", since.isoformat()]
+
+        self._delete_content_by_constraints(constraints)
+
+        # Remove NexusCommit entity/entities when scope is precise enough
+        if commit_id and not any(x is not None for x in (context_id, session_id, before, since)):
+            cmd = [{"DeleteEntity": {
+                "with_class": _CLASS_COMMIT,
+                "constraints": {"commit_id": ["==", commit_id]},
             }}]
             response, _ = self._db.query(cmd)
-            _check_response(
-                response,
-                f"remove/DeleteDescriptor[{set_name}]"
-                f"({context_id!r})",
-            )
-        cmd = [{"DeleteEntity": {
-            "with_class": _CLASS_CONTEXT,
-            "constraints": {"nexus_ctx_id": ["==", context_id]},
-        }}]
-        response, _ = self._db.query(cmd)
-        _check_response(response, f"remove({context_id!r})")
-        logger.debug("Removed context_id=%r", context_id)
+            _check_response(response, f"remove_commit_entity({commit_id!r})")
+
+        # Remove NexusContext (and its commits) only when removing by context_id alone
+        if context_id and not any(x is not None for x in (commit_id, session_id, before, since)):
+            cmd = [{"DeleteEntity": {
+                "with_class": _CLASS_COMMIT,
+                "constraints": {"context_id": ["==", context_id]},
+            }}]
+            response, _ = self._db.query(cmd)
+            _check_response(response, f"remove_commits_for_context({context_id!r})")
+            cmd = [{"DeleteEntity": {
+                "with_class": _CLASS_CONTEXT,
+                "constraints": {"nexus_ctx_id": ["==", context_id]},
+            }}]
+            response, _ = self._db.query(cmd)
+            _check_response(response, f"remove_context_entity({context_id!r})")
+
+        # Cascade delete NexusCommit, NexusContext, and NexusSession when
+        # removing by session_id alone — mirrors the context_id cascade
+        if session_id and not any(x is not None for x in (commit_id, context_id, before, since)):
+            for cls in (_CLASS_COMMIT, _CLASS_CONTEXT):
+                cmd = [{"DeleteEntity": {
+                    "with_class": cls,
+                    "constraints": {"session_id": ["==", session_id]},
+                }}]
+                response, _ = self._db.query(cmd)
+                _check_response(response, f"remove_{cls}_for_session({session_id!r})")
+            cmd = [{"DeleteEntity": {
+                "with_class": _CLASS_SESSION,
+                "constraints": {"session_id": ["==", session_id]},
+            }}]
+            response, _ = self._db.query(cmd)
+            _check_response(response, f"remove_session_entity({session_id!r})")
+
+        logger.debug("remove() completed with constraints=%r", constraints)
 
     def _list_nexus_descriptor_sets(self) -> list[str]:
         """Return names of all nexus DescriptorSets in ApertureDB."""
@@ -859,6 +1194,36 @@ class Memory:
             if isinstance(e.get("_name"), str)
             and e["_name"].startswith("nexus_")
         ]
+
+    def _delete_content_by_constraints(self, constraints: dict) -> None:
+        """Delete all content entities matching the given ApertureDB constraints."""
+        for cmd_name in ("DeleteBlob", "DeleteImage", "DeleteVideo"):
+            cmd = [{cmd_name: {"constraints": constraints}}]
+            response, _ = self._db.query(cmd)
+            _check_response(response, f"remove/{cmd_name}")
+        for set_name in self._list_nexus_descriptor_sets():
+            cmd = [{"DeleteDescriptor": {
+                "set": set_name,
+                "constraints": constraints,
+            }}]
+            response, _ = self._db.query(cmd)
+            _check_response(response, f"remove/DeleteDescriptor[{set_name}]")
+
+    def _remove_by_results(self, results: list) -> None:
+        """Remove specific content entries identified by SearchResult._entry_id."""
+        seen: set = set()
+        for result in results:
+            entry_id = getattr(result, "_entry_id", None)
+            if not entry_id or entry_id in seen:
+                continue
+            seen.add(entry_id)
+            self._delete_content_by_constraints({"entry_id": ["==", entry_id]})
+        if not seen:
+            logger.warning(
+                "remove(results=...) found no _entry_id on any result — "
+                "nothing removed. Results may have been obtained from an "
+                "older index that predates entry_id stamping."
+            )
 
     # ------------------------------------------------------------------
     # retrieve()
@@ -898,7 +1263,8 @@ class Memory:
         """
         if not isinstance(context_id, str) or not context_id.strip():
             raise NexusValidationError(
-                "context_id must be a non-empty string."
+                "context_id must be a non-empty string. "
+                "Pass the context_id returned by memory.commit()."
             )
         constraints = {"context_id": ["==", context_id]}
         entries: list[MemoryEntry] = []
@@ -924,7 +1290,8 @@ class Memory:
             response, blobs = self._db.query(cmd)
         except Exception as e:
             raise NexusConnectionError(
-                f"ApertureDB blob retrieval failed: {e}."
+                f"ApertureDB blob retrieval failed: {e}. "
+                "Run 'adb-nexus validate' to check your connection."
             ) from e
         if isinstance(response, dict):
             return []
@@ -976,7 +1343,8 @@ class Memory:
             response, blobs = self._db.query(cmd)
         except Exception as e:
             raise NexusConnectionError(
-                f"ApertureDB image retrieval failed: {e}."
+                f"ApertureDB image retrieval failed: {e}. "
+                "Run 'adb-nexus validate' to check your connection."
             ) from e
         if isinstance(response, dict):
             return []
@@ -1014,7 +1382,8 @@ class Memory:
             response, blobs = self._db.query(cmd)
         except Exception as e:
             raise NexusConnectionError(
-                f"ApertureDB video retrieval failed: {e}."
+                f"ApertureDB video retrieval failed: {e}. "
+                "Run 'adb-nexus validate' to check your connection."
             ) from e
         if isinstance(response, dict):
             return []
@@ -1104,14 +1473,19 @@ class Memory:
     # ------------------------------------------------------------------
 
     def _resolve_session_id(self, ctx: Context) -> str:
-        """Return the session_id to use, deriving from session_name if needed."""
+        """Return the session_id to use, deriving from session_name if needed.
+
+        Populates ctx.session_id in place when derived, so callers can use
+        ctx.session_id afterwards for cleanup, search, etc."""
         if ctx.session_id:
             return ctx.session_id
         # Derive a deterministic ID from session_name + user_id so the same
         # named session always maps to the same ID for this principal.
         import hashlib
         raw = f"{ctx.principal.user_id}:{ctx.session_name}"
-        return hashlib.sha256(raw.encode()).hexdigest()[:32]
+        derived = hashlib.sha256(raw.encode()).hexdigest()[:32]
+        ctx.session_id = derived
+        return derived
 
     def _ensure_session(self, ctx: Context, session_id: str) -> None:
         """Create a NexusSession entity if one doesn't exist yet."""
@@ -1173,6 +1547,14 @@ class Memory:
                     }
                 },
                 {
+                    "FindEntity": {
+                        "with_class": _CLASS_USER,
+                        "constraints": {"user_id": ["==", ctx.principal.user_id]},
+                        "_ref": 3,
+                        "results": {"count": True},
+                    }
+                },
+                {
                     "AddConnection": {
                         "class": _CONN_SESSION_CONTEXT,
                         "src": 1,
@@ -1180,13 +1562,146 @@ class Memory:
                         "properties": {"created_at": datetime.utcnow().isoformat()},
                     }
                 },
+                {
+                    "AddConnection": {
+                        "class": _CONN_USER_CONTEXT,
+                        "src": 3,
+                        "dst": 2,
+                    }
+                },
             ]
             response, _ = self._db.query(conn_cmd)
-            _check_response(response, "nexus_session_context")
+            _check_response(response, "nexus_session_context+nexus_user_context")
             self._ensured_contexts.add(ctx.id)
 
+    def _ensure_commit(self, ctx: Context, session_id: str, commit_id: str) -> None:
+        """Create a NexusCommit entity and connect it to its context."""
+        props: dict = {
+            "commit_id": commit_id,
+            "context_id": ctx.id,
+            "session_id": session_id,
+            "user_id": ctx.principal.user_id,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        cmd = [
+            {"AddEntity": {"class": _CLASS_COMMIT, "properties": props, "_ref": 1}},
+            {
+                "FindEntity": {
+                    "with_class": _CLASS_CONTEXT,
+                    "constraints": {"nexus_ctx_id": ["==", ctx.id]},
+                    "_ref": 2,
+                    "results": {"count": True},
+                }
+            },
+            {"AddConnection": {"class": _CONN_CONTEXT_COMMIT, "src": 2, "dst": 1}},
+        ]
+        response, _ = self._db.query(cmd)
+        _check_response(response, "ensure_commit")
+
+    def _graph_prefix(self, commit_id: str, ctx_id: str) -> list[dict]:
+        """Two leading FindEntity cmds anchoring commit and context.
+
+        Uses the module-level _REF_COMMIT and _REF_CONTEXT constants
+        so downstream commands in the same transaction stay in sync.
+        """
+        return [
+            {
+                "FindEntity": {
+                    "with_class": _CLASS_COMMIT,
+                    "constraints": {"commit_id": ["==", commit_id]},
+                    "_ref": _REF_COMMIT,
+                    "results": {"count": True},
+                }
+            },
+            {
+                "FindEntity": {
+                    "with_class": _CLASS_CONTEXT,
+                    "constraints": {"nexus_ctx_id": ["==", ctx_id]},
+                    "_ref": _REF_CONTEXT,
+                    "results": {"count": True},
+                }
+            },
+        ]
+
+    def _graph_links(self, content_ref: int) -> list[dict]:
+        """AddConnection cmds from commit and context to a content entity."""
+        return [
+            {"AddConnection": {"class": _CONN_COMMIT_ENTRY,
+                               "src": _REF_COMMIT, "dst": content_ref}},
+            {"AddConnection": {"class": _CONN_CONTEXT_ENTRY,
+                               "src": _REF_CONTEXT, "dst": content_ref}},
+        ]
+
+    def _write_context_embedding(
+        self, ctx: Context, session_id: str
+    ) -> None:
+        """Embed the context's purpose into the nexus_context DescriptorSet.
+
+        Called by ``process_and_commit()`` after a successful ``commit()``.
+        Silently skips if ``ctx.purpose`` is not set or no text embedding
+        model is configured — so callers without a purpose or model never
+        see an error from this path.
+
+        Args:
+            ctx: The context whose purpose should be embedded.
+            session_id: Resolved session ID (from ``_resolve_session_id``).
+        """
+        if not ctx.purpose:
+            return
+        model = self._cfg.models.text_embedding
+        if not model:
+            return
+
+        from aperture_nexus._embeddings import is_clip_model, get_clip_embedder
+        if not is_clip_model(model):
+            raise NexusConfigError(
+                f"Automatic context embedding via model={model!r} is not "
+                f"yet available. Use a CLIP model (e.g. 'ViT-B/16') or "
+                f"set models.text_embedding in aperture_nexus.json."
+            )
+
+        embedder = get_clip_embedder(model)
+        try:
+            vector = embedder.embed_text([ctx.purpose])[0]
+        except (NexusConfigError, NexusValidationError):
+            raise
+        except Exception as e:
+            raise NexusProcessingError(
+                f"CLIP embedding of context purpose failed: {e}."
+            ) from e
+
+        dset = _dset_name("context", model)
+        self._ensure_descriptor_set(
+            dset, vector, "context", model,
+            self._cfg.processing.descriptor_metric,
+            self._cfg.processing.descriptor_engine,
+        )
+
+        props: dict = {
+            "context_id": ctx.id,
+            "session_id": session_id,
+            "user_id": ctx.principal.user_id,
+            "purpose": ctx.purpose,
+            "embedding_model": model,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        for attr in ("organization", "department"):
+            val = getattr(ctx, attr, None) or getattr(ctx.principal, attr, None)
+            if val is not None:
+                props[attr] = val
+
+        emb_bytes = _embedding_to_bytes(vector)
+        cmd = [{"AddDescriptor": {"set": dset, "properties": props}}]
+        response, _ = self._db.query(cmd, [emb_bytes])
+        _check_response(response, "write_context_embedding")
+        logger.debug(
+            "Wrote context embedding for context_id=%r purpose=%r",
+            ctx.id, ctx.purpose,
+        )
+
     def _descriptor_props(
-        self, entry, ctx: Context, session_id: str, modality: str
+        self, entry, ctx: Context, session_id: str, modality: str,
+        commit_id: str, entry_id: str,
     ) -> dict:
         """Build the properties dict for an AddDescriptor command."""
         props: dict = {
@@ -1196,6 +1711,8 @@ class Memory:
             "embedding_model": entry.embedding_model,
             "modality": modality,
             "created_at": datetime.utcnow().isoformat(),
+            "commit_id": commit_id,
+            "entry_id": entry_id,
         }
         if entry.metadata:
             props.update(entry.metadata)
@@ -1204,8 +1721,8 @@ class Memory:
             props["text"] = entry.text
         return props
 
-    def _write_entry(self, entry, ctx: Context, session_id: str) -> None:
-        """Write one _LogEntry to ApertureDB.
+    def _write_entry(self, entry, ctx: Context, session_id: str, commit_id: str) -> None:
+        """Write one InformationEntry to ApertureDB.
 
         Each content object (Blob, Image, Video) and its Descriptor are
         written in a single atomic transaction using ``_ref`` /
@@ -1214,12 +1731,20 @@ class Memory:
         Descriptor is an orphan and cannot be traced back to the original
         content.
         """
+        entry_id = str(uuid.uuid4())
         common_props = {
             "context_id": ctx.id,
             "session_id": session_id,
             "user_id": ctx.principal.user_id,
             "created_at": datetime.utcnow().isoformat(),
+            "commit_id": commit_id,
+            "entry_id": entry_id,
         }
+        # Include session_name so entries can be filtered by it (session_name
+        # is also stored on NexusSession, but the filter path queries content
+        # entities directly, so the property must live here too).
+        if ctx.session_name:
+            common_props["session_name"] = ctx.session_name
         # Include principal org/dept so content entities can be filtered by them
         if ctx.principal.organization:
             common_props["organization"] = ctx.principal.organization
@@ -1230,6 +1755,10 @@ class Memory:
 
         has_emb = entry.embedding is not None and entry.embedding_model
 
+        # FindEntity refs 1 (NexusCommit) and 2 (NexusContext) are prepended to
+        # every write so graph connections can be added in the same transaction.
+        prefix = self._graph_prefix(commit_id, ctx.id)
+
         # ---- Text blob -------------------------------------------------------
         if entry.text is not None:
             text_bytes = entry.text.encode("utf-8")
@@ -1239,17 +1768,19 @@ class Memory:
 
             if has_emb:
                 dset = _dset_name("text", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "text")
+                desc_props = self._descriptor_props(entry, ctx, session_id, "text", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
-                cmd = [
-                    {"AddBlob": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
-                ]
+                cmd = prefix + [
+                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [text_bytes, emb_bytes])
                 _check_response(response, "write_text_entry+descriptor")
             else:
-                cmd = [{"AddBlob": {"properties": props}}]
+                cmd = prefix + [
+                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [text_bytes])
                 _check_response(response, "write_text_entry")
 
@@ -1260,17 +1791,19 @@ class Memory:
 
             if has_emb:
                 dset = _dset_name("image", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "image")
+                desc_props = self._descriptor_props(entry, ctx, session_id, "image", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
-                cmd = [
-                    {"AddImage": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
-                ]
+                cmd = prefix + [
+                    {"AddImage": {"properties": props, "_ref": _REF_CONTENT}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [image_bytes, emb_bytes])
                 _check_response(response, "write_image_entry+descriptor")
             else:
-                cmd = [{"AddImage": {"properties": props}}]
+                cmd = prefix + [
+                    {"AddImage": {"properties": props, "_ref": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [image_bytes])
                 _check_response(response, "write_image_entry")
 
@@ -1283,46 +1816,51 @@ class Memory:
             # but supported.
             if has_emb and entry.video_clip_embeddings is None:
                 dset = _dset_name("video", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "video")
+                desc_props = self._descriptor_props(entry, ctx, session_id, "video", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
-                cmd = [
-                    {"AddVideo": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
-                ]
+                cmd = prefix + [
+                    {"AddVideo": {"properties": props, "_ref": _REF_CONTENT}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [video_bytes, emb_bytes])
                 _check_response(response, "write_video_entry+descriptor")
             else:
-                cmd = [{"AddVideo": {"properties": props}}]
+                cmd = prefix + [
+                    {"AddVideo": {"properties": props, "_ref": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [video_bytes])
                 _check_response(response, "write_video_entry")
 
         # ---- Raw blob --------------------------------------------------------
         if entry.blob is not None:
+            blob_bytes = _to_blob_bytes(entry.blob)
             props = dict(common_props, document_type=entry.document_type or "")
 
             if has_emb:
                 dset = _dset_name("text", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "text")
+                desc_props = self._descriptor_props(entry, ctx, session_id, "text", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
-                cmd = [
-                    {"AddBlob": {"properties": props, "_ref": 1}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 2}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 2, "dst": 1}},
-                ]
-                response, _ = self._db.query(cmd, [entry.blob, emb_bytes])
+                cmd = prefix + [
+                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
+                response, _ = self._db.query(cmd, [blob_bytes, emb_bytes])
                 _check_response(response, "write_blob_entry+descriptor")
             else:
-                cmd = [{"AddBlob": {"properties": props}}]
-                response, _ = self._db.query(cmd, [entry.blob])
+                cmd = prefix + [
+                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
+                response, _ = self._db.query(cmd, [blob_bytes])
                 _check_response(response, "write_blob_entry")
 
         # ---- Per-clip video descriptors --------------------------------------
         if entry.video_clip_embeddings is not None and entry.embedding_model:
-            self._write_video_clip_descriptors(entry, ctx, session_id)
+            self._write_video_clip_descriptors(entry, ctx, session_id, commit_id, entry_id)
 
     def _write_video_clip_descriptors(
-        self, entry, ctx: Context, session_id: str
+        self, entry, ctx: Context, session_id: str, commit_id: str, entry_id: str,
     ) -> None:
         """Write one Descriptor per clip segment for a video entry."""
         dset = _dset_name("video", entry.embedding_model)
@@ -1343,6 +1881,8 @@ class Memory:
                 "start_frame": clip_meta["start_frame"],
                 "stop_frame": clip_meta["stop_frame"],
                 "created_at": datetime.utcnow().isoformat(),
+                "commit_id": commit_id,
+                "entry_id": entry_id,
             }
             if entry.metadata:
                 props.update(entry.metadata)
@@ -1451,7 +1991,31 @@ class Memory:
                 modality = "text"
                 model = self._cfg.models.text_embedding
             else:
-                continue   # blob-only — no embedding needed
+                # Blob-only entry with no pre-computed embedding. Nexus
+                # does not extract text from documents (pdf, docx, csv,
+                # etc.) in v1, so process_and_commit has nothing to
+                # embed. Raise with the three unblock paths rather than
+                # silently storing the blob with no descriptor.
+                doc_type = entry.document_type or "blob"
+                raise NexusConfigError(
+                    f"process_and_commit() cannot embed blob-only "
+                    f"content (document_type={doc_type!r}). Nexus does "
+                    f"not extract text from documents such as PDF, "
+                    f"DOCX, or CSV in v1. Three options:\n"
+                    f"  1. Extract the text yourself and log it "
+                    f"alongside the blob:\n"
+                    f"       info.log(text=extracted_text, "
+                    f"blob=blob_bytes, document_type={doc_type!r})\n"
+                    f"  2. Pre-compute an embedding and pass it "
+                    f"directly:\n"
+                    f"       info.log(blob=blob_bytes, "
+                    f"embedding=my_vector,\n"
+                    f"                embedding_model='my-model', "
+                    f"document_type={doc_type!r})\n"
+                    f"  3. Use memory.commit() instead of "
+                    f"process_and_commit() to store the blob opaquely "
+                    f"(searchable by metadata only)."
+                )
 
             if not model:
                 raise NexusConfigError(
@@ -1531,11 +2095,51 @@ class Memory:
                 raise
             except Exception as e:
                 raise NexusProcessingError(
-                    f"CLIP text embedding for search failed: {e}."
+                    f"CLIP text embedding for search failed: {e}. "
+                    "Check that the model is available and run "
+                    "'adb-nexus validate' to check your connection."
                 ) from e
             # Use the caller's modality if provided — enables cross-modal
             # search (text query → image or video DescriptorSet).
-            return vector, modality or "text"
+            target_modality = modality or "text"
+
+            # Cross-modal safety: DescriptorSets are named
+            # nexus_<modality>__<model>. If the model configured for the
+            # target modality differs from the model used to embed this
+            # text query, the search will hit an empty DescriptorSet
+            # (or, worse, one from a different embedding space if the
+            # caller has overridden embedding_model=). Warn loudly so
+            # users notice before assuming "no results" means the data
+            # is not there.
+            if target_modality != "text":
+                target_model = getattr(
+                    self._cfg.models,
+                    f"{target_modality}_embedding",
+                    None,
+                )
+                if target_model and target_model != model:
+                    logger.warning(
+                        "Cross-modal search: text query embedded with "
+                        "%r but %s_embedding is configured as %r. "
+                        "Cross-modal only works when both models share "
+                        "an embedding space (e.g. the same CLIP variant). "
+                        "The DescriptorSet nexus_%s__%s must exist and "
+                        "have been written with the same model, or you "
+                        "will get empty / meaningless results.",
+                        model, target_modality, target_model,
+                        target_modality, model,
+                    )
+                elif not target_model:
+                    logger.warning(
+                        "Cross-modal search: modality=%r requested but no "
+                        "%s_embedding is configured. Searching "
+                        "nexus_%s__%s; results will be empty unless that "
+                        "DescriptorSet was written with %r.",
+                        target_modality, target_modality,
+                        target_modality, model, model,
+                    )
+
+            return vector, target_modality
 
         raise NexusValidationError(
             f"Unsupported query type: {type(query).__name__!r}. "
@@ -1550,8 +2154,18 @@ class Memory:
         k: int,
         min_score: Optional[float],
         embedding_model: Optional[str] = None,
+        return_content: bool = True,
     ) -> list[SearchResult]:
-        """Execute a KNN search on the appropriate DescriptorSet."""
+        """Execute a KNN search on the appropriate DescriptorSet.
+
+        When return_content is True (default), the query is a
+        two-command batch: FindDescriptor for the KNN ranking, then
+        FindBlob/FindImage/FindVideo traversing nexus_descriptor_entry
+        for the source content bytes. Results are matched back by
+        entry_id (duplicated on both descriptor and content) because
+        the second-hop response order is not guaranteed to match
+        FindDescriptor's distance rank order.
+        """
         model = embedding_model or getattr(self._cfg.models, f"{modality}_embedding", None)
         if modality not in ("text", "image", "video"):
             raise NexusValidationError(
@@ -1561,41 +2175,80 @@ class Memory:
         dset = _dset_name(modality, model) if model else f"nexus_{modality}"
 
         constraints = self._build_constraints(filters)
-        cmd_body: dict = {
+        find_desc: dict = {
             "set": dset,
             "k_neighbors": k,
             "results": {"all_properties": True},
             "distances": True,
         }
         if constraints:
-            cmd_body["constraints"] = constraints
+            find_desc["constraints"] = constraints
+            # knn_first: false is required for constraints to pre-filter
+            # KNN rather than post-filter a global top-k. See
+            # aperturedb-connector-skill.md section 11.
+            find_desc["knn_first"] = False
 
-        cmd = [{"FindDescriptor": cmd_body}]
+        # Pick the Find* command that matches the modality; text sits in
+        # Blob entities with document_type="text", images in Image,
+        # videos in Video.
+        find_content_cmd = {
+            "text":  "FindBlob",
+            "image": "FindImage",
+            "video": "FindVideo",
+        }[modality]
+
+        cmd: list[dict] = [{"FindDescriptor": {**find_desc, "_ref": 1}}]
+        if return_content:
+            cmd.append({find_content_cmd: {
+                "is_connected_to": {
+                    "ref": 1,
+                    "connection_class": _CONN_DESCRIPTOR_ENTRY,
+                },
+                "blobs": True,
+                "results": {"all_properties": True},
+            }})
+
         emb_bytes = _embedding_to_bytes(vector)
 
         try:
-            response, _ = self._db.query(cmd, [emb_bytes])
+            response, response_blobs = self._db.query(cmd, [emb_bytes])
         except Exception as e:
             raise NexusConnectionError(
-                f"ApertureDB search query failed: {e}."
+                f"ApertureDB search query failed: {e}. "
+                "Run 'adb-nexus validate' to check your connection."
             ) from e
 
         # ApertureDB may return a bare dict (not a list) when the descriptor
-        # set does not exist or the query is malformed.  Treat it as empty.
+        # set does not exist or the query is malformed. Treat as empty.
         if not isinstance(response, list) or not response:
             return []
-        body = response[0].get("FindDescriptor", {})
-        if body.get("status", 0) != 0:
+        desc_body = response[0].get("FindDescriptor", {})
+        if desc_body.get("status", 0) != 0:
             return []
-        # ApertureDB returns descriptors under "entities"; distance is
-        # embedded as "_distance" on each entity (not a separate list).
-        descriptors = body.get("entities", [])
+        descriptors = desc_body.get("entities", [])
+
+        # Build entry_id → content bytes lookup from the second hop.
+        # Order in the second response is NOT guaranteed to match KNN
+        # rank order, so we key by entry_id and re-associate below.
+        content_by_entry: dict[str, bytes] = {}
+        if return_content and len(response) > 1:
+            content_body = response[1].get(find_content_cmd, {})
+            content_entities = content_body.get("entities", [])
+            blob_start = content_body.get("blobs_start", 0)
+            for ent in content_entities:
+                entry_id = ent.get("entry_id")
+                if not entry_id:
+                    continue
+                idx = blob_start + ent.get("_blob_index", 0)
+                if idx < len(response_blobs):
+                    content_by_entry[entry_id] = response_blobs[idx]
 
         results = []
         for desc in descriptors:
             score = float(desc.get("_distance", 0.0))
             if min_score is not None and score < min_score:
                 continue
+            entry_id = desc.get("entry_id")
             results.append(SearchResult(
                 score=score,
                 modality=modality,
@@ -1608,25 +2261,33 @@ class Memory:
                 text=desc.get("text"),
                 start_frame=desc.get("start_frame"),
                 stop_frame=desc.get("stop_frame"),
+                content=content_by_entry.get(entry_id) if entry_id else None,
                 metadata={
                     k: v for k, v in desc.items()
                     if k not in (
                         "session_id", "context_id", "user_id",
                         "created_at", "text", "start_frame", "stop_frame",
                         "modality", "embedding_model",
+                        "entry_id", "commit_id",
                     )
                 },
+                _entry_id=entry_id,
             ))
         return results
 
     def _search_by_metadata(
-        self, filters: dict, k: int
+        self, filters: dict, k: int, modality: Optional[str] = None,
     ) -> list[SearchResult]:
         """Return content entities (Blob, Image, Video) matching metadata filters.
 
-        Searches all three content entity types in a single multi-command
-        query and combines the results. Blob results are returned with
-        modality ``"text"`` (for text blobs) or ``"blob"`` (for raw blobs).
+        When ``modality`` is ``None`` (default), searches all three
+        content entity types in a single multi-command query and
+        combines the results. When ``modality`` is set to ``"text"``,
+        ``"image"``, ``"video"``, or ``"blob"``, dispatches only the
+        matching Find* command so callers get modality-scoped results
+        without over-fetching. Blob results are returned with modality
+        ``"text"`` (for ``document_type="text"`` blobs) or ``"blob"``
+        (for raw blobs).
         """
         constraints = self._build_constraints(filters)
         results_limit = {"all_properties": True, "limit": k}
@@ -1637,38 +2298,59 @@ class Memory:
                 b["constraints"] = constraints
             return b
 
-        cmd = [
-            {"FindBlob": _body()},
-            {"FindImage": _body()},
-            {"FindVideo": _body()},
+        # Dispatch: image/video map cleanly to one Find*; text and blob
+        # both live in Blob entities and are distinguished by
+        # document_type, so both hit FindBlob (differentiated at
+        # result-parsing time below).
+        all_entity_types = [
+            ("FindBlob", None),    # modality derived from document_type
+            ("FindImage", "image"),
+            ("FindVideo", "video"),
         ]
+        if modality is None:
+            selected = all_entity_types
+        elif modality in ("text", "blob"):
+            selected = [("FindBlob", None)]
+        elif modality == "image":
+            selected = [("FindImage", "image")]
+        elif modality == "video":
+            selected = [("FindVideo", "video")]
+        else:
+            raise NexusValidationError(
+                f"Unknown modality {modality!r} for metadata search. "
+                f"Choose one of: 'text', 'image', 'video', 'blob'."
+            )
+
+        cmd = [{name: _body()} for name, _ in selected]
         try:
             response, _ = self._db.query(cmd)
         except Exception as e:
             raise NexusConnectionError(
-                f"ApertureDB metadata search failed: {e}."
+                f"ApertureDB metadata search failed: {e}. "
+                "Run 'adb-nexus validate' to check your connection."
             ) from e
 
         if isinstance(response, dict):
             return []
 
         results = []
-        entity_types = [
-            ("FindBlob", None),    # modality derived from document_type
-            ("FindImage", "image"),
-            ("FindVideo", "video"),
-        ]
-        for resp_item, (cmd_name, fixed_modality) in zip(response, entity_types):
+        for resp_item, (cmd_name, fixed_modality) in zip(response, selected):
             body = resp_item.get(cmd_name, {})
             for ent in body.get("entities", []):
                 if fixed_modality is None:
                     doc_type = ent.get("document_type", "")
-                    modality = "text" if doc_type == "text" else "blob"
+                    entry_modality = "text" if doc_type == "text" else "blob"
                 else:
-                    modality = fixed_modality
+                    entry_modality = fixed_modality
+                # When caller asked for a specific modality but the
+                # dispatch command returns a mixed pool (FindBlob covers
+                # both text and blob), filter out non-matching entries.
+                if (modality in ("text", "blob")
+                        and entry_modality != modality):
+                    continue
                 results.append(SearchResult(
                     score=1.0,
-                    modality=modality,
+                    modality=entry_modality,
                     session_id=ent.get("session_id", ""),
                     context_id=ent.get("context_id", ""),
                     user_id=ent.get("user_id"),
@@ -1681,20 +2363,29 @@ class Memory:
                         if k not in (
                             "context_id", "session_id", "user_id", "created_at",
                             "text_preview", "text", "document_type",
+                            "entry_id", "commit_id",
                         )
                     },
+                    _entry_id=ent.get("entry_id"),
                 ))
         return results[:k]
 
     @staticmethod
     def _build_constraints(filters: dict) -> dict:
-        """Convert a user-supplied filters dict to ApertureDB constraints."""
+        """Convert a user-supplied filters dict to ApertureDB constraints.
+
+        Raises NexusValidationError for any key not in the allowed set so
+        that typos and unsupported keys produce a loud error rather than
+        silent empty results.
+        """
         allowed = {
-            "session_id", "user_id", "organization",
-            "department", "purpose",
+            "session_id", "session_name", "context_id", "commit_id",
+            "user_id", "organization", "department", "purpose",
         }
-        constraints = {}
-        for key, value in filters.items():
-            if key in allowed:
-                constraints[key] = ["==", value]
-        return constraints
+        unknown = set(filters) - allowed
+        if unknown:
+            raise NexusValidationError(
+                f"Unknown filter key(s): {sorted(unknown)}. "
+                f"Supported keys: {sorted(allowed)}."
+            )
+        return {key: ["==", value] for key, value in filters.items()}

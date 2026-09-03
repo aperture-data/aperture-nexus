@@ -33,7 +33,7 @@ def _unique_sid():
 
 @pytest.mark.integration
 class TestCommitAndRetrieve:
-    def test_commit_text_returns_memory_id(self, memory_engine, test_principal):
+    def test_commit_returns_commit_id(self, memory_engine, test_principal):
         ctx = Context(
             principal=test_principal,
             session_id=_unique_sid(),
@@ -41,8 +41,10 @@ class TestCommitAndRetrieve:
         )
         info = Information(context_id=ctx.id)
         info.log(text="ApertureDB is a multimodal vector database.")
-        mid = memory_engine.commit(ctx, info)
-        assert isinstance(mid, str) and len(mid) > 10
+        commit_id = memory_engine.commit(ctx, info)
+        assert isinstance(commit_id, str) and len(commit_id) > 10
+        # commit_id is a fresh UUID — distinct from the context id
+        assert commit_id != ctx.id
 
     def test_commit_drains_info(self, memory_engine, test_principal):
         ctx = Context(principal=test_principal, session_id=_unique_sid())
@@ -67,16 +69,17 @@ class TestCommitAndRetrieve:
         mid = memory_engine.commit(ctx, info)
         assert isinstance(mid, str)
 
-    def test_multiple_commits_same_context(self, memory_engine, test_principal):
-        """Multiple commits to the same context all return the same context_id."""
+    def test_multiple_commits_same_context_return_distinct_ids(self, memory_engine, test_principal):
+        """Each commit() call returns a distinct commit_id, even for the same context."""
         ctx = Context(principal=test_principal, session_id=_unique_sid())
         info = Information(context_id=ctx.id)
         info.log(text="first message")
         mid1 = memory_engine.commit(ctx, info)
         info.log(text="second message")
         mid2 = memory_engine.commit(ctx, info)
-        # commit() returns context_id — same context, same ID both times
-        assert mid1 == mid2 == ctx.id
+        assert mid1 != mid2
+        assert mid1 != ctx.id
+        assert mid2 != ctx.id
 
     def test_empty_info_raises(self, memory_engine, test_principal):
         ctx = Context(principal=test_principal, session_id=_unique_sid())
@@ -161,17 +164,68 @@ class TestConnect:
 
 @pytest.mark.integration
 class TestRemove:
-    def test_remove_committed_memory(self, memory_engine, test_principal):
-        ctx = Context(principal=test_principal, session_id=_unique_sid())
+    def test_remove_by_commit_id(self, memory_engine, test_principal):
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
         info = Information(context_id=ctx.id)
-        info.log(text="to be removed")
-        mid = memory_engine.commit(ctx, info)
-        # Remove — should not raise
-        memory_engine.remove(mid)
+        info.log(text="will be removed by commit_id")
+        commit_id = memory_engine.commit(ctx, info)
+        memory_engine.remove(commit_id=commit_id)
+        # After removal, search should find nothing for this session
+        results = memory_engine.search(filters={"session_id": sid})
+        assert results == []
 
-    def test_remove_empty_id_raises(self, memory_engine):
+    def test_remove_by_context_id(self, memory_engine, test_principal):
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(text="will be removed by context_id")
+        memory_engine.commit(ctx, info)
+        memory_engine.remove(context_id=ctx.id)
+        results = memory_engine.search(filters={"session_id": sid})
+        assert results == []
+
+    def test_remove_by_session_id(self, memory_engine, test_principal):
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(text="will be removed by session_id")
+        memory_engine.commit(ctx, info)
+        memory_engine.remove(session_id=sid)
+        results = memory_engine.search(filters={"session_id": sid})
+        assert results == []
+
+    def test_remove_by_results(self, memory_engine, test_principal):
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(text="remove this via search results")
+        info.log(text="keep this one")
+        memory_engine.commit(ctx, info)
+
+        all_results = memory_engine.search(filters={"session_id": sid})
+        assert len(all_results) == 2
+
+        # Remove only the first result
+        to_remove = [r for r in all_results if r.text == "remove this via search results"]
+        assert len(to_remove) == 1
+        memory_engine.remove(results=to_remove)
+
+        remaining = memory_engine.search(filters={"session_id": sid})
+        assert len(remaining) == 1
+        assert remaining[0].text == "keep this one"
+
+    def test_no_filter_raises(self, memory_engine):
         with pytest.raises(NexusValidationError):
-            memory_engine.remove("")
+            memory_engine.remove()
+
+    def test_results_combined_with_filter_raises(self, memory_engine, test_principal):
+        from aperture_nexus.memory import SearchResult
+        r = SearchResult(score=1.0, modality="text", session_id="s",
+                         context_id="c", user_id="u",
+                         created_at=__import__("datetime").datetime.utcnow())
+        with pytest.raises(NexusValidationError, match="cannot be combined"):
+            memory_engine.remove(results=[r], session_id="sid")
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +290,7 @@ def clip_memory(adb_config_name):
 class TestClipTextSearch:
     """process_and_commit with text entries — CLIP text embeddings."""
 
-    def test_process_and_commit_text_returns_context_id(
+    def test_process_and_commit_text_returns_commit_id(
         self, clip_memory, test_principal
     ):
         ctx = Context(principal=test_principal, session_id=_unique_sid())
@@ -244,6 +298,7 @@ class TestClipTextSearch:
         info.log(text="ApertureDB is a multimodal vector database.")
         mid = clip_memory.process_and_commit(ctx, info)
         assert isinstance(mid, str) and len(mid) > 10
+        assert mid != ctx.id
 
     def test_text_search_finds_committed_entry(self, clip_memory, test_principal):
         """A text committed via CLIP is retrievable by vector search."""
@@ -341,6 +396,64 @@ class TestClipImageSearch:
         assert matching
         assert matching[0].modality == "image"
 
+    def test_image_search_returns_content_bytes(
+        self, clip_memory, test_principal
+    ):
+        """KNN search populates SearchResult.content with the raw image bytes.
+
+        Verifies the two-hop query: FindDescriptor for KNN ranking plus
+        FindImage with is_connected_to on nexus_descriptor_entry brings
+        the source image bytes back in the same round trip.
+        """
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        original = self._make_png(color=(200, 50, 50))
+        info.log(image=original)
+        clip_memory.process_and_commit(ctx, info)
+
+        from aperture_nexus._embeddings import get_clip_embedder
+        embedder = get_clip_embedder(_CLIP_MODEL)
+        query_vec = embedder.embed_image(original)
+
+        results = clip_memory.search(
+            query=query_vec, modality="image",
+            embedding_model=_CLIP_MODEL, k=5,
+        )
+        matching = [r for r in results if r.session_id == sid]
+        assert matching, "Committed image not found in search results"
+        top = matching[0]
+        assert top.content is not None, (
+            "content should be populated when return_content=True (default)"
+        )
+        assert isinstance(top.content, (bytes, bytearray))
+        assert top.content == original, (
+            "content bytes should match the committed image"
+        )
+
+    def test_image_search_return_content_false_skips_bytes(
+        self, clip_memory, test_principal
+    ):
+        """return_content=False leaves SearchResult.content as None."""
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(image=self._make_png(color=(20, 200, 20)))
+        clip_memory.process_and_commit(ctx, info)
+
+        from aperture_nexus._embeddings import get_clip_embedder
+        embedder = get_clip_embedder(_CLIP_MODEL)
+        query_vec = embedder.embed_image(self._make_png(color=(20, 200, 20)))
+
+        results = clip_memory.search(
+            query=query_vec, modality="image",
+            embedding_model=_CLIP_MODEL, k=5,
+            return_content=False,
+        )
+        matching = [r for r in results if r.session_id == sid]
+        assert matching
+        assert matching[0].content is None
+
 
 @pytest.mark.integration
 class TestMetadataSearchContentEntities:
@@ -380,3 +493,235 @@ class TestMetadataSearchContentEntities:
     def test_metadata_search_unknown_session_returns_empty(self, clip_memory):
         results = clip_memory.search(filters={"session_id": "no-such-session-xyz"})
         assert results == []
+
+
+# ---------------------------------------------------------------------------
+# Information.remove_all() and Information.remove() — buffer cleanup before commit
+#
+# These tests verify that cleanup on the local buffer (before commit) is
+# invisible to ApertureDB — only entries still in the buffer at commit()
+# time are stored. This is the expected pattern for abandoning stale
+# content, e.g. after an upstream error, or for removing a specific entry
+# before it reaches the database.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+class TestInformationRemoveAllBeforeCommit:
+    def test_remove_all_then_log_only_fresh_entry_committed(
+        self, memory_engine, test_principal
+    ):
+        """Entries logged before remove_all() are not committed; only
+        post-remove_all entries reach ApertureDB."""
+        sid = _unique_sid()
+        ctx = Context(
+            principal=test_principal,
+            session_id=sid,
+            purpose="remove_all before commit test",
+        )
+        info = Information(context_id=ctx.id)
+
+        # Log something, decide to start over, then log the real entry
+        info.log(text="preliminary draft — should not be committed")
+        info.remove_all()
+        info.log(text="final entry — this one should be committed")
+        memory_engine.commit(ctx, info)
+
+        results = memory_engine.search(filters={"session_id": sid})
+        assert len(results) == 1
+        assert results[0].text == "final entry — this one should be committed"
+
+    def test_remove_all_entries_then_commit_raises(
+        self, memory_engine, test_principal
+    ):
+        """Committing an empty buffer raises NexusValidationError — there is
+        nothing to store."""
+        ctx = Context(principal=test_principal, session_id=_unique_sid())
+        info = Information(context_id=ctx.id)
+        info.log(text="will be removed")
+        info.remove_all()
+        with pytest.raises(NexusValidationError, match="no entries"):
+            memory_engine.commit(ctx, info)
+
+
+@pytest.mark.integration
+class TestInformationRemoveBeforeCommit:
+    def test_remove_first_entry_only_second_committed(
+        self, memory_engine, test_principal
+    ):
+        """Removing the first entry (by reference) before commit stores only the second."""
+        sid = _unique_sid()
+        ctx = Context(
+            principal=test_principal,
+            session_id=sid,
+            purpose="remove before commit test",
+        )
+        info = Information(context_id=ctx.id)
+        entry_a = info.log(text="entry A — remove this")
+        info.log(text="entry B — keep this")
+        info.remove(entry_a)
+        memory_engine.commit(ctx, info)
+
+        results = memory_engine.search(filters={"session_id": sid})
+        assert len(results) == 1
+        assert results[0].text == "entry B — keep this"
+
+    def test_remove_last_entry_only_first_committed(
+        self, memory_engine, test_principal
+    ):
+        """Removing the last entry (by reference) before commit stores only the first."""
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(text="keep this")
+        discard = info.log(text="discard this")
+        info.remove(discard)
+        memory_engine.commit(ctx, info)
+
+        results = memory_engine.search(filters={"session_id": sid})
+        assert len(results) == 1
+        assert results[0].text == "keep this"
+
+
+@pytest.mark.integration
+class TestBlobFilePath:
+    def test_blob_from_file_path_stores_bytes(
+        self, memory_engine, test_principal, tmp_path
+    ):
+        """Passing blob as a file path — content is read and stored at
+        commit() time, not at log() time."""
+        pdf_path = tmp_path / "document.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake content")
+
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        # Pass the path as a string — no open() needed
+        info.log(blob=str(pdf_path), document_type="pdf")
+        memory_engine.commit(ctx, info)
+
+        # Should be committed without error; searchable by session
+        results = memory_engine.search(filters={"session_id": sid})
+        assert len(results) >= 1
+        blob_result = next(
+            (r for r in results if r.modality == "blob"), None
+        )
+        assert blob_result is not None
+
+
+# ---------------------------------------------------------------------------
+# search_contexts() — context graph node semantic search
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestSearchContexts:
+    """process_and_commit() indexes context.purpose; search_contexts() retrieves."""
+
+    def test_process_and_commit_indexes_context_purpose(
+        self, clip_memory, test_principal
+    ):
+        """process_and_commit() writes a context embedding when purpose is set."""
+        sid = _unique_sid()
+        ctx = Context(
+            principal=test_principal,
+            session_id=sid,
+            purpose="Customer reported missing package",
+        )
+        info = Information(context_id=ctx.id)
+        info.log(text="Order #4821 not received.")
+        mid = clip_memory.process_and_commit(ctx, info)
+        assert isinstance(mid, str) and len(mid) > 0
+
+    def test_search_contexts_returns_committed_purpose(
+        self, clip_memory, test_principal
+    ):
+        """search_contexts() finds a context committed with a matching purpose."""
+        sid = _unique_sid()
+        ctx = Context(
+            principal=test_principal,
+            session_id=sid,
+            purpose="Inventory shortage in warehouse B",
+        )
+        info = Information(context_id=ctx.id)
+        info.log(text="Shelf stock levels critically low.")
+        clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search_contexts(
+            "warehouse inventory", embedding_model=_CLIP_MODEL, k=10
+        )
+        assert any(r.session_id == sid for r in results), (
+            f"Expected session {sid!r} in search_contexts results: "
+            + str([r.session_id for r in results])
+        )
+
+    def test_search_contexts_result_carries_metadata(
+        self, clip_memory, test_principal
+    ):
+        """ContextResult carries purpose, context_id, session_id, user_id."""
+        sid = _unique_sid()
+        ctx = Context(
+            principal=test_principal,
+            session_id=sid,
+            purpose="Security audit log review",
+        )
+        info = Information(context_id=ctx.id)
+        info.log(text="Access logs reviewed for anomalies.")
+        clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search_contexts(
+            "security audit", embedding_model=_CLIP_MODEL, k=10
+        )
+        matching = [r for r in results if r.session_id == sid]
+        assert matching, "Committed context not found in search_contexts results"
+        r = matching[0]
+        assert r.context_id == ctx.id
+        assert r.purpose == "Security audit log review"
+        assert r.user_id == test_principal.user_id
+
+    def test_search_contexts_filtered_by_session_id(
+        self, clip_memory, test_principal
+    ):
+        """search_contexts() filters can narrow results to a specific session."""
+        sid_a = _unique_sid()
+        sid_b = _unique_sid()
+
+        for sid, purpose in [
+            (sid_a, "Data pipeline monitoring"),
+            (sid_b, "Data pipeline monitoring"),
+        ]:
+            ctx = Context(
+                principal=test_principal, session_id=sid, purpose=purpose
+            )
+            info = Information(context_id=ctx.id)
+            info.log(text="Pipeline run completed.")
+            clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search_contexts(
+            "pipeline monitoring",
+            filters={"session_id": sid_a},
+            embedding_model=_CLIP_MODEL,
+            k=10,
+        )
+        assert all(r.session_id == sid_a for r in results), (
+            "Filter on session_id should exclude other sessions"
+        )
+
+    def test_no_purpose_no_context_embedding(self, clip_memory, test_principal):
+        """Contexts without purpose are not indexed by process_and_commit()."""
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        # No purpose set
+        info = Information(context_id=ctx.id)
+        info.log(text="No purpose context.")
+        clip_memory.process_and_commit(ctx, info)
+
+        # search_contexts should not return this session
+        results = clip_memory.search_contexts(
+            "no purpose context",
+            filters={"session_id": sid},
+            embedding_model=_CLIP_MODEL,
+            k=10,
+        )
+        assert results == [], (
+            "Context without purpose should not appear in search_contexts"
+        )

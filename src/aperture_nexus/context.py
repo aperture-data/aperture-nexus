@@ -118,7 +118,8 @@ class Context:
             and not str(self.session_name).strip()
         ):
             raise NexusValidationError(
-                "session_name must be a non-empty string."
+                "session_name must be a non-empty string. "
+                "Provide a human-readable name, e.g. 'support-2024-001'."
             )
 
         if not isinstance(self.priority, int):

@@ -40,8 +40,10 @@ __all__ = [
     "Memory",
     "Context",
     "Information",
+    "InformationEntry",
     "NexusAdmin",
     "SearchResult",
+    "ContextResult",
     "MemoryEntry",
     # Utilities
     "generate_session_id",
@@ -86,6 +88,9 @@ def __getattr__(name: str):
     if name == "SearchResult":
         from aperture_nexus.memory import SearchResult
         return SearchResult
+    if name == "ContextResult":
+        from aperture_nexus.memory import ContextResult
+        return ContextResult
     if name == "MemoryEntry":
         from aperture_nexus.memory import MemoryEntry
         return MemoryEntry
@@ -95,6 +100,9 @@ def __getattr__(name: str):
     if name == "Information":
         from aperture_nexus.information import Information
         return Information
+    if name == "InformationEntry":
+        from aperture_nexus.information import InformationEntry
+        return InformationEntry
     if name == "NexusAdmin":
         from aperture_nexus.admin import NexusAdmin
         return NexusAdmin

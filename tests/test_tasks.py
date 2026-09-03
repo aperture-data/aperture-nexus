@@ -33,7 +33,7 @@ class TestMemoryTaskConstruction:
         task = MemoryTask(task_id="t-001")
         assert task.task_id == "t-001"
         assert task.status == "pending"
-        assert task.context_id is None
+        assert task.commit_id is None
         assert task.completed_at is None
         assert task.error is None
         assert task.error_message is None
@@ -154,7 +154,7 @@ class TestStateTransitions:
         task = MemoryTask(task_id="t")
         task._mark_complete("ctx-xyz")
         assert task.status == "complete"
-        assert task.context_id == "ctx-xyz"
+        assert task.commit_id == "ctx-xyz"
         assert isinstance(task.completed_at, datetime)
 
     def test_mark_failed(self):
@@ -166,10 +166,10 @@ class TestStateTransitions:
         assert task.error_message == "boom"
         assert isinstance(task.failed_at, datetime)
 
-    def test_mark_complete_clears_prior_state(self):
-        """Complete after processing — context_id and timestamp are set."""
+    def test_mark_complete_sets_commit_id(self):
+        """Complete after processing — commit_id and timestamp are set."""
         task = MemoryTask(task_id="t")
         task._mark_processing()
         task._mark_complete("ctx-abc")
         assert task.status == "complete"
-        assert task.context_id == "ctx-abc"
+        assert task.commit_id == "ctx-abc"

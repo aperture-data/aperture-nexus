@@ -40,6 +40,7 @@ print(f"   session : {sid[:40]}...")
 print(f"   context : {ctx.id}")
 
 # ── Log memories and commit with CLIP embeddings ──────────────────────────────
+# log() returns an InformationEntry — hold it to remove() it before commit if needed
 info = Information(context_id=ctx.id)
 info.log(text="ApertureDB is a multimodal vector database built for AI.")
 info.log(text="aperture-nexus gives AI agents persistent, searchable memory.")

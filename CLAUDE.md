@@ -135,8 +135,12 @@ results = memory.search(query="...", filters={...})
 results = memory.search(query="photo.jpg")
 results = memory.search(query=my_vector, modality="image")
 
-# Remove
-memory.remove(ctx.id)
+# Remove — multiple granularities, all keyword-only
+commit_id = memory.commit(ctx, info)
+memory.remove(commit_id=commit_id)    # one commit
+memory.remove(context_id=ctx.id)      # all of a context
+memory.remove(session_id=sid)         # entire session
+memory.remove(results=search_results) # specific found entries
 
 # Stats (opt-in)
 memory.stats()              # session scope
@@ -194,9 +198,6 @@ info.log(image=img, embedding=numpy_array, embedding_model="clip-vit-base-patch3
 
 # Mixed — one log entry, multiple modalities
 info.log(text="See attached", blob=pdf_bytes, document_type="pdf")
-
-# Query (for retrieval intent logging)
-info.query("what did we discuss last quarter?")
 ```
 
 ---

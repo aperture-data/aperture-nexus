@@ -35,8 +35,10 @@ class MemoryTask:
     """An async memory processing task.
 
     Returned by ``Memory.async_process_and_commit()``. The task runs in the
-    background; its status is persisted in ApertureDB and survives process
-    restarts.
+    background via asyncio. Status is held in memory on the parent
+    ``Memory`` instance (``memory._tasks``) and does **not** survive
+    process restarts in v1. ApertureDB persistence for task state is on
+    the roadmap.
 
     Do not construct directly — use ``Memory.async_process_and_commit()``.
 
@@ -46,7 +48,8 @@ class MemoryTask:
             | ``"complete"`` | ``"failed"``. Held in memory only —
             not persisted to ApertureDB and not visible across processes
             or restarts.
-        context_id: The committed context ID. Available only when
+        commit_id: The commit ID returned by the completed
+            ``commit()`` call. Available only when
             ``status == "complete"``.
         completed_at: Completion timestamp. Available only when
             ``status == "complete"``.
@@ -62,7 +65,7 @@ class MemoryTask:
         await task.wait()
 
         if task.status == "complete":
-            print(f"context_id: {task.context_id}")
+            print(f"commit_id: {task.commit_id}")
         elif task.status == "failed":
             print(f"failed: {task.error_message}")
             task.retry()
@@ -70,7 +73,7 @@ class MemoryTask:
 
     task_id: str
     status: str = _PENDING
-    context_id: Optional[str] = None
+    commit_id: Optional[str] = None
     completed_at: Optional[datetime] = None
     error: Optional[Exception] = None
     error_message: Optional[str] = None
@@ -147,12 +150,12 @@ class MemoryTask:
         self.status = _PROCESSING
         logger.debug("Task %r: processing", self.task_id)
 
-    def _mark_complete(self, context_id: str) -> None:
+    def _mark_complete(self, commit_id: str) -> None:
         self.status = _COMPLETE
-        self.context_id = context_id
+        self.commit_id = commit_id
         self.completed_at = datetime.utcnow()
         logger.debug(
-            "Task %r: complete (context_id=%r)", self.task_id, context_id
+            "Task %r: complete (commit_id=%r)", self.task_id, commit_id
         )
 
     def _mark_failed(self, exc: Exception) -> None:
