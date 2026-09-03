@@ -27,8 +27,9 @@ loop continues.
 
 - **Knowledge (K)** — the general facts and relationships that
   don't change moment to moment. A shared baseline in ApertureDB.
-- **Memory (M)** — the specific trace of what happened in a
-  particular interaction, accumulated over time from new commits.
+- **Memory (M)** — what was captured in a particular interaction
+  (a document, notes, an image, a fact), accumulated over time
+  from new commits.
 - **Context (C)** — the who, what, when, why, and how that makes
   a fact meaningful rather than merely retrievable.
 

@@ -14,11 +14,13 @@ remember, retrieve, and reason continuously, the way real teams work.
   change moment to moment: catalogs, policies, historical records,
   past decisions. A shared baseline held in ApertureDB, extended or
   refreshed from external sources over time.
-- **Memory (M)** — the specific trace of what happened in a
-  particular interaction, built up over time from new `Information`
-  committed via Nexus. Each memory is durable and carries its own
-  graph connections; `Memory` (the Python class) is that store and
-  its interface, and `memory.commit(ctx, info)` adds a new one.
+- **Memory (M)** — what was captured in a particular interaction:
+  a document, notes, an image, or any information committed via
+  Nexus, along with when, with whom, and why. Just like human
+  memory it can be any kind of content, not a step-by-step log.
+  Each memory is durable and carries its own graph connections;
+  `Memory` (the Python class) is that store and its interface, and
+  `memory.commit(ctx, info)` adds a new one.
 - **Context (C)** — the who, what, when, why, and how that makes a
   fact meaningful rather than merely retrievable. Stamped on every
   memory so retrieval can be scoped precisely.
@@ -113,13 +115,14 @@ don't want fetched), use `text` or a custom `metadata` field.
 
 ### Memory — The Accumulated Layer
 
-`Memory` is the M in KMC: the specific trace of what happened in a
-particular interaction. In the API and in ApertureDB it is one and
-the same thing. New `Information` becomes a memory when committed;
-each memory is durable and carries its own graph connections to the
-`NexusContext` that authored it and the `NexusCommit` it was part
-of. Memories accumulate over time and are searched together with
-Knowledge.
+`Memory` is the M in KMC: what was captured in a particular
+interaction — any information committed via Nexus (a document,
+notes, an image, a video, a fact) along with when, with whom, and
+why. In the API and in ApertureDB it is one and the same thing.
+New `Information` becomes a memory when committed; each memory is
+durable and carries its own graph connections to the `NexusContext`
+that authored it and the `NexusCommit` it was part of. Memories
+accumulate over time and are searched together with Knowledge.
 
 `Memory` (the Python class) is the interface to this store and the
 only component that reads or writes ApertureDB. Every other object

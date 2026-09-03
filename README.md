@@ -9,8 +9,9 @@ and retrieval, powered by [ApertureDB](https://aperturedata.io)'s
 vector search and knowledge graph.
 
 The three building blocks — **Knowledge** (the shared baseline of
-facts your systems can rely on), **Memory** (the specific trace of
-what has happened, accumulated over time from new commits), and
+facts your systems can rely on), **Memory** (what has been captured
+in each interaction — documents, notes, images, facts — accumulated
+over time from new commits), and
 **Context** (the who / what / when / why / how frame that makes
 retrieval meaningful) — form a continuous loop. New `Information`
 arrives with `Context`, becomes `Memory` when committed, and drives
