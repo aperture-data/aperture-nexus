@@ -7,36 +7,61 @@ sidebar_position: 1
 # Concepts
 
 aperture-nexus is the cognition engine for enterprise AI. It is built
-around the **KMC model** — three concepts that mirror how human memory
-works and, in turn, how enterprises should design AI systems that
-retain and reason over what they learn.
+around the **KMC model** — three concepts that together let a system
+remember, retrieve, and reason continuously, the way real teams work.
 
 - **Knowledge (K)** — the general facts and relationships that don't
-  change moment to moment. Semantic memory in ApertureDB: catalogs,
-  policies, historical records, past decisions. A shared baseline,
-  extended or refreshed from other sources over time.
+  change moment to moment: catalogs, policies, historical records,
+  past decisions. A shared baseline held in ApertureDB, extended or
+  refreshed from external sources over time.
 - **Memory (M)** — the specific trace of what happened in a
-  particular interaction: when, with whom, and why. Episodic memory
-  in ApertureDB, built up over time from new `Information` committed
-  via Nexus. `Memory` (the Python class) is that store and its
-  interface: `memory.commit(ctx, info)` adds a new memory, and each
-  memory carries its own graph connections. Over time, memories can
-  be consolidated into Knowledge or discarded, the same way humans
-  keep some experiences as lasting knowledge and let others fade
-  (consolidation and decay hooks are on the roadmap).
+  particular interaction, built up over time from new `Information`
+  committed via Nexus. Each memory is durable and carries its own
+  graph connections; `Memory` (the Python class) is that store and
+  its interface, and `memory.commit(ctx, info)` adds a new one.
 - **Context (C)** — the who, what, when, why, and how that makes a
   fact meaningful rather than merely retrievable. Stamped on every
   memory so retrieval can be scoped precisely.
 
-Together these enable **Cognition**: surfacing the right information
-for the situation, and updating the store as understanding evolves.
-The Python API objects mirror the KMC concepts directly: `Information`
+### The KMC Loop
+
+KMC is not three static buckets. It runs as a loop:
+
+1. New `Information` arrives with a `Context` (an agent observes, a
+   customer opens a ticket, a workflow triggers).
+2. Committing turns Information into a `Memory` in ApertureDB, with
+   Context stamped on it and graph connections in place.
+3. When the next question comes in, its Context frames a search
+   across Memory and Knowledge together, pulling only what is
+   relevant to the situation.
+4. The results are reasoned over and acted on (by an agent, a human,
+   or a domain-specific layer), often producing new Information —
+   a response, a decision, an updated fact.
+5. That new Information becomes new Memory. Some memories eventually
+   harden into Knowledge; others get discarded as they age or turn
+   out to be wrong. The loop continues.
+
+**Cognition** is what this loop enables. Not just storage, not just
+retrieval: the ability to accumulate experience, connect it to
+shared facts, notice contradictions, surface what an agent is
+actually relying on, and update or discard beliefs as new evidence
+arrives. The **cognition hooks** — *surface*, *update*, *enrich*,
+*discard* — are where a domain-specific layer or a human intervenes
+to keep the loop honest. Nexus provides the substrate; the judgment
+layer sits above.
+
+The Python API objects mirror the KMC concepts directly. `Information`
 is the local Nexus buffer where new content is staged before it
 becomes a memory; `Memory` is the persistent store and its interface
 (the only component that reads or writes ApertureDB); `Context` is
-the frame Nexus stamps on every commit. This page explains what each
-represents, how they relate, and how they map to ApertureDB's storage
-primitives.
+the frame Nexus stamps on every commit. This page explains what
+each represents, how they relate, and how they map to ApertureDB's
+storage primitives.
+
+> **Parallel to human memory** — a useful mnemonic, not the product.
+> Knowledge is akin to durable general knowledge; Memory to specific
+> recallable experiences; and a short-term / working memory layer
+> (search, dedup, consolidate before commit) is on the v2 roadmap.
 
 ---
 
@@ -86,7 +111,7 @@ don't want fetched), use `text` or a custom `metadata` field.
 > or use `memory.commit()` for opaque storage searchable by metadata
 > only. Native document extraction is planned for a future release.
 
-### Memory — The Episodic Layer
+### Memory — The Accumulated Layer
 
 `Memory` is the M in KMC: the specific trace of what happened in a
 particular interaction. In the API and in ApertureDB it is one and
@@ -140,29 +165,27 @@ Think of it as tagging every log entry with the task it was part of.
 ## How the Three Objects Relate
 
 ```mermaid
-flowchart TD
-    P["Principal\n(user or agent)"]
-    S["Session\n(shared across participants)"]
+flowchart LR
     C["Context (C)\nwho · what · when · why · how"]
-    I["Information\nlocal Nexus buffer\ntext · image · video · blob"]
-    M["Memory (M)\nepisodic — memories in ApertureDB\naccumulated, with connections"]
-    K["Knowledge (K)\nsemantic — general facts in ApertureDB\nshared baseline"]
+    I["Information\nlocal Nexus buffer"]
+    M["Memory (M)\nin ApertureDB, with connections"]
+    K["Knowledge (K)\nshared baseline in ApertureDB"]
+    R["Reason / respond\n(agent · human · domain layer)"]
 
-    P -->|"acts within"| S
-    P -->|"identified by"| C
-    S -->|"scopes"| C
-    C -->|"context_id"| I
-    C -->|"stamps every memory"| M
     I -->|"commit()"| M
-    M <-.->|"searched together"| K
-    M -.->|"consolidated / discarded over time"| K
+    C -->|"stamps every memory"| M
+    C -->|"scopes"| R
+    M --> R
+    K --> R
+    R -->|"new Information"| I
+    R -.->|"cognition hooks:\nsurface · update · enrich · discard"| M
+    R -.->|"consolidate over time"| K
 ```
 
-> The dashed edge is a design principle: over time, some memories are
-> expected to be consolidated into Knowledge and others discarded,
-> the same way human memory works. Automatic consolidation and decay
-> hooks are on the roadmap; today, promotion and cleanup happen via
-> explicit `memory.commit()` / `memory.remove()` calls.
+The solid edges are v1 behavior. The dashed edges are the cognition
+hooks: today they run via explicit `memory.commit()` and
+`memory.remove()` calls made by the reasoning layer; automatic
+consolidation and decay are on the roadmap.
 
 ---
 

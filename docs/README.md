@@ -19,39 +19,48 @@ vector search and knowledge graph.
 
 ## How It Works
 
-The KMC model mirrors how human memory works and, in turn, how
-enterprises can design AI systems with cognition. **Knowledge** is
-semantic: the general facts and relationships that don't change
-moment to moment, held as a shared baseline in ApertureDB. **Memory**
-is episodic: the specific trace of what happened in a particular
-interaction, built up over time from new `Information` committed via
-Nexus. **Context** — who, what, when, why, and how — is stamped on
-every memory so retrieval is meaningful rather than merely a lookup.
+The KMC model is not three static concepts. It is a loop: new
+`Information` arrives with a `Context`, becomes a `Memory` when
+committed, and later drives retrieval that reasons across Memory
+and `Knowledge` together. Results produce new Information, and the
+loop continues.
+
+- **Knowledge (K)** — the general facts and relationships that
+  don't change moment to moment. A shared baseline in ApertureDB.
+- **Memory (M)** — the specific trace of what happened in a
+  particular interaction, accumulated over time from new commits.
+- **Context (C)** — the who, what, when, why, and how that makes
+  a fact meaningful rather than merely retrievable.
 
 ```mermaid
 flowchart LR
-    I["Information\nlocal Nexus buffer\ntext · image · video · blob"]
     C["Context (C)\nwho · what · when · why · how"]
-    M["Memory (M)\nepisodic — accumulated\nmemories with connections"]
-    K["Knowledge (K)\nsemantic — shared baseline"]
+    I["Information\nlocal Nexus buffer"]
+    M["Memory (M)\nin ApertureDB, with connections"]
+    K["Knowledge (K)\nshared baseline"]
+    R["Reason / respond"]
 
-    C -->|"stamps every memory"| M
     I -->|"commit()"| M
-    M <-.->|"searched together"| K
-    M -.->|"consolidated / discarded over time"| K
+    C -->|"stamps every memory"| M
+    C -->|"scopes"| R
+    M --> R
+    K --> R
+    R -->|"new Information"| I
+    R -.->|"surface · update · enrich · discard"| M
 ```
 
-| KMC | Concept | In code / storage |
-|-----|---------|-------------------|
-| **K** | Semantic memory: general facts and relationships that don't change moment to moment | ApertureDB baseline; read via `Memory` |
-| **M** | Episodic memory: the trace of what happened in a particular interaction | `Memory` (the class is the interface to the store); `Information` is the staging buffer |
-| **C** | Who, what, when, why, and how — the retrieval frame | `Context` |
+**Cognition** is what this loop enables: retrieval scoped to the
+situation, reasoning that draws on both durable facts and recent
+experience, and the ability to surface, update, or discard what an
+agent is relying on as new evidence arrives. The dashed edges are
+the **cognition hooks** — where a domain-specific layer or a human
+keeps the loop honest.
 
 The same model works for a single developer session, a multi-agent
 pipeline, or a human+AI team sharing context across an enterprise.
-
-Together this enables cognition, with hooks to surface, reason,
-update, and discard as understanding evolves.
+Parallels to human memory (K as durable general knowledge, M as
+recallable experience, working memory on the v2 roadmap) are a
+useful mnemonic, not the product.
 
 ---
 
