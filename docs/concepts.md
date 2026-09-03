@@ -95,7 +95,9 @@ The engine:
 
 - Authenticates principals
 - Commits and processes `Information` into stored memories
-- Connects memories and contexts with named relationships
+- Links contexts to one another with user-defined named
+  relationships (`memory.connect()`; the underlying `nexus_link`
+  edge is Context to Context in v1)
 - Searches across stored memories and Knowledge with permission
   enforcement
 
@@ -383,9 +385,10 @@ memories, and search results is planned for a future release.
 
 ## Knowledge Graph
 
-Memories and contexts can be connected with named relationships using
-`memory.connect()`. This builds a traversable knowledge graph on top
-of ApertureDB's `Connection` primitive.
+Contexts can be connected to one another with named relationships
+using `memory.connect()`. This adds a `nexus_link` edge between two
+`NexusContext` entities and builds a traversable knowledge graph on
+top of ApertureDB's `Connection` primitive.
 
 ```python
 memory.connect(source=ctx_q1, target=ctx_q2, relationship="follows")
@@ -395,6 +398,12 @@ memory.connect(
     relationship="related_to",
 )
 ```
+
+Memory-to-memory (commit-to-commit, blob-to-blob) linking is not part
+of v1. To associate specific memories, link the `NexusContext`
+entities that authored them; the automatic
+`nexus_context_commit` and `nexus_commit_entry` edges then let a
+traversal reach the individual memories from either side.
 
 Graph traversal in `memory.search()` (via `max_hops` and relationship
 filters) is planned for a future release. The underlying ApertureDB

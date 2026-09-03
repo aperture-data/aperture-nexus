@@ -411,7 +411,7 @@ memory.connect(
 ) -> None
 ```
 
-Create a named relationship between two contexts or memories. Builds the knowledge graph on top of ApertureDB `Connection` objects.
+Create a named relationship between two contexts. Both `source` and `target` must be `NexusContext` entities (pass a `Context` or its `context_id` string). Writes a `nexus_link` connection with `type=relationship`. Memory-to-memory (commit-to-commit) linking is not part of v1; if you need to associate specific memories, link the contexts that authored them.
 
 ```python
 memory.connect(source=ctx_q1, target=ctx_q2, relationship="follows")
