@@ -380,7 +380,7 @@ without requiring any schema migration.
 
 ## Roadmap
 
-v0.1 ships the core KMC API (commit, search, connect, and authenticate), validated against live ApertureDB.
+v0.1 ships the core Nexus API (commit, search, connect, and authenticate) that implements the KMC model, validated against live ApertureDB.
 
 **Coming in v2:**
 
