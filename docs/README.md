@@ -19,12 +19,12 @@ vector search and knowledge graph.
 
 ## How It Works
 
-The KMC model reflects how enterprises actually work with knowledge.
+The KMC model reflects how enterprises can design their AI systems with cognition.
 **Knowledge** is the stable baseline in ApertureDB — catalogs,
 policies, historical facts. **Memory** is the new
 information Nexus commits to ApertureDB — stored traces with graph
-connections, accumulating over time; think human memory, the traces
-themselves, not the act. **Context** — who, what, when, why, and how
+connections, accumulating over time; think human memory.
+**Context** — who, what, when, why, and how
 — is stamped on every commit and frames retrieval so the right
 knowledge or memory surfaces for the right situation.
 
@@ -46,11 +46,13 @@ flowchart LR
 | KMC | Concept | In code / storage |
 |-----|---------|-------------------|
 | **K** | Loaded baseline in ApertureDB, shared across the organization | ApertureDB corpus; read via `Memory` |
-| **M** | New information committed to ApertureDB — stored traces with graph connections, accumulating over time | `Memory` engine class writes; `Information` is the staging buffer |
+| **M** | New information committed to ApertureDB — stored traces with connections, accumulating over time | `Memory` engine class writes; `Information` is the staging buffer |
 | **C** | Who, what, when, why, and how — the retrieval frame | `Context` |
 
 The same model works for a single developer session, a multi-agent
 pipeline, or a human+AI team sharing context across an enterprise.
+
+Together this can enable cognition with hooks in place to reason, update, delete.
 
 ---
 
