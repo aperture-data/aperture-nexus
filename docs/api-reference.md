@@ -206,8 +206,10 @@ Generate embeddings and summaries for all items in `info`, then store everything
 
 Requires at least one model configured in `aperture_nexus.json` or supplied via `info.log(embedding_model=...)`.
 
+**Blob-only entries** (e.g. `info.log(blob=pdf_bytes, document_type="pdf")` with no `text=` or `embedding=`) raise `NexusConfigError` because Nexus does not extract text from documents in v1. Options: extract upstream and pass with `text=`, provide a pre-computed embedding, or use `memory.commit()` for opaque storage.
+
 **Returns:** `str` — the `commit_id`. See `commit()`.
-**Raises:** `NexusConfigError` if no model is configured; `NexusProcessingError` if model calls fail; `NexusConnectionError`, `NexusStorageError`, `NexusPermissionError`
+**Raises:** `NexusConfigError` if no model is configured or if the entry is blob-only; `NexusProcessingError` if model calls fail; `NexusConnectionError`, `NexusStorageError`, `NexusPermissionError`
 
 ```python
 commit_id = memory.process_and_commit(ctx, info)

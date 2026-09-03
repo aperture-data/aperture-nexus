@@ -80,6 +80,16 @@ at commit time), while `blob` also accepts a file path as a
 convenience. If you want to store a reference only (e.g. a URL you
 don't want fetched), use `text` or a custom `metadata` field.
 
+> **Blobs are stored opaquely in v1.** Nexus does not extract text
+> from documents (pdf, docx, csv, etc.) and does not embed blob
+> content on its own. Calling `process_and_commit()` on a blob-only
+> entry raises `NexusConfigError`. To make a document semantically
+> searchable, either extract the text upstream and log it with the
+> blob (`info.log(text=..., blob=..., document_type=...)`), pre-compute
+> an embedding and pass it in (`info.log(blob=..., embedding=..., embedding_model=...)`),
+> or use `memory.commit()` for opaque storage searchable by metadata
+> only. Native document extraction is planned for a future release.
+
 ### Memory — The Accumulated, Connected Layer
 
 A **memory** (the M in KMC) is a stored trace in ApertureDB, created

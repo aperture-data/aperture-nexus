@@ -1959,7 +1959,31 @@ class Memory:
                 modality = "text"
                 model = self._cfg.models.text_embedding
             else:
-                continue   # blob-only — no embedding needed
+                # Blob-only entry with no pre-computed embedding. Nexus
+                # does not extract text from documents (pdf, docx, csv,
+                # etc.) in v1, so process_and_commit has nothing to
+                # embed. Raise with the three unblock paths rather than
+                # silently storing the blob with no descriptor.
+                doc_type = entry.document_type or "blob"
+                raise NexusConfigError(
+                    f"process_and_commit() cannot embed blob-only "
+                    f"content (document_type={doc_type!r}). Nexus does "
+                    f"not extract text from documents such as PDF, "
+                    f"DOCX, or CSV in v1. Three options:\n"
+                    f"  1. Extract the text yourself and log it "
+                    f"alongside the blob:\n"
+                    f"       info.log(text=extracted_text, "
+                    f"blob=blob_bytes, document_type={doc_type!r})\n"
+                    f"  2. Pre-compute an embedding and pass it "
+                    f"directly:\n"
+                    f"       info.log(blob=blob_bytes, "
+                    f"embedding=my_vector,\n"
+                    f"                embedding_model='my-model', "
+                    f"document_type={doc_type!r})\n"
+                    f"  3. Use memory.commit() instead of "
+                    f"process_and_commit() to store the blob opaquely "
+                    f"(searchable by metadata only)."
+                )
 
             if not model:
                 raise NexusConfigError(

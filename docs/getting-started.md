@@ -209,6 +209,21 @@ To generate embeddings and enable semantic similarity search, use
 configured in `aperture_nexus.json` — see
 [Configuration](configuration.md).
 
+> **Note on document blobs (pdf, docx, csv, mp3, …):** Nexus v1 stores
+> blob content opaquely and does not extract or chunk text from
+> documents. Calling `process_and_commit()` on a blob-only entry
+> raises `NexusConfigError` with three unblock paths:
+>
+> 1. Extract text upstream (unstructured.io, python-docx, a PDF
+>    parser) and log both together:
+>    `info.log(text=extracted_text, blob=blob_bytes, document_type="pdf")`
+> 2. Pre-compute an embedding and pass it directly:
+>    `info.log(blob=blob_bytes, embedding=my_vector, embedding_model="my-model", document_type="pdf")`
+> 3. Use `memory.commit()` (not `process_and_commit()`) to store the
+>    blob opaquely — searchable by metadata filters only.
+>
+> Native document extraction is planned for a future release.
+
 ---
 
 ## 7. Multi-Participant Sessions

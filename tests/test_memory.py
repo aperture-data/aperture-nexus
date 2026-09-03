@@ -400,7 +400,37 @@ class TestProcessAndCommit:
         mid = memory.process_and_commit(ctx, info)
         assert isinstance(mid, str)
 
-    def test_blob_only_entry_does_not_need_embedding(self, mock_connector):
+    def test_blob_only_process_and_commit_raises_with_alternatives(
+        self, mock_connector
+    ):
+        """process_and_commit on blob-only content must not silently skip.
+
+        Nexus does not extract text from documents in v1. Raising here
+        surfaces the limitation and points users at the three
+        workarounds (upstream extraction, pre-computed embedding, or
+        plain commit for opaque storage).
+        """
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        info.log(blob=b"raw", document_type="pdf")
+        with pytest.raises(NexusConfigError) as exc:
+            memory.process_and_commit(ctx, info)
+        msg = str(exc.value)
+        assert "blob-only" in msg
+        assert "'pdf'" in msg
+        # Each of the three workarounds mentioned
+        assert "info.log(text=" in msg
+        assert "embedding=" in msg
+        assert "memory.commit()" in msg
+
+    def test_blob_only_commit_still_works(self, mock_connector):
+        """commit() (not process_and_commit) accepts blob-only entries.
+
+        Users who explicitly want opaque storage without embeddings
+        should be able to keep using commit() without hitting the
+        process_and_commit blob-only error.
+        """
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),      # ensure_session
             _ok_response("AddEntity"),      # ensure_context
@@ -412,6 +442,35 @@ class TestProcessAndCommit:
         ctx = _make_ctx()
         info = _make_info(ctx)
         info.log(blob=b"raw", document_type="pdf")
+        mid = memory.commit(ctx, info)
+        assert isinstance(mid, str)
+
+    def test_blob_with_precomputed_embedding_process_and_commit_works(
+        self, mock_connector
+    ):
+        """Pre-computed embedding lets process_and_commit accept a blob.
+
+        This is one of the escape hatches called out in the error
+        message; assert it actually works so the guidance stays true.
+        """
+        mock_connector.query.side_effect = [
+            _ok_response("AddEntity"),               # ensure_session
+            _ok_response("AddEntity"),               # ensure_context
+            _ok_conn_response(),                     # session/user context
+            _ok_commit_response(),                   # ensure_commit
+            _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets
+            _ok_atomic_write_response("AddBlob"),    # blob + descriptor
+        ]
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx()
+        info = _make_info(ctx)
+        vec = np.ones(128, dtype=np.float32)
+        info.log(
+            blob=b"raw",
+            document_type="pdf",
+            embedding=vec,
+            embedding_model="my-model",
+        )
         mid = memory.process_and_commit(ctx, info)
         assert isinstance(mid, str)
 
@@ -584,17 +643,25 @@ class TestAsyncProcessAndCommit:
 
     @pytest.mark.asyncio
     async def test_task_completes_successfully(self, mock_connector):
+        # Blob + pre-computed embedding: exercises the full write path
+        # (process_and_commit no longer accepts blob-only without an
+        # embedding — that path raises NexusConfigError).
         mock_connector.query.side_effect = [
-            _ok_response("AddEntity"),      # ensure_session (if_not_found)
-            _ok_response("AddEntity"),      # ensure_context (if_not_found)
-            _ok_conn_response(),            # session_context + user_context
-            _ok_commit_response(),          # ensure_commit
-            _ok_entry_response("AddBlob"),  # write blob entry
+            _ok_response("AddEntity"),               # ensure_session
+            _ok_response("AddEntity"),               # ensure_context
+            _ok_conn_response(),                     # session/user context
+            _ok_commit_response(),                   # ensure_commit
+            _find_descriptor_set_response(count=1),  # _ensure_descriptor_sets
+            _ok_atomic_write_response("AddBlob"),    # blob + descriptor
         ]
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
         info = _make_info(ctx)
-        info.log(blob=b"data", document_type="bin")
+        vec = np.ones(32, dtype=np.float32)
+        info.log(
+            blob=b"data", document_type="bin",
+            embedding=vec, embedding_model="m",
+        )
         task = await memory.async_process_and_commit(ctx, info)
         await task.wait()
         assert task.status == "complete"
@@ -606,7 +673,13 @@ class TestAsyncProcessAndCommit:
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
         info = _make_info(ctx)
-        info.log(blob=b"data", document_type="bin")
+        # Must be embeddable content or the task fails with
+        # NexusConfigError before the mocked storage error can fire.
+        vec = np.ones(32, dtype=np.float32)
+        info.log(
+            blob=b"data", document_type="bin",
+            embedding=vec, embedding_model="m",
+        )
         task = await memory.async_process_and_commit(ctx, info)
         await task.wait()
         assert task.status == "failed"
