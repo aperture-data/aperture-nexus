@@ -20,29 +20,33 @@ vector search and knowledge graph.
 ## How It Works
 
 The KMC model reflects how enterprises actually work with knowledge.
-**Knowledge** lives in ApertureDB — the baseline corpus your
-organization already has, plus the memories accumulated over time.
-**Memory** is how new inputs become durable Knowledge: `Information`
-is staged locally in Nexus, and `memory.commit()` turns it into a
-stored memory in the graph. **Context** stamps every commit and frames
-retrieval so the right knowledge surfaces for the right situation.
+**Knowledge** is the stable baseline in ApertureDB — catalogs,
+policies, historical facts, loaded once. **Memory** is the new
+information Nexus commits to ApertureDB — stored traces with graph
+connections, accumulating over time; think human memory, the traces
+themselves, not the act. **Context** — who, what, when, why, and how
+— is stamped on every commit and frames retrieval so the right
+knowledge or memory surfaces for the right situation.
 
 ```mermaid
 flowchart LR
     I["Information\nlocal Nexus buffer\ntext · image · video · blob"]
     C["Context (C)\nwho · what · when · why · how"]
-    M["Memory (M)\ncommits Information into Knowledge"]
-    K["Knowledge (K) — ApertureDB\nbaseline + accumulated memories"]
+    Eng["Memory engine\ncommit · search · connect"]
+    K["Knowledge (K)\nApertureDB baseline\nloaded once"]
+    M["Memory (M)\naccumulated in ApertureDB\nwith connections"]
 
-    C -->|"stamps every commit"| M
-    I -->|"commit()"| M
-    M <-->|"stores / retrieves"| K
+    C -->|"stamps every commit"| Eng
+    I -->|"commit()"| Eng
+    Eng -->|"writes new memories"| M
+    Eng <-->|"reads / updates"| K
+    Eng <-->|"searches"| M
 ```
 
-| KMC | Concept | Nexus objects |
-|-----|---------|---------------|
-| **K** | Knowledge stored in ApertureDB — baseline corpus plus memories accumulated over time | Read and written via `Memory` |
-| **M** | Turning `Information` into durable Knowledge — the act and the engine | `Memory` (engine) + `Information` (staging buffer) |
+| KMC | Concept | In code / storage |
+|-----|---------|-------------------|
+| **K** | Stable baseline in ApertureDB — loaded once, shared across the organization | ApertureDB corpus; read via `Memory` |
+| **M** | New information committed to ApertureDB — stored traces with graph connections, accumulating over time | `Memory` engine class writes; `Information` is the staging buffer |
 | **C** | Who, what, when, why, and how — the retrieval frame | `Context` |
 
 The same model works for a single developer session, a multi-agent

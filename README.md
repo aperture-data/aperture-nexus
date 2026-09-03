@@ -8,12 +8,14 @@ images, audio, video, and more — and commit it to memory for search
 and retrieval, powered by [ApertureDB](https://aperturedata.io)'s
 vector search and knowledge graph.
 
-The three building blocks — **Knowledge** (everything in ApertureDB:
-baseline corpus plus memories accumulated over time), **Memory** (how
-`Information` staged in Nexus becomes durable Knowledge), and
-**Context** (the who / what / when / why / how frame that makes
-retrieval meaningful) — form a complete cognition layer that scales
-from a single developer session to a multi-team enterprise deployment.
+The three building blocks — **Knowledge** (the stable baseline your
+organization has loaded into ApertureDB), **Memory** (new information
+committed via Nexus, stored with its own graph connections and
+accumulating over time — think human memory, the traces themselves,
+not the act of remembering), and **Context** (the who / what / when
+/ why / how frame that makes retrieval meaningful) — form a complete
+cognition layer that scales from a single developer session to a
+multi-team enterprise deployment.
 
 ![aperture-nexus hello world](demo/demo.gif)
 
