@@ -223,7 +223,9 @@ commit_id = memory.process_and_commit(ctx, info)
 await memory.async_process_and_commit(ctx: Context, info: Information) -> MemoryTask
 ```
 
-Async variant of `process_and_commit()`. Returns a `MemoryTask` immediately without blocking. The task runs in the background and updates its status in ApertureDB.
+Async variant of `process_and_commit()`. Returns a `MemoryTask` immediately without blocking. The task runs in the background via asyncio and its status is tracked on the parent `Memory` instance (`memory._tasks`).
+
+> **v1 caveats.** Task status is held in memory only and does **not** survive process restarts (persistence to ApertureDB is on the roadmap). The implementation is also not yet validated against a live ApertureDB instance and emits a runtime warning when called. Use with caution in production.
 
 **Returns:** `MemoryTask` with `status="pending"`
 

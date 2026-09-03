@@ -35,8 +35,10 @@ class MemoryTask:
     """An async memory processing task.
 
     Returned by ``Memory.async_process_and_commit()``. The task runs in the
-    background; its status is persisted in ApertureDB and survives process
-    restarts.
+    background via asyncio. Status is held in memory on the parent
+    ``Memory`` instance (``memory._tasks``) and does **not** survive
+    process restarts in v1. ApertureDB persistence for task state is on
+    the roadmap.
 
     Do not construct directly — use ``Memory.async_process_and_commit()``.
 

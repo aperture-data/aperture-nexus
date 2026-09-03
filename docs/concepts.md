@@ -7,40 +7,36 @@ sidebar_position: 1
 # Concepts
 
 aperture-nexus is the cognition engine for enterprise AI. It is built
-around the **KMC model** — three concepts that reflect how enterprises
-actually work with knowledge.
+around the **KMC model** — three concepts that mirror how human memory
+works and, in turn, how enterprises should design AI systems that
+retain and reason over what they learn.
 
-- **Knowledge** — the stable, institutional baseline in ApertureDB:
-  catalogs, policies, historical records, past decisions. A loaded
-  baseline, shared as first-class graph data, distinct from Memory
-  in that it is not built up by ongoing agent activity (though it
-  can be refreshed or extended from other sources over time).
-- **Memory** — new information committed to ApertureDB via Nexus.
-  Each memory is a stored trace with its own graph connections,
-  accumulating over time and searchable alongside Knowledge. Think
-  human memory: memories are the stored things (with associations),
-  not the act of storing them. `Information` is the local Nexus
-  buffer where new content is staged; `memory.commit()` turns it
-  into a memory in the graph.
-- **Context** — the who, what, when, why, and how that makes a fact
-  meaningful rather than merely retrievable. Nexus stamps Context on
-  every commit and uses it as the retrieval frame so the right
-  knowledge or memory surfaces for the right situation.
+- **Knowledge (K)** — the general facts and relationships that don't
+  change moment to moment. Semantic memory in ApertureDB: catalogs,
+  policies, historical records, past decisions. A shared baseline,
+  extended or refreshed from other sources over time.
+- **Memory (M)** — the specific trace of what happened in a
+  particular interaction: when, with whom, and why. Episodic memory
+  in ApertureDB, built up over time from new `Information` committed
+  via Nexus. `Memory` (the Python class) is that store and its
+  interface: `memory.commit(ctx, info)` adds a new memory, and each
+  memory carries its own graph connections. Over time, memories can
+  be consolidated into Knowledge or discarded, the same way humans
+  keep some experiences as lasting knowledge and let others fade
+  (consolidation and decay hooks are on the roadmap).
+- **Context (C)** — the who, what, when, why, and how that makes a
+  fact meaningful rather than merely retrievable. Stamped on every
+  memory so retrieval can be scoped precisely.
 
-Together these form the substrate for a **cognition layer**: retrieve
-the right knowledge or memory for the situation, and update the store
-when new memories arrive. In code, the API objects are `Information`
-(the staging buffer), `Memory` (the engine class that writes new
-memories — it is the only component that reads or writes ApertureDB),
-and `Context` (the retrieval frame). This page explains what each
+Together these enable **Cognition**: surfacing the right information
+for the situation, and updating the store as understanding evolves.
+The Python API objects mirror the KMC concepts directly: `Information`
+is the local Nexus buffer where new content is staged before it
+becomes a memory; `Memory` is the persistent store and its interface
+(the only component that reads or writes ApertureDB); `Context` is
+the frame Nexus stamps on every commit. This page explains what each
 represents, how they relate, and how they map to ApertureDB's storage
 primitives.
-
-> **Naming note.** "Memory" refers to two things: the KMC concept — a
-> stored memory in ApertureDB — and the Python `Memory` class, which
-> is the engine that creates and searches those memories. When it
-> matters, we use "memory" (lowercase, noun) for a stored trace and
-> ``Memory`` (backticked) for the engine class.
 
 ---
 
@@ -90,27 +86,26 @@ don't want fetched), use `text` or a custom `metadata` field.
 > or use `memory.commit()` for opaque storage searchable by metadata
 > only. Native document extraction is planned for a future release.
 
-### Memory — The Accumulated, Connected Layer
+### Memory — The Episodic Layer
 
-A **memory** (the M in KMC) is a stored trace in ApertureDB, created
-when new information is committed via Nexus. Each memory is durable
-and comes with its own graph connections — to the `NexusContext` that
-authored it, the `NexusCommit` it was part of, and any other memories
-or content it was linked to. Memories accumulate over time and are
-searched together with the baseline Knowledge.
+`Memory` is the M in KMC: the specific trace of what happened in a
+particular interaction. In the API and in ApertureDB it is one and
+the same thing. New `Information` becomes a memory when committed;
+each memory is durable and carries its own graph connections to the
+`NexusContext` that authored it and the `NexusCommit` it was part
+of. Memories accumulate over time and are searched together with
+Knowledge.
 
-The Python `Memory` class is the **engine** that creates and manages
-memories. It is the only component that reads from or writes to
-ApertureDB — every other object in the API is a pure data object.
-The engine:
+`Memory` (the Python class) is the interface to this store and the
+only component that reads or writes ApertureDB. Every other object
+in the API is a pure data object. Through this one interface you:
 
-- Authenticates principals
-- Commits and processes `Information` into stored memories
-- Links contexts to one another with user-defined named
-  relationships (`memory.connect()`; the underlying `nexus_link`
-  edge is Context to Context in v1)
-- Searches across stored memories and Knowledge with permission
-  enforcement
+- Authenticate principals
+- Commit new memories (`memory.commit()`, `memory.process_and_commit()`)
+- Link contexts to one another with user-defined named relationships
+  (`memory.connect()`; the underlying `nexus_link` edge is Context to
+  Context in v1)
+- Search across memories and Knowledge with permission enforcement
 
 ### Context — The Retrieval Frame
 
@@ -149,21 +144,25 @@ flowchart TD
     P["Principal\n(user or agent)"]
     S["Session\n(shared across participants)"]
     C["Context (C)\nwho · what · when · why · how"]
-    I["Information\nlocal Nexus buffer — text · image · video · blob"]
-    Eng["Memory engine\n(commits and searches)"]
-    K["Knowledge (K)\nApertureDB\nloaded baseline"]
-    M["Memory (M)\nstored memories in ApertureDB\naccumulated, with connections"]
+    I["Information\nlocal Nexus buffer\ntext · image · video · blob"]
+    M["Memory (M)\nepisodic — memories in ApertureDB\naccumulated, with connections"]
+    K["Knowledge (K)\nsemantic — general facts in ApertureDB\nshared baseline"]
 
     P -->|"acts within"| S
     P -->|"identified by"| C
     S -->|"scopes"| C
     C -->|"context_id"| I
-    C -->|"stamps every commit"| Eng
-    I -->|"commit / process_and_commit"| Eng
-    Eng -->|"writes new memories"| M
-    Eng <-->|"reads / updates"| K
-    Eng <-->|"searches"| M
+    C -->|"stamps every memory"| M
+    I -->|"commit()"| M
+    M <-.->|"searched together"| K
+    M -.->|"consolidated / discarded over time"| K
 ```
+
+> The dashed edge is a design principle: over time, some memories are
+> expected to be consolidated into Knowledge and others discarded,
+> the same way human memory works. Automatic consolidation and decay
+> hooks are on the roadmap; today, promotion and cleanup happen via
+> explicit `memory.commit()` / `memory.remove()` calls.
 
 ---
 

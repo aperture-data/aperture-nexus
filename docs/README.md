@@ -19,40 +19,39 @@ vector search and knowledge graph.
 
 ## How It Works
 
-The KMC model reflects how enterprises can design their AI systems with cognition.
-**Knowledge** is the stable baseline in ApertureDB — catalogs,
-policies, historical facts. **Memory** is the new
-information Nexus commits to ApertureDB — stored traces with graph
-connections, accumulating over time; think human memory.
-**Context** — who, what, when, why, and how
-— is stamped on every commit and frames retrieval so the right
-knowledge or memory surfaces for the right situation.
+The KMC model mirrors how human memory works and, in turn, how
+enterprises can design AI systems with cognition. **Knowledge** is
+semantic: the general facts and relationships that don't change
+moment to moment, held as a shared baseline in ApertureDB. **Memory**
+is episodic: the specific trace of what happened in a particular
+interaction, built up over time from new `Information` committed via
+Nexus. **Context** — who, what, when, why, and how — is stamped on
+every memory so retrieval is meaningful rather than merely a lookup.
 
 ```mermaid
 flowchart LR
     I["Information\nlocal Nexus buffer\ntext · image · video · blob"]
     C["Context (C)\nwho · what · when · why · how"]
-    Eng["Memory engine\ncommit · search · connect"]
-    K["Knowledge (K)\nApertureDB\nloaded baseline"]
-    M["Memory (M)\naccumulated in ApertureDB\nwith connections"]
+    M["Memory (M)\nepisodic — accumulated\nmemories with connections"]
+    K["Knowledge (K)\nsemantic — shared baseline"]
 
-    C -->|"stamps every commit"| Eng
-    I -->|"commit()"| Eng
-    Eng -->|"writes new memories"| M
-    Eng <-->|"reads / updates"| K
-    Eng <-->|"searches"| M
+    C -->|"stamps every memory"| M
+    I -->|"commit()"| M
+    M <-.->|"searched together"| K
+    M -.->|"consolidated / discarded over time"| K
 ```
 
 | KMC | Concept | In code / storage |
 |-----|---------|-------------------|
-| **K** | Loaded baseline in ApertureDB, shared across the organization | ApertureDB corpus; read via `Memory` |
-| **M** | New information committed to ApertureDB — stored traces with connections, accumulating over time | `Memory` engine class writes; `Information` is the staging buffer |
+| **K** | Semantic memory: general facts and relationships that don't change moment to moment | ApertureDB baseline; read via `Memory` |
+| **M** | Episodic memory: the trace of what happened in a particular interaction | `Memory` (the class is the interface to the store); `Information` is the staging buffer |
 | **C** | Who, what, when, why, and how — the retrieval frame | `Context` |
 
 The same model works for a single developer session, a multi-agent
 pipeline, or a human+AI team sharing context across an enterprise.
 
-Together this can enable cognition with hooks in place to reason, update, delete.
+Together this enables cognition, with hooks to surface, reason,
+update, and discard as understanding evolves.
 
 ---
 
