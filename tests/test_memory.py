@@ -1597,7 +1597,7 @@ class TestAtomicDescriptorWrite:
         # connections are in the same call — still atomic.
         assert "AddBlob" in cmd_names
         assert "AddDescriptor" in cmd_names
-        assert cmd_names.count("AddConnection") == 3  # nexus_descriptor + 2 graph links
+        assert cmd_names.count("AddConnection") == 3  # nexus_descriptor_entry + 2 graph links
 
     def test_image_entry_with_embedding_is_atomic(self, mock_connector):
         """Image entry with embedding: all in one client.query() call."""
@@ -1634,7 +1634,7 @@ class TestAtomicDescriptorWrite:
         assert cmd_names.count("AddConnection") == 3
 
     def test_connection_uses_nexus_descriptor_class(self, mock_connector):
-        """The nexus_descriptor AddConnection in the atomic write has correct refs."""
+        """The nexus_descriptor_entry AddConnection in the atomic write has correct refs."""
         captured = []
 
         def _capture(cmd, blobs=None):
@@ -1657,12 +1657,12 @@ class TestAtomicDescriptorWrite:
             cmd for cmd in captured
             if any("AddBlob" in c for c in cmd)
         )
-        # nexus_descriptor connection links Descriptor (_ref=4) → Blob (_ref=3)
+        # nexus_descriptor_entry connection links Descriptor (_ref=4) → Blob (_ref=3)
         conn = next(
             c["AddConnection"] for c in atomic
-            if "AddConnection" in c and c["AddConnection"].get("class") == "nexus_descriptor"
+            if "AddConnection" in c and c["AddConnection"].get("class") == "nexus_descriptor_entry"
         )
-        assert conn["class"] == "nexus_descriptor"
+        assert conn["class"] == "nexus_descriptor_entry"
         assert conn["src"] == 4   # Descriptor _ref
         assert conn["dst"] == 3   # Blob _ref
 

@@ -260,9 +260,26 @@ memory.search(
 Search stored memories by semantic similarity, metadata, or both.
 Permissions are enforced automatically from the Memory's principal.
 
-Search is **per-modality**: each query type searches its own descriptor
-set. There is no cross-modal search (e.g. image query finding text
-results) in v1.
+Search is **per-modality for KNN queries**: a semantic (vector) query hits
+exactly one DescriptorSet, so results come back in a single modality. If
+you need semantically related text, images, and videos in the same
+call, issue one `search()` per modality and merge results client-side.
+
+**Metadata-only searches** (no `query`) are the exception: they issue
+one multi-command query across `FindBlob`, `FindImage`, and `FindVideo`
+with the same filters, so a single call returns all matching content
+types across modalities.
+
+**Cross-modal semantic search** is supported when both modalities share
+an embedding space (typically CLIP with the same variant configured
+for both `text_embedding` and `image_embedding`). Passing
+`memory.search(query="scratched product", modality="image")` embeds
+the text with the CLIP text encoder and searches the image
+DescriptorSet. If the target modality's configured model does not
+match the model used to embed the query, Nexus logs a warning and the
+search will typically return empty (because the DescriptorSet name
+includes the model, so a mismatched model targets a set that was
+never written).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

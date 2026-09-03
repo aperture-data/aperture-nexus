@@ -20,7 +20,7 @@ ApertureDB connection classes used here:
     nexus_context_commit  — NexusContext → NexusCommit
     nexus_commit_entry    — NexusCommit → Blob / Image / Video
     nexus_context_entry   — NexusContext → Blob / Image / Video (direct, for fast traversal)
-    nexus_descriptor      — Descriptor → Blob / Image / Video
+    nexus_descriptor_entry — Descriptor → Blob / Image / Video
     nexus_link            — NexusContext → NexusContext (user-defined relationship)
 
 Multimodal content storage:
@@ -74,14 +74,25 @@ _CLASS_SESSION = "NexusSession"
 _CLASS_CONTEXT = "NexusContext"
 _CLASS_COMMIT  = "NexusCommit"
 
-# ApertureDB connection class names (snake_case, nexus-prefixed)
-_CONN_SESSION_CONTEXT = "nexus_session_context"  # NexusSession → NexusContext
-_CONN_USER_CONTEXT    = "nexus_user_context"     # NexusUser → NexusContext
-_CONN_CONTEXT_COMMIT  = "nexus_context_commit"   # NexusContext → NexusCommit
-_CONN_COMMIT_ENTRY    = "nexus_commit_entry"     # NexusCommit → Blob/Image/Video
-_CONN_CONTEXT_ENTRY   = "nexus_context_entry"   # NexusContext → Blob/Image/Video
-_CONN_LINK            = "nexus_link"             # NexusContext → NexusContext
-_CONN_DESCRIPTOR      = "nexus_descriptor"       # Descriptor → Blob/Image/Video
+# ApertureDB connection class names (snake_case, nexus-prefixed, follow
+# the pattern nexus_<src>_<dst> so the name states the direction).
+_CONN_SESSION_CONTEXT   = "nexus_session_context"    # NexusSession → NexusContext
+_CONN_USER_CONTEXT      = "nexus_user_context"       # NexusUser → NexusContext
+_CONN_CONTEXT_COMMIT    = "nexus_context_commit"     # NexusContext → NexusCommit
+_CONN_COMMIT_ENTRY      = "nexus_commit_entry"       # NexusCommit → Blob/Image/Video
+_CONN_CONTEXT_ENTRY     = "nexus_context_entry"      # NexusContext → Blob/Image/Video
+_CONN_LINK              = "nexus_link"               # NexusContext → NexusContext
+_CONN_DESCRIPTOR_ENTRY  = "nexus_descriptor_entry"   # Descriptor → Blob/Image/Video
+
+# _ref layout used inside a single _write_entry transaction. Every
+# transaction begins with two FindEntity commands (the "graph prefix")
+# anchoring the parent commit and context, then adds the new content
+# entity and its descriptor. Naming these keeps the numeric _refs from
+# colliding if a future edit adds another command to the transaction.
+_REF_COMMIT     = 1   # FindEntity(NexusCommit) from _graph_prefix
+_REF_CONTEXT    = 2   # FindEntity(NexusContext) from _graph_prefix
+_REF_CONTENT    = 3   # AddBlob / AddImage / AddVideo
+_REF_DESCRIPTOR = 4   # AddDescriptor (when the entry has an embedding)
 
 
 # ---------------------------------------------------------------------------
@@ -1573,13 +1584,17 @@ class Memory:
         _check_response(response, "ensure_commit")
 
     def _graph_prefix(self, commit_id: str, ctx_id: str) -> list[dict]:
-        """Two leading FindEntity cmds anchoring commit (_ref=1) and context (_ref=2)."""
+        """Two leading FindEntity cmds anchoring commit and context.
+
+        Uses the module-level _REF_COMMIT and _REF_CONTEXT constants
+        so downstream commands in the same transaction stay in sync.
+        """
         return [
             {
                 "FindEntity": {
                     "with_class": _CLASS_COMMIT,
                     "constraints": {"commit_id": ["==", commit_id]},
-                    "_ref": 1,
+                    "_ref": _REF_COMMIT,
                     "results": {"count": True},
                 }
             },
@@ -1587,17 +1602,19 @@ class Memory:
                 "FindEntity": {
                     "with_class": _CLASS_CONTEXT,
                     "constraints": {"nexus_ctx_id": ["==", ctx_id]},
-                    "_ref": 2,
+                    "_ref": _REF_CONTEXT,
                     "results": {"count": True},
                 }
             },
         ]
 
     def _graph_links(self, content_ref: int) -> list[dict]:
-        """AddConnection cmds from commit (ref=1) and context (ref=2) to a content entity."""
+        """AddConnection cmds from commit and context to a content entity."""
         return [
-            {"AddConnection": {"class": _CONN_COMMIT_ENTRY, "src": 1, "dst": content_ref}},
-            {"AddConnection": {"class": _CONN_CONTEXT_ENTRY, "src": 2, "dst": content_ref}},
+            {"AddConnection": {"class": _CONN_COMMIT_ENTRY,
+                               "src": _REF_COMMIT, "dst": content_ref}},
+            {"AddConnection": {"class": _CONN_CONTEXT_ENTRY,
+                               "src": _REF_CONTEXT, "dst": content_ref}},
         ]
 
     def _write_context_embedding(
@@ -1739,16 +1756,16 @@ class Memory:
                 desc_props = self._descriptor_props(entry, ctx, session_id, "text", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = prefix + [
-                    {"AddBlob": {"properties": props, "_ref": 3}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 4}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 4, "dst": 3}},
-                ] + self._graph_links(3)
+                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [text_bytes, emb_bytes])
                 _check_response(response, "write_text_entry+descriptor")
             else:
                 cmd = prefix + [
-                    {"AddBlob": {"properties": props, "_ref": 3}},
-                ] + self._graph_links(3)
+                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [text_bytes])
                 _check_response(response, "write_text_entry")
 
@@ -1762,16 +1779,16 @@ class Memory:
                 desc_props = self._descriptor_props(entry, ctx, session_id, "image", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = prefix + [
-                    {"AddImage": {"properties": props, "_ref": 3}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 4}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 4, "dst": 3}},
-                ] + self._graph_links(3)
+                    {"AddImage": {"properties": props, "_ref": _REF_CONTENT}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [image_bytes, emb_bytes])
                 _check_response(response, "write_image_entry+descriptor")
             else:
                 cmd = prefix + [
-                    {"AddImage": {"properties": props, "_ref": 3}},
-                ] + self._graph_links(3)
+                    {"AddImage": {"properties": props, "_ref": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [image_bytes])
                 _check_response(response, "write_image_entry")
 
@@ -1787,16 +1804,16 @@ class Memory:
                 desc_props = self._descriptor_props(entry, ctx, session_id, "video", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = prefix + [
-                    {"AddVideo": {"properties": props, "_ref": 3}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 4}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 4, "dst": 3}},
-                ] + self._graph_links(3)
+                    {"AddVideo": {"properties": props, "_ref": _REF_CONTENT}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [video_bytes, emb_bytes])
                 _check_response(response, "write_video_entry+descriptor")
             else:
                 cmd = prefix + [
-                    {"AddVideo": {"properties": props, "_ref": 3}},
-                ] + self._graph_links(3)
+                    {"AddVideo": {"properties": props, "_ref": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [video_bytes])
                 _check_response(response, "write_video_entry")
 
@@ -1810,16 +1827,16 @@ class Memory:
                 desc_props = self._descriptor_props(entry, ctx, session_id, "text", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = prefix + [
-                    {"AddBlob": {"properties": props, "_ref": 3}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": 4}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR, "src": 4, "dst": 3}},
-                ] + self._graph_links(3)
+                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
+                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [blob_bytes, emb_bytes])
                 _check_response(response, "write_blob_entry+descriptor")
             else:
                 cmd = prefix + [
-                    {"AddBlob": {"properties": props, "_ref": 3}},
-                ] + self._graph_links(3)
+                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
+                ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [blob_bytes])
                 _check_response(response, "write_blob_entry")
 
@@ -2069,7 +2086,45 @@ class Memory:
                 ) from e
             # Use the caller's modality if provided — enables cross-modal
             # search (text query → image or video DescriptorSet).
-            return vector, modality or "text"
+            target_modality = modality or "text"
+
+            # Cross-modal safety: DescriptorSets are named
+            # nexus_<modality>__<model>. If the model configured for the
+            # target modality differs from the model used to embed this
+            # text query, the search will hit an empty DescriptorSet
+            # (or, worse, one from a different embedding space if the
+            # caller has overridden embedding_model=). Warn loudly so
+            # users notice before assuming "no results" means the data
+            # is not there.
+            if target_modality != "text":
+                target_model = getattr(
+                    self._cfg.models,
+                    f"{target_modality}_embedding",
+                    None,
+                )
+                if target_model and target_model != model:
+                    logger.warning(
+                        "Cross-modal search: text query embedded with "
+                        "%r but %s_embedding is configured as %r. "
+                        "Cross-modal only works when both models share "
+                        "an embedding space (e.g. the same CLIP variant). "
+                        "The DescriptorSet nexus_%s__%s must exist and "
+                        "have been written with the same model, or you "
+                        "will get empty / meaningless results.",
+                        model, target_modality, target_model,
+                        target_modality, model,
+                    )
+                elif not target_model:
+                    logger.warning(
+                        "Cross-modal search: modality=%r requested but no "
+                        "%s_embedding is configured. Searching "
+                        "nexus_%s__%s; results will be empty unless that "
+                        "DescriptorSet was written with %r.",
+                        target_modality, target_modality,
+                        target_modality, model, model,
+                    )
+
+            return vector, target_modality
 
         raise NexusValidationError(
             f"Unsupported query type: {type(query).__name__!r}. "
