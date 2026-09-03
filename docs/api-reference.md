@@ -82,10 +82,10 @@ admin.create_principal(
 ```
 
 Register a new app-level Principal in ApertureDB. Returns a generated API key
-that must be delivered to the user out-of-band. The key is stored hashed —
+that must be delivered to the user out-of-band. The key is stored hashed, so
 aperture-nexus cannot recover it after this call.
 
-**Returns:** `str` — the plaintext API key (show once, store securely)
+**Returns:** `str`, the plaintext API key (show once, store securely)
 
 ```python
 api_key = admin.create_principal(
@@ -133,14 +133,14 @@ Memory(
 | `config` | `str \| None` | Path to `aperture_nexus.json`. If `None`, config is discovered automatically (see [Configuration](configuration.md#config-discovery)). |
 | `db_client` | `Connector \| None` | Inject an existing ApertureDB `Connector`. Useful for testing or connection reuse. If `None`, a connector is created from environment variables or the active `adb` configuration. |
 
-The ApertureDB connection is not established at construction time — it is
+The ApertureDB connection is not established at construction time; it is
 created on the first operation.
 
 **Raises:** `NexusConnectionError` if credentials cannot be resolved;
 `NexusConfigError` if the config file is invalid.
 
 ```python
-# Default — credentials from environment or adb config
+# Default: credentials from environment or adb config
 memory = Memory()
 
 # Explicit config file
@@ -162,7 +162,7 @@ Validate credentials and return an authenticated `Principal`. Looks up the `Nexu
 
 In normal use, `api_key` comes from the `NEXUS_API_KEY` environment variable written to `.env` by `adb-nexus init`.
 
-**Returns:** `Principal` — pass to `Context` to identify who is acting.
+**Returns:** `Principal`, which you pass to `Context` to identify who is acting.
 
 **Raises:** `NexusPermissionError` if credentials are invalid or the user does not exist; `NexusConnectionError` if ApertureDB is unreachable.
 
@@ -183,11 +183,11 @@ ctx = Context(principal=principal, session_name="support-001")
 memory.commit(ctx: Context, info: Information) -> str
 ```
 
-Store `Information` in ApertureDB as-is — no model calls, no embeddings. Fast. Returns a `commit_id` — a new UUID identifying this specific commit call.
+Store `Information` in ApertureDB as-is, with no model calls and no embeddings. Fast. Returns a `commit_id`, a new UUID identifying this specific commit call.
 
 Use `commit()` when you need speed and plan to search by metadata (session, organization, time range) rather than semantic similarity.
 
-**Returns:** `str` — the `commit_id`. Pass it to `memory.remove(commit_id=...)` to remove everything written in this call.
+**Returns:** `str`, the `commit_id`. Pass it to `memory.remove(commit_id=...)` to remove everything written in this call.
 **Raises:** `NexusConnectionError`, `NexusStorageError`, `NexusPermissionError`
 
 ```python
@@ -208,7 +208,7 @@ Requires at least one model configured in `aperture_nexus.json` or supplied via 
 
 **Blob-only entries** (e.g. `info.log(blob=pdf_bytes, document_type="pdf")` with no `text=` or `embedding=`) raise `NexusConfigError` because Nexus does not extract text from documents in v1. Options: extract upstream and pass with `text=`, provide a pre-computed embedding, or use `memory.commit()` for opaque storage.
 
-**Returns:** `str` — the `commit_id`. See `commit()`.
+**Returns:** `str`, the `commit_id`. See `commit()`.
 **Raises:** `NexusConfigError` if no model is configured or if the entry is blob-only; `NexusProcessingError` if model calls fail; `NexusConnectionError`, `NexusStorageError`, `NexusPermissionError`
 
 ```python
@@ -263,7 +263,7 @@ Permissions are enforced automatically from the Memory's principal.
 Search is **per-modality for KNN queries**: a semantic (vector) query hits
 exactly one DescriptorSet, so results come back in a single modality. If
 you need semantically related text, images, and videos in the same
-call, issue one `search()` per modality and merge results client-side.
+call, issue one `search()` per modality and merge the results client-side.
 
 **Metadata-only searches** (no `query`) are the exception: they issue
 one multi-command query across `FindBlob`, `FindImage`, and `FindVideo`
@@ -290,32 +290,32 @@ never written).
 | `embedding_model` | `str \| None` | Override the configured embedding model for this query. Must match the model used at index time. |
 | `min_score` | `float \| None` | Minimum similarity score threshold. Results below this are excluded. |
 
-**Query type → modality mapping:**
+**Query type to modality mapping:**
 
 | `query` type | Modality | Embedding call |
 |---|---|---|
-| `str` | text | yes — uses `models.text_embedding` |
-| `Path` / URL `str` / `PIL.Image` | image | yes — uses `models.image_embedding` |
-| video `Path` / `bytes` | video | yes — clip embedded, uses `models.video_embedding` |
-| `np.ndarray` | requires `modality=` | no — used directly |
-| `None` | — | no — metadata filter only |
+| `str` | text | yes; uses `models.text_embedding` |
+| `Path` / URL `str` / `PIL.Image` | image | yes; uses `models.image_embedding` |
+| video `Path` / `bytes` | video | yes; clip embedded, uses `models.video_embedding` |
+| `np.ndarray` | requires `modality=` | no; used directly |
+| `None` | — | no; metadata filter only |
 
 **Returns:** `list[SearchResult]`
 **Raises:** `NexusPermissionError`, `NexusConnectionError`,
 `NexusConfigError` (missing model, mismatched embedding space)
 
 ```python
-# Text query → searches text descriptor set
+# Text query: searches text descriptor set
 results = memory.search(query="missing order last week")
 
-# Image query → searches image descriptor set
+# Image query: searches image descriptor set
 results = memory.search(query="photo.jpg")
 results = memory.search(query=pil_image)
 
-# Pre-computed embedding → modality required
+# Pre-computed embedding: modality required
 results = memory.search(query=my_vector, modality="image")
 
-# Metadata filter only — no embedding needed
+# Metadata filter only: no embedding needed
 results = memory.search(filters={"user_id": "alice"}, k=50)
 
 # Combined: semantic + metadata filter
@@ -344,7 +344,7 @@ class SearchResult:
     user_id: str | None
     created_at: datetime
 
-    # Text content — set when modality is "text" and text is short
+    # Text content: set when modality is "text" and text is short
     text: str | None = None
 
     # Video clip boundaries (modality "video" only)
@@ -372,7 +372,7 @@ memory.search_contexts(
 ) -> list[ContextResult]
 ```
 
-Search committed **contexts** by semantic similarity of their `purpose` field. Complements `memory.search()`, which searches stored content (blobs, images, etc.) — `search_contexts()` searches the context graph nodes themselves.
+Search committed **contexts** by semantic similarity of their `purpose` field. Complements `memory.search()`, which searches stored content (blobs, images, etc.); `search_contexts()` searches the context graph nodes themselves.
 
 Only contexts committed via `process_and_commit()` with a `purpose` set are indexed. `commit()` does not embed context nodes.
 
@@ -455,7 +455,7 @@ memory.remove(
 ) -> None
 ```
 
-Remove committed content from ApertureDB. At least one filter is required. Filters AND together — e.g. `before=ts, session_id=sid` removes only old entries within that session. `results=` is exclusive and cannot be combined with other filters.
+Remove committed content from ApertureDB. At least one filter is required. Filters AND together; for example, `before=ts, session_id=sid` removes only old entries within that session. `results=` is exclusive and cannot be combined with other filters.
 
 | Filter | Removes |
 |--------|---------|
@@ -526,7 +526,7 @@ Return usage statistics. Requires `pip install aperture-nexus[metrics]`.
 
 ## `Context`
 
-Captures who is doing what, in which session, and why. Data object only — does not write to ApertureDB.
+Captures who is doing what, in which session, and why. Data object only; does not write to ApertureDB.
 
 ```python
 from aperture_nexus import Context
@@ -554,11 +554,11 @@ Either `session_id` or `session_name` is required. If `session_name` is provided
 | `principal` | `Principal` | The authenticated user or agent. Required. |
 | `session_id` | `str \| None` | ID of an existing session. Use `generate_session_id()` (from `aperture_nexus`) for multi-participant sessions. |
 | `session_name` | `str \| None` | Human-readable session name. Must be unique within a principal's scope. |
-| `purpose` | `str \| None` | The task or intent behind this interaction — a short phrase describing what is being done (e.g. `"debug failing export"`, `"Q3 budget review"`, `"customer support ticket #4821"`). Stored as metadata; filterable at search time via `filters={"purpose": "..."}`. |
+| `purpose` | `str \| None` | The task or intent behind this interaction: a short phrase describing what is being done (e.g. `"debug failing export"`, `"Q3 budget review"`, `"customer support ticket #4821"`). Stored as metadata; filterable at search time via `filters={"purpose": "..."}`. |
 | `organization` | `str \| None` | Group scope for permission and search filtering. |
 | `department` | `str \| None` | Department this context belongs to. Inherited from `principal.department` if not set explicitly. |
 | `priority` | `int` | Relative priority hint. Higher values are processed first in batch operations. |
-| `restrictions` | `dict \| None` | `{"local": [...], "global": [...]}` — access constraints applied during search. |
+| `restrictions` | `dict \| None` | `{"local": [...], "global": [...]}`: access constraints applied during search. |
 
 ### Properties
 
@@ -622,7 +622,7 @@ info.log(
 
 Add one entry to the buffer and return it. Multiple modalities can be combined in a single call (e.g. text + blob for "see attached PDF").
 
-Validation happens eagerly at `log()` time — bad inputs raise `NexusValidationError` immediately. For file path inputs, file existence and read permissions are checked at `log()` time; content validity (format, decoding) is checked at `commit()` time.
+Validation happens eagerly at `log()` time, so bad inputs raise `NexusValidationError` immediately. For file path inputs, file existence and read permissions are checked at `log()` time; content validity (format, decoding) is checked at `commit()` time.
 
 The returned `InformationEntry` can be passed to `remove()` to discard the entry before it is committed.
 
@@ -638,11 +638,11 @@ The returned `InformationEntry` can be passed to `remove()` to discard the entry
 | `metadata` | `dict \| None` | Arbitrary key-value properties stored alongside the entry. Keys must be `str`; values must be `str`, `int`, `float`, or `bool`. Reserved keys (`context_id`, `session_id`, etc.) are rejected. |
 | `tag` | `str \| None` | Optional label. Pass the same tag to several `log()` calls and then call `remove_tagged(tag)` to discard them all at once. |
 
-**Returns:** `InformationEntry` — holds a reference to the buffered entry. Pass it to `remove()` to discard it.
+**Returns:** `InformationEntry`, which holds a reference to the buffered entry. Pass it to `remove()` to discard it.
 
 **Storage semantics:**
 
-- File paths and URLs are stored as references in the local buffer — content is read from disk or network only when `memory.commit()` is called, not at `log()` time.
+- File paths and URLs are stored as references in the local buffer; content is read from disk or network only when `memory.commit()` is called, not at `log()` time.
 - Raw `bytes` are held in memory until commit.
 
 **Raises:** `NexusValidationError` if input is invalid (missing file, permission denied, wrong numpy shape, missing `document_type` for blob, reserved metadata key, etc.)
@@ -653,17 +653,17 @@ info = Information(context_id=ctx.id)
 # Text
 info.log(text="Customer says order #4821 never arrived")
 
-# Images — path, URL, PIL Image, or numpy array
+# Images: path, URL, PIL Image, or numpy array
 info.log(image="screenshot.png")
 info.log(image="https://example.com/photo.jpg")
 info.log(image=pil_image)
 info.log(image=numpy_array)
 
-# Video — file path, URL, or bytes
+# Video: file path, URL, or bytes
 info.log(video="recording.mp4")
 info.log(video="https://example.com/clip.mp4")
 
-# Blobs — file path, URL, or bytes; document_type is required
+# Blobs: file path, URL, or bytes; document_type is required
 info.log(blob="contract.pdf", document_type="pdf")
 info.log(blob="https://example.com/report.pdf", document_type="pdf")
 info.log(blob=audio_bytes, document_type="mp3")
@@ -674,14 +674,14 @@ info.log(
     metadata={"ticket_id": "T-99", "priority": 1},
 )
 
-# Pre-computed embedding — skips model call at commit time
+# Pre-computed embedding: skips model call at commit time
 info.log(
     image=img,
     embedding=my_vector,
     embedding_model="clip-vit-base-patch32",
 )
 
-# Combined — one log entry with multiple modalities
+# Combined: one log entry with multiple modalities
 info.log(text="See attached invoice", blob="invoice.pdf", document_type="pdf")
 ```
 
@@ -691,7 +691,7 @@ info.log(text="See attached invoice", blob="invoice.pdf", document_type="pdf")
 info.remove(entry: InformationEntry) -> bool
 ```
 
-Remove a specific pending entry from the buffer by identity. Pass back the `InformationEntry` returned by `log()`. Uses `is` comparison — not equality — so two entries with identical content are treated as distinct.
+Remove a specific pending entry from the buffer by identity. Pass back the `InformationEntry` returned by `log()`. Uses `is` comparison rather than equality, so two entries with identical content are treated as distinct.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -786,12 +786,12 @@ info.remove_since(checkpoint)   # undo everything since the checkpoint
 info.remove_all() -> None
 ```
 
-Remove all pending entries and connections from the buffer. Nothing is written to or deleted from ApertureDB — only the local buffer is affected.
+Remove all pending entries and connections from the buffer. Nothing is written to or deleted from ApertureDB; only the local buffer is affected.
 
 Use this to abandon a work-in-progress batch before starting over, for example after an upstream error.
 
 ```python
-info.log(text="wrong context — discard all of this")
+info.log(text="wrong context, discard all of this")
 info.remove_all()
 info.log(text="fresh start")
 memory.commit(ctx, info)   # only "fresh start" is stored
@@ -859,7 +859,7 @@ All exceptions are subclasses of `NexusError`. Import individually or catch the 
 
 ```python
 from aperture_nexus.exceptions import (
-    NexusError,            # base — catch all aperture-nexus errors
+    NexusError,            # base: catch all aperture-nexus errors
     NexusConfigError,      # misconfiguration, missing models, missing optional deps
     NexusValidationError,  # bad input at log() time
     NexusConnectionError,  # ApertureDB unreachable or credentials rejected
@@ -884,10 +884,10 @@ Every exception chains the original cause (`raise NexusXxxError("...") from e`),
 try:
     memory.process_and_commit(ctx, info)
 except NexusConfigError as e:
-    # No model configured — run 'adb-nexus init' to add one
+    # No model configured: run 'adb-nexus init' to add one
     print(e)
 except NexusConnectionError:
-    # ApertureDB unreachable — run 'adb-nexus validate'
+    # ApertureDB unreachable: run 'adb-nexus validate'
     pass
 except NexusError as e:
     # Catch-all for any aperture-nexus error

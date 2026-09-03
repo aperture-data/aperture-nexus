@@ -9,7 +9,7 @@ sidebar_position: 0
 This guide takes you from a fresh machine to storing and searching
 your first multimodal memory. It takes about ten minutes.
 
-Want to see it in action first? Run the interactive demo — no setup
+Want to see it in action first? Run the interactive demo, no setup
 needed:
 
 ```bash
@@ -27,7 +27,7 @@ the web UI). While the demo is running you can explore stored data at
 ## Prerequisites
 
 - Python 3.10 or later
-- Docker — [install Docker](https://docs.docker.com/get-docker/)
+- Docker: [install Docker](https://docs.docker.com/get-docker/)
 
 ---
 
@@ -58,7 +58,7 @@ aperture-nexus stores everything in
 [ApertureDB](https://aperturedata.io). Choose the option that fits
 your situation:
 
-**Local — Docker Compose (quickest):**
+**Local Docker Compose (quickest):**
 
 ```bash
 docker compose up -d
@@ -72,7 +72,7 @@ This starts ApertureDB, the Lenz gateway, and the web UI at
 Set your connection via environment variable and skip the Docker step:
 
 ```bash
-# Encoded key (recommended for production — from `adb config`)
+# Encoded key (recommended for production; from `adb config`)
 export APERTUREDB_KEY="adbp_..."
 
 # Or JSON config for a remote instance
@@ -87,7 +87,7 @@ connection options.
 ## 3. Create a Principal
 
 aperture-nexus uses a two-tier identity model. An **admin** creates
-**principals** — one per user or agent. Principals authenticate with
+**principals**, one per user or agent. Principals authenticate with
 an `api_key` that the admin issues and can rotate without disrupting
 stored data.
 
@@ -158,13 +158,13 @@ info = Information(context_id=ctx.id)
 info.log(text="aperture-nexus stores text, images, audio, video, and more")
 info.log(text="Each entry is linked to a context and session")
 
-# Commit to ApertureDB (raw storage — fast, no model calls).
-# Returns a commit_id — a UUID identifying this specific commit.
+# Commit to ApertureDB (raw storage: fast, no model calls).
+# Returns a commit_id, a UUID identifying this specific commit.
 # Use it with memory.remove(commit_id=...) to remove exactly what was written here.
 commit_id = memory.commit(ctx, info)
 print("Memory committed.")
 
-# Search by metadata filter — no embedding model needed.
+# Search by metadata filter: no embedding model needed.
 # Filter by session_name (human-readable) or session_id (precise).
 # k controls the maximum number of results returned (default: 10).
 results = memory.search(filters={"session_name": "my-first-session"}, k=10)
@@ -189,24 +189,24 @@ entry:
 # Text
 info.log(text="Customer reported a timeout on the /export endpoint")
 
-# Image — file path, URL, PIL Image, or numpy array
+# Image: file path, URL, PIL Image, or numpy array
 info.log(image="screenshot.png")
 info.log(image="https://example.com/diagram.png")
 
-# Audio or other binary content — pass as blob with a document_type
+# Audio or other binary content: pass as blob with a document_type
 info.log(blob=audio_bytes, document_type="mp3")
 info.log(blob=pdf_bytes,   document_type="pdf")
 
 # Video
 info.log(video="recording.mp4")
 
-# Mixed — one entry, multiple modalities
+# Mixed: one entry, multiple modalities
 info.log(text="See attached screenshot", image="screenshot.png")
 ```
 
 To generate embeddings and enable semantic similarity search, use
 `process_and_commit()` instead of `commit()`. This requires a model
-configured in `aperture_nexus.json` — see
+configured in `aperture_nexus.json`; see
 [Configuration](configuration.md).
 
 > **Note on document blobs (pdf, docx, csv, mp3, …):** Nexus v1 stores
@@ -220,7 +220,7 @@ configured in `aperture_nexus.json` — see
 > 2. Pre-compute an embedding and pass it directly:
 >    `info.log(blob=blob_bytes, embedding=my_vector, embedding_model="my-model", document_type="pdf")`
 > 3. Use `memory.commit()` (not `process_and_commit()`) to store the
->    blob opaquely — searchable by metadata filters only.
+>    blob opaquely, searchable by metadata filters only.
 >
 > Native document extraction is planned for a future release.
 
@@ -260,8 +260,8 @@ results = memory.search(filters={"session_id": sid})
 
 ## What's Next
 
-- [Concepts](concepts.md) — the full KMC model and storage mapping
-- [API Reference](api-reference.md) — all parameters and return types
-- [Configuration](configuration.md) — add models and tune processing
-- [`examples/`](https://github.com/aperturedata/aperture-nexus/tree/main/examples)
-  — runnable scripts for each modality
+- [Concepts](concepts.md): the full KMC model and storage mapping
+- [API Reference](api-reference.md): all parameters and return types
+- [Configuration](configuration.md): add models and tune processing
+- [`examples/`](https://github.com/aperturedata/aperture-nexus/tree/main/examples):
+  runnable scripts for each modality

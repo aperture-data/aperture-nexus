@@ -16,13 +16,13 @@ across tickets using both metadata filters and CLIP semantic image search.
 
 ## What This Example Shows
 
-- **Multi-agent sessions** — a senior agent and an AI triage agent each hold
+- **Multi-agent sessions:** a senior agent and an AI triage agent each hold
   their own `Context` into the same support ticket session
-- **Multimodal commits** — text notes and product photos committed together via
+- **Multimodal commits:** text notes and product photos committed together via
   `process_and_commit()` so both are searchable
-- **Graph connectivity** — every commit creates a `NexusCommit` entity linked to
+- **Graph connectivity:** every commit creates a `NexusCommit` entity linked to
   its context, user, and content; the knowledge graph is built automatically
-- **CLIP semantic image search** — a text query ("scratched product") retrieves
+- **CLIP semantic image search:** a text query ("scratched product") retrieves
   the most visually similar damage photos across all tickets
 
 The schema below shows the graph aperture-nexus builds in ApertureDB as entries
@@ -33,7 +33,7 @@ are committed:
 Each `NexusUser` is connected to the `NexusContext` they authored. Each
 `NexusContext` is connected to its `NexusCommit` (for precise removal) and
 directly to every content entry (blob, image) for fast traversal. All edges
-are created atomically with the content — there is no separate graph-building
+are created atomically with the content; there is no separate graph-building
 step.
 
 ---
@@ -59,7 +59,7 @@ memory = Memory()
 
 ## Provision Principals
 
-Each participant — human agents, AI triage bot — gets their own Principal. The
+Each participant (human agents, AI triage bot) gets their own Principal. The
 admin creates them once; principals authenticate with an API key.
 
 ```python
@@ -109,7 +109,7 @@ ctx_ai = Context(
 
 ---
 
-## Agent 1 — Alice Logs the Customer Report
+## Agent 1: Alice Logs the Customer Report
 
 Alice's context buffers text notes and product photos locally. Nothing
 touches ApertureDB until `process_and_commit()` is called.
@@ -146,7 +146,7 @@ NexusUser(alice) ──nexus_user_context──► NexusContext(ctx_alice)
 
 ---
 
-## Agent 2 — AI Triage Adds Its Analysis
+## Agent 2: AI Triage Adds Its Analysis
 
 The AI triage agent commits to the same session but its own context,
 so its contribution is attributed separately in the graph.
@@ -188,7 +188,7 @@ for r in results:
 ## Semantic Image Search Across Tickets
 
 With CLIP embeddings indexed, a text query can retrieve visually similar
-damage photos across all sessions — not just the current ticket.
+damage photos across all sessions, not just the current ticket.
 
 ```python
 # Find the most visually similar damage photos to this text description
@@ -202,8 +202,8 @@ for r in results:
     print(f"score: {r.score:.3f}  session: {r.session_id}  user: {r.user_id}")
 ```
 
-This returns photos from any session where `process_and_commit()` was called —
-scratch, flaking, discoloration, or crack damage — ranked by visual similarity
+This returns photos from any session where `process_and_commit()` was called
+(scratch, flaking, discoloration, or crack damage), ranked by visual similarity
 to the query text. A text query can find image results; an image query can
 find similar images in other sessions.
 
@@ -211,7 +211,7 @@ find similar images in other sessions.
 
 ## Search by Purpose
 
-`search_contexts()` finds sessions by the *intent* behind them — useful when you
+`search_contexts()` finds sessions by the *intent* behind them, useful when you
 want to surface related tickets without knowing their session IDs.
 
 ```python
@@ -247,7 +247,7 @@ one call.
 |---------|-------------|
 | Multi-agent on one ticket | Shared `session_id`, separate `Context` per participant |
 | Attribution | Every entry is linked to its context and its user in the graph |
-| Precise rollback | `commit_id` returned by `process_and_commit()` — pass to `remove(commit_id=...)` to undo exactly one commit |
+| Precise rollback | `commit_id` returned by `process_and_commit()`; pass to `remove(commit_id=...)` to undo exactly one commit |
 | Fast context search | Direct `NexusContext → entry` edges bypass `NexusCommit` for traversal |
 | Semantic image retrieval | CLIP embeddings indexed at commit time; text or image queries at search time |
 | Organization scope | Set `organization=` on `Context` to filter results to one tenant |
@@ -256,8 +256,8 @@ one call.
 
 ## Full Runnable Example
 
-The full script — with seeded org knowledge across three agents, damage photo
-generation, and the live CLIP demo — is in
+The full script, with seeded org knowledge across three agents, damage photo
+generation, and the live CLIP demo, is in
 [`demo/customer_support_demo.py`](https://github.com/aperturedata/aperture-nexus/blob/main/demo/customer_support_demo.py).
 
 Run it against a local Docker stack:

@@ -643,9 +643,9 @@ class TestAsyncProcessAndCommit:
 
     @pytest.mark.asyncio
     async def test_task_completes_successfully(self, mock_connector):
-        # Blob + pre-computed embedding: exercises the full write path
-        # (process_and_commit no longer accepts blob-only without an
-        # embedding — that path raises NexusConfigError).
+        # Blob + pre-computed embedding: process_and_commit requires
+        # something to embed, so blob-only entries need an explicit
+        # embedding for this path.
         mock_connector.query.side_effect = [
             _ok_response("AddEntity"),               # ensure_session
             _ok_response("AddEntity"),               # ensure_context
@@ -673,8 +673,8 @@ class TestAsyncProcessAndCommit:
         memory = _make_memory(mock_connector)
         ctx = _make_ctx()
         info = _make_info(ctx)
-        # Must be embeddable content or the task fails with
-        # NexusConfigError before the mocked storage error can fire.
+        # Include an embedding so the task reaches the DB call and the
+        # mocked storage error is what actually surfaces.
         vec = np.ones(32, dtype=np.float32)
         info.log(
             blob=b"data", document_type="bin",

@@ -9,7 +9,7 @@ description: The cognition engine for enterprise AI.
 
 aperture-nexus enables AI workflows, agents, and the humans working
 alongside them to establish context, capture knowledge across text,
-images, audio, video, and more — and commit it to memory for search
+images, audio, video, and more, and commit it to memory for search
 and retrieval, powered by [ApertureDB](https://aperturedata.io)'s
 vector search and knowledge graph.
 
@@ -25,12 +25,12 @@ committed, and later drives retrieval that reasons across Memory
 and `Knowledge` together. Results produce new Information, and the
 loop continues.
 
-- **Knowledge (K)** — the general facts and relationships that
+- **Knowledge (K)**: the general facts and relationships that
   don't change moment to moment. A shared baseline in ApertureDB.
-- **Memory (M)** — what was captured in a particular interaction
+- **Memory (M)**: what was captured in a particular interaction
   (a document, notes, an image, a fact), accumulated over time
   from new commits.
-- **Context (C)** — the who, what, when, why, and how that makes
+- **Context (C)**: the who, what, when, why, and how that makes
   a fact meaningful rather than merely retrievable.
 
 ```mermaid
@@ -54,7 +54,7 @@ flowchart LR
 situation, reasoning that draws on both durable facts and recent
 experience, and the ability to surface, update, or discard what an
 agent is relying on as new evidence arrives. The dashed edges are
-the **cognition hooks** — where a domain-specific layer or a human
+the **cognition hooks**, where a domain-specific layer or a human
 keeps the loop honest.
 
 The same model works for a single developer session, a multi-agent
@@ -67,7 +67,7 @@ useful mnemonic, not the product.
 
 ## Quick Start
 
-Try the interactive walkthrough in one command — no setup needed:
+Try the interactive walkthrough in one command, no setup needed:
 
 ```bash
 git clone https://github.com/aperturedata/aperture-nexus

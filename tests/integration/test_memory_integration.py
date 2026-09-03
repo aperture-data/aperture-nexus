@@ -396,6 +396,64 @@ class TestClipImageSearch:
         assert matching
         assert matching[0].modality == "image"
 
+    def test_image_search_returns_content_bytes(
+        self, clip_memory, test_principal
+    ):
+        """KNN search populates SearchResult.content with the raw image bytes.
+
+        Verifies the two-hop query: FindDescriptor for KNN ranking plus
+        FindImage with is_connected_to on nexus_descriptor_entry brings
+        the source image bytes back in the same round trip.
+        """
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        original = self._make_png(color=(200, 50, 50))
+        info.log(image=original)
+        clip_memory.process_and_commit(ctx, info)
+
+        from aperture_nexus._embeddings import get_clip_embedder
+        embedder = get_clip_embedder(_CLIP_MODEL)
+        query_vec = embedder.embed_image(original)
+
+        results = clip_memory.search(
+            query=query_vec, modality="image",
+            embedding_model=_CLIP_MODEL, k=5,
+        )
+        matching = [r for r in results if r.session_id == sid]
+        assert matching, "Committed image not found in search results"
+        top = matching[0]
+        assert top.content is not None, (
+            "content should be populated when return_content=True (default)"
+        )
+        assert isinstance(top.content, (bytes, bytearray))
+        assert top.content == original, (
+            "content bytes should match the committed image"
+        )
+
+    def test_image_search_return_content_false_skips_bytes(
+        self, clip_memory, test_principal
+    ):
+        """return_content=False leaves SearchResult.content as None."""
+        sid = _unique_sid()
+        ctx = Context(principal=test_principal, session_id=sid)
+        info = Information(context_id=ctx.id)
+        info.log(image=self._make_png(color=(20, 200, 20)))
+        clip_memory.process_and_commit(ctx, info)
+
+        from aperture_nexus._embeddings import get_clip_embedder
+        embedder = get_clip_embedder(_CLIP_MODEL)
+        query_vec = embedder.embed_image(self._make_png(color=(20, 200, 20)))
+
+        results = clip_memory.search(
+            query=query_vec, modality="image",
+            embedding_model=_CLIP_MODEL, k=5,
+            return_content=False,
+        )
+        matching = [r for r in results if r.session_id == sid]
+        assert matching
+        assert matching[0].content is None
+
 
 @pytest.mark.integration
 class TestMetadataSearchContentEntities:
