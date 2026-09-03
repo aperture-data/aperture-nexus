@@ -19,28 +19,31 @@ vector search and knowledge graph.
 
 ## How It Works
 
-The KMC model reflects how enterprises work with knowledge: existing
-Knowledge is captured via `Information`, `Memory` stores and retrieves
-it, and `Context` tells Memory who is acting and why so the right
-knowledge comes back.
+The KMC model reflects how enterprises actually work with knowledge.
+**Knowledge** lives in ApertureDB — the baseline corpus your
+organization already has, plus the memories accumulated over time.
+**Memory** is how new inputs become durable Knowledge: `Information`
+is staged locally in Nexus, and `memory.commit()` turns it into a
+stored memory in the graph. **Context** stamps every commit and frames
+retrieval so the right knowledge surfaces for the right situation.
 
 ```mermaid
 flowchart LR
-    I["Information (K)\ntext · image · video · blob\nlocal buffer"]
-    C["Context (C)\nwho · session · purpose"]
-    M["Memory (M)\ncommit · search · connect"]
-    DB["ApertureDB\nvector search\nknowledge graph"]
+    I["Information\nlocal Nexus buffer\ntext · image · video · blob"]
+    C["Context (C)\nwho · what · when · why · how"]
+    M["Memory (M)\ncommits Information into Knowledge"]
+    K["Knowledge (K) — ApertureDB\nbaseline + accumulated memories"]
 
-    C -->|"stamps entries"| M
+    C -->|"stamps every commit"| M
     I -->|"commit()"| M
-    M <-->|"store / retrieve"| DB
+    M <-->|"stores / retrieves"| K
 ```
 
-| KMC | Object | Role |
-|-----|--------|------|
-| **K** | `Information` | Local buffer — nothing written to DB until commit |
-| **M** | `Memory` | Commits, processes embeddings, connects, and searches |
-| **C** | `Context` | Who is acting, in which session, and why — scopes retrieval |
+| KMC | Concept | Nexus objects |
+|-----|---------|---------------|
+| **K** | Knowledge stored in ApertureDB — baseline corpus plus memories accumulated over time | Read and written via `Memory` |
+| **M** | Turning `Information` into durable Knowledge — the act and the engine | `Memory` (engine) + `Information` (staging buffer) |
+| **C** | Who, what, when, why, and how — the retrieval frame | `Context` |
 
 The same model works for a single developer session, a multi-agent
 pipeline, or a human+AI team sharing context across an enterprise.

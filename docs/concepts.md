@@ -6,35 +6,45 @@ sidebar_position: 1
 
 # Concepts
 
-aperture-nexus is the cognition layer for enterprise AI. It is built
+aperture-nexus is the cognition engine for enterprise AI. It is built
 around the **KMC model** — three concepts that reflect how enterprises
-actually work with knowledge:
+actually work with knowledge.
 
-- **Knowledge** — enterprises already have it: documents, past
-  decisions, customer records, support tickets. aperture-nexus captures
-  new multimodal knowledge and connects it to what already exists.
-- **Memory** — the engine that stores, processes, and retrieves
-  Knowledge. The only component that writes to or reads from
-  ApertureDB.
-- **Context** — who is acting, in which session, and why. Context
-  spans Knowledge and Memory: it is stamped on every stored entry and
-  used to retrieve the right knowledge for the right situation.
+- **Knowledge** — everything stored in ApertureDB as first-class graph
+  data. This includes the baseline your organization has loaded once
+  (catalogs, policies, historical records, past decisions) and the
+  memories accumulated over time as new information is committed.
+  Both live in the same store and are searched together.
+- **Memory** — how new inputs become durable Knowledge. `Information`
+  is a local Nexus buffer where content is staged; `memory.commit()`
+  turns it into a stored memory that joins the rest of Knowledge in
+  ApertureDB. The `Memory` engine class is the only component that
+  reads from or writes to ApertureDB.
+- **Context** — the who, what, when, why, and how that makes a fact
+  meaningful rather than merely retrievable. Nexus stamps Context on
+  every commit and uses it as the retrieval frame so the right
+  knowledge surfaces for the right situation.
 
-In code, the three API objects that implement the KMC model are
-`Information` (K), `Memory` (M), and `Context` (C). This page
-explains what each represents, how they relate, and how they map to
-ApertureDB's storage primitives.
+Together these form the **cognition layer**: the ability to retrieve
+the right knowledge in the relevant context, and to update the
+underlying store as new memories arrive. In code, the API objects are
+`Information` (the staging buffer), `Memory` (the engine that turns
+Information into stored Knowledge), and `Context` (the retrieval
+frame). This page explains what each represents, how they relate, and
+how they map to ApertureDB's storage primitives.
 
 ---
 
 ## The Three Core Objects
 
-### Information — Knowledge (K)
+### Information — The Staging Buffer
 
-`Information` is a **local buffer for multimodal inputs** accumulated
-during a session. It is the K in KMC — the raw knowledge being
-captured. Nothing is written to ApertureDB until `memory.commit()`
-or `memory.process_and_commit()` is called.
+`Information` is a **local, client-side buffer** where new multimodal
+content is staged before it becomes Knowledge. It is a Nexus concept —
+nothing is written to ApertureDB until `memory.commit()` or
+`memory.process_and_commit()` is called. On commit, the buffered
+entries become stored memories that join the rest of Knowledge in
+ApertureDB and are searchable alongside the baseline corpus.
 
 Inputs are added via `Information.log()`, which validates and
 normalizes each entry immediately — errors surface at log time, not
@@ -61,22 +71,28 @@ at commit time), while `blob` also accepts a file path as a
 convenience. If you want to store a reference only (e.g. a URL you
 don't want fetched), use `text` or a custom `metadata` field.
 
-### Memory — Engine (M)
+### Memory — Turning Information Into Knowledge
 
-`Memory` is the **central engine** — the M in KMC. It is the only
-component that writes to ApertureDB. It:
+`Memory` is the M in KMC — both an act and an engine. As an act, it is
+the transition from `Information` (staged in Nexus) to Knowledge
+(durable graph data in ApertureDB). As a class, `Memory` is the only
+component that reads from or writes to ApertureDB — every other object
+in the API is a pure data object.
+
+The engine:
 
 - Authenticates principals
 - Commits and processes `Information` into durable storage
 - Connects memories and contexts with named relationships
-- Searches across stored memories with permission enforcement
+- Searches across stored knowledge with permission enforcement
 
-### Context — Retrieval Frame (C)
+### Context — The Retrieval Frame
 
-A `Context` captures **who is acting, in which session, and why** —
-the C in KMC. It is a pure data object: it never writes to ApertureDB.
-`Memory` uses it as a retrieval frame, stamping every stored entry
-with its properties so searches can be scoped precisely.
+A `Context` captures **who, what, when, why, and how** — the C in KMC.
+It is a pure data object: it never writes to ApertureDB. Nexus stamps
+every commit with its Context properties so retrieval can be scoped
+to the right participants, sessions, and purposes — turning raw
+storage into meaningful cognition.
 
 Key properties:
 
@@ -106,19 +122,18 @@ Think of it as tagging every log entry with the task it was part of.
 flowchart TD
     P["Principal\n(authenticated user or agent)"]
     S["Session\n(shared across participants)"]
-    C["Context (C)\nwho · session · purpose"]
-    I["Information (K)\nlocal buffer — text · image · video · blob"]
-    M["Memory (M)\nengine"]
-    DB["ApertureDB\nvector search · knowledge graph"]
+    C["Context (C)\nwho · what · when · why · how"]
+    I["Information\nlocal Nexus buffer — text · image · video · blob"]
+    M["Memory (M)\nengine — commits Information into Knowledge"]
+    K["Knowledge (K) — ApertureDB\nbaseline corpus + accumulated memories"]
 
-    P -->|"participates in"| S
+    P -->|"acts within"| S
     P -->|"identified by"| C
     S -->|"scopes"| C
     C -->|"context_id"| I
     I -->|"commit / process_and_commit"| M
-    M -->|"reads and writes"| DB
-    DB -->|"search results"| M
-    C -->|"stamps every entry"| M
+    M <-->|"stores / retrieves"| K
+    C -->|"stamps every commit"| M
 ```
 
 ---
