@@ -18,7 +18,7 @@ multi-team enterprise deployment.
 
 ---
 
-## Try it now — one command
+## Try It Now — One Command
 
 ```bash
 git clone https://github.com/aperturedata/aperture-nexus
@@ -278,7 +278,7 @@ Full documentation is in the [`docs/`](docs/) folder:
 | [Configuration](docs/configuration.md) | Every field in `aperture_nexus.json` with defaults and env var overrides |
 | [Customer Support Agent](docs/customer-support-agent.md) | Multi-agent multimodal pipeline with CLIP semantic search — worked example |
 
-### Knowledge graph at a glance
+### Knowledge Graph at a Glance
 
 Every `commit()` creates a `NexusCommit` entity connected to its `NexusContext`,
 `NexusUser`, and content (blobs, images, videos). The full graph:

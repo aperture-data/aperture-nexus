@@ -154,7 +154,7 @@ Use `commit()` when you need speed and will rely on metadata-only
 search. Use `process_and_commit()` when you need semantic (vector)
 search across the stored content.
 
-### Clearing and updating the buffer
+### Clearing and Updating the Buffer
 
 Before committing, you can clean up the `Information` buffer. All removal methods affect only the local buffer — nothing is written to or deleted from ApertureDB.
 
@@ -202,7 +202,7 @@ info.log(text="fresh start")
 memory.commit(ctx, info)   # only "fresh start" is stored
 ```
 
-### Memories are append-only in v1
+### Memories Are Append-Only in v1
 
 `commit()` always adds new entries — there is no in-place update. If
 you commit the same context twice you get more entries, not replaced
@@ -300,7 +300,6 @@ reference on these primitives.
 |----------------|---------------------|-------|
 | Principal / User | `Entity` (`NexusUser`) | One per `user_id` |
 | Session | `Entity` (`NexusSession`) | Shared across participants |
-| User ↔ Session | `Connection` (`participates_in`) | Many-to-many |
 | Context | `Entity` (`NexusContext`) | session_id, purpose, org |
 | User → Context | `Connection` (`nexus_user_context`) | Principal authored this context |
 | Session → Context | `Connection` (`nexus_session_context`) | Context belongs to session |
@@ -313,7 +312,7 @@ reference on these primitives.
 | Video | `Video` → `Clip` entities → `Descriptor` | Per clip |
 | Blob (pdf, mp3…) | `Blob` with `document_type` | Raw bytes; no embedding |
 | Pre-computed embedding | `Descriptor` directly | Model recorded as property |
-| MemoryTask | `Entity` (`NexusMemoryTask`) | Async status tracking |
+| MemoryTask | in-memory object | Async status tracking (not persisted) |
 
 The graph below shows the schema as it appears in ApertureDB after a
 commit — blue nodes are aperture-nexus entities, slate nodes are

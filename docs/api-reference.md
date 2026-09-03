@@ -33,8 +33,8 @@ ctx_agent    = Context(principal=agent_principal,    session_id=sid, ...)
 
 ## `NexusAdmin`
 
-Identity authority. Creates and manages department-level ApertureDB users and
-app-level Principals. Requires admin ApertureDB credentials.
+Identity authority. Creates and manages app-level Principals. Requires admin
+ApertureDB credentials.
 
 ```python
 from aperture_nexus import NexusAdmin
@@ -54,10 +54,10 @@ NexusAdmin(
 | `config` | `str \| None` | Path to `aperture_nexus.json`. Discovered automatically if `None`. |
 | `db_client` | `Connector \| None` | Inject an existing admin `Connector`. If `None`, a connector is created from environment variables or the active `adb` configuration. |
 
-On first use, `NexusAdmin` creates the default organization (`nexus_default_org`)
-and department (`nexus_default_dept`) entities in ApertureDB if they do not exist.
-These names are configurable via `admin.default_organization` and
-`admin.default_department` in `aperture_nexus.json`.
+If `organization` or `department` is not passed to `admin.create_principal()`,
+the defaults (`nexus_default_org` and `nexus_default_dept`) are used. These names
+are configurable via `admin.default_organization` and `admin.default_department`
+in `aperture_nexus.json`.
 
 **Raises:** `NexusConnectionError` if admin credentials cannot be resolved;
 `NexusConfigError` if the config file is invalid.
@@ -67,47 +67,6 @@ admin = NexusAdmin()
 admin = NexusAdmin(config="/path/to/aperture_nexus.json")
 admin = NexusAdmin(db_client=existing_admin_connector)
 ```
-
----
-
-### `admin.authenticate()`
-
-```python
-admin.authenticate(
-    user_id: str,
-    api_key: str,
-) -> Principal
-```
-
-Validate credentials and return a `Principal` for use in a `Context`.
-The `user_id` must have been created via `admin.create_principal()`.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `user_id` | `str` | Unique identifier for this principal. |
-| `api_key` | `str` | API key issued at `create_principal()` time. Never log or store this value. |
-
-**Returns:** `Principal`
-**Raises:** `NexusPermissionError` if credentials are invalid or the user does not exist.
-
-```python
-principal = admin.authenticate(user_id="alice", api_key="...")
-```
-
----
-
-### `admin.create_department()`
-
-```python
-admin.create_department(
-    department: str,
-    organization: str | None = None,
-) -> None
-```
-
-Create a department-level ApertureDB user with entity, connection, and index
-read/write permissions. Principals in this department use these credentials
-when `Memory` connects to ApertureDB.
 
 ---
 
@@ -276,7 +235,7 @@ if task.status == "complete":
     print(f"commit_id: {task.commit_id}")
 else:
     print(f"Failed: {task.error_message}")
-    task.retry()
+    await task.retry()
 ```
 
 ---
@@ -524,7 +483,7 @@ List async tasks that are still in flight or have failed.
 ```python
 for task in memory.failed_commits():
     print(task.error_message)
-    task.retry()
+    await task.retry()
 ```
 
 ---
@@ -561,6 +520,7 @@ Context(
     session_name: str | None = None,
     purpose: str | None = None,
     organization: str | None = None,
+    department: str | None = None,
     priority: int = 0,
     restrictions: dict | None = None,
 )
@@ -575,6 +535,7 @@ Either `session_id` or `session_name` is required. If `session_name` is provided
 | `session_name` | `str \| None` | Human-readable session name. Must be unique within a principal's scope. |
 | `purpose` | `str \| None` | The task or intent behind this interaction — a short phrase describing what is being done (e.g. `"debug failing export"`, `"Q3 budget review"`, `"customer support ticket #4821"`). Stored as metadata; filterable at search time via `filters={"purpose": "..."}`. |
 | `organization` | `str \| None` | Group scope for permission and search filtering. |
+| `department` | `str \| None` | Department this context belongs to. Inherited from `principal.department` if not set explicitly. |
 | `priority` | `int` | Relative priority hint. Higher values are processed first in batch operations. |
 | `restrictions` | `dict \| None` | `{"local": [...], "global": [...]}` — access constraints applied during search. |
 
@@ -819,7 +780,8 @@ memory.commit(ctx, info)   # only "fresh start" is stored
 
 ## `MemoryTask`
 
-Returned by `memory.async_process_and_commit()`. State is persisted in ApertureDB.
+Returned by `memory.async_process_and_commit()`. Tracks the status of an
+in-flight background commit in memory on the `Memory` instance.
 
 ### Properties
 
@@ -837,7 +799,7 @@ Returned by `memory.async_process_and_commit()`. State is persisted in ApertureD
 ```python
 task.is_ready() -> bool
 await task.wait() -> None    # async block until complete or failed
-task.retry() -> None         # resubmit a failed task
+await task.retry() -> None   # resubmit a failed task
 ```
 
 ```python
@@ -848,18 +810,18 @@ if task.status == "complete":
     print(f"commit_id: {task.commit_id}")
 elif task.status == "failed":
     print(f"failed: {task.error_message}")
-    task.retry()
+    await task.retry()
 ```
 
 ---
 
 ## `Principal`
 
-Returned by `admin.authenticate()`. Passed to `Context` to identify who is
+Returned by `memory.authenticate()`. Passed to `Context` to identify who is
 performing an action. Do not construct directly.
 
 ```python
-principal = admin.authenticate(user_id="alice", api_key="...")
+principal = memory.authenticate(user_id="alice", api_key="...")
 
 # Properties
 principal.user_id      # "alice"

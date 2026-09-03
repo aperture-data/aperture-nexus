@@ -14,7 +14,7 @@ across tickets using both metadata filters and CLIP semantic image search.
 
 ---
 
-## What this example shows
+## What This Example Shows
 
 - **Multi-agent sessions** — a senior agent and an AI triage agent each hold
   their own `Context` into the same support ticket session
@@ -57,7 +57,7 @@ memory = Memory()
 
 ---
 
-## Provision principals
+## Provision Principals
 
 Each participant — human agents, AI triage bot — gets their own Principal. The
 admin creates them once; principals authenticate with an API key.
@@ -83,7 +83,7 @@ ai    = memory.authenticate(user_id="ai-triage",     api_key=ai_key)
 
 ---
 
-## Open a shared support ticket session
+## Open a Shared Support Ticket Session
 
 A single session ID is shared across all participants. Each participant
 opens their own `Context` into that session, which becomes a node in
@@ -109,7 +109,7 @@ ctx_ai = Context(
 
 ---
 
-## Agent 1 — Alice logs the customer report
+## Agent 1 — Alice Logs the Customer Report
 
 Alice's context buffers text notes and product photos locally. Nothing
 touches ApertureDB until `process_and_commit()` is called.
@@ -146,7 +146,7 @@ NexusUser(alice) ──nexus_user_context──► NexusContext(ctx_alice)
 
 ---
 
-## Agent 2 — AI triage adds its analysis
+## Agent 2 — AI Triage Adds Its Analysis
 
 The AI triage agent commits to the same session but its own context,
 so its contribution is attributed separately in the graph.
@@ -163,7 +163,7 @@ print("AI triage committed")
 
 ---
 
-## Retrieve the full ticket
+## Retrieve the Full Ticket
 
 Searching by `session_id` returns all contributions from all participants
 in that session, regardless of which context they came from.
@@ -185,7 +185,7 @@ for r in results:
 
 ---
 
-## Semantic image search across tickets
+## Semantic Image Search Across Tickets
 
 With CLIP embeddings indexed, a text query can retrieve visually similar
 damage photos across all sessions — not just the current ticket.
@@ -209,7 +209,7 @@ find similar images in other sessions.
 
 ---
 
-## Search by purpose
+## Search by Purpose
 
 `search_contexts()` finds sessions by the *intent* behind them — useful when you
 want to surface related tickets without knowing their session IDs.
@@ -227,7 +227,7 @@ for r in related:
 
 ---
 
-## Clean up
+## Clean Up
 
 ```python
 memory.remove(session_id=sid)
@@ -236,11 +236,12 @@ admin.delete_principal(user_id="ai-triage")
 ```
 
 `remove(session_id=sid)` deletes all blobs, images, text chunks, descriptors,
-`NexusCommit` entities, and `NexusContext` entities for the session in one call.
+`NexusCommit`, `NexusContext`, and `NexusSession` entities for the session in
+one call.
 
 ---
 
-## Key patterns
+## Key Patterns
 
 | Pattern | How it works |
 |---------|-------------|
@@ -253,7 +254,7 @@ admin.delete_principal(user_id="ai-triage")
 
 ---
 
-## Full runnable example
+## Full Runnable Example
 
 The full script — with seeded org knowledge across three agents, damage photo
 generation, and the live CLIP demo — is in
