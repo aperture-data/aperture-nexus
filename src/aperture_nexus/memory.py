@@ -158,6 +158,13 @@ class SearchResult:
     start_frame: Optional[int] = None
     stop_frame: Optional[int] = None
 
+    # Raw content bytes for image / video / blob results. Populated
+    # when search() runs with return_content=True (the default) by
+    # traversing nexus_descriptor_entry from the matched Descriptor to
+    # its source content in the same query. For text results, use the
+    # text field (content stays None because text is already inline).
+    content: Optional[bytes] = None
+
     metadata: dict = field(default_factory=dict)
 
     # Internal — set by search(), consumed by memory.remove(results=...)
@@ -718,6 +725,7 @@ class Memory:
         k: int = 10,
         embedding_model: Optional[str] = None,
         min_score: Optional[float] = None,
+        return_content: bool = True,
     ) -> list[SearchResult]:
         """Search stored memories by semantic similarity, metadata, or both.
 
@@ -748,6 +756,12 @@ class Memory:
                 this query. Must match the model used at index time.
             min_score: Minimum similarity score. Results below this are
                 excluded.
+            return_content: When True (default), each SearchResult from a
+                semantic (KNN) query has ``content`` populated with the
+                raw bytes of the matched image / video / blob via a
+                single-round-trip graph traversal of
+                ``nexus_descriptor_entry``. Set to False to skip the
+                second hop when only metadata + text preview is needed.
 
         Returns:
             List of ``SearchResult``, ordered by descending similarity.
@@ -784,7 +798,7 @@ class Memory:
             )
 
         if query is None:
-            return self._search_by_metadata(filters or {}, k)
+            return self._search_by_metadata(filters or {}, k, modality)
 
         vector, resolved_modality = self._resolve_query_vector(
             query, modality, embedding_model
@@ -792,6 +806,7 @@ class Memory:
         return self._search_by_vector(
             vector, resolved_modality, filters or {}, k, min_score,
             embedding_model=embedding_model,
+            return_content=return_content,
         )
 
     # ------------------------------------------------------------------
@@ -2139,8 +2154,18 @@ class Memory:
         k: int,
         min_score: Optional[float],
         embedding_model: Optional[str] = None,
+        return_content: bool = True,
     ) -> list[SearchResult]:
-        """Execute a KNN search on the appropriate DescriptorSet."""
+        """Execute a KNN search on the appropriate DescriptorSet.
+
+        When return_content is True (default), the query is a
+        two-command batch: FindDescriptor for the KNN ranking, then
+        FindBlob/FindImage/FindVideo traversing nexus_descriptor_entry
+        for the source content bytes. Results are matched back by
+        entry_id (duplicated on both descriptor and content) because
+        the second-hop response order is not guaranteed to match
+        FindDescriptor's distance rank order.
+        """
         model = embedding_model or getattr(self._cfg.models, f"{modality}_embedding", None)
         if modality not in ("text", "image", "video"):
             raise NexusValidationError(
@@ -2150,20 +2175,43 @@ class Memory:
         dset = _dset_name(modality, model) if model else f"nexus_{modality}"
 
         constraints = self._build_constraints(filters)
-        cmd_body: dict = {
+        find_desc: dict = {
             "set": dset,
             "k_neighbors": k,
             "results": {"all_properties": True},
             "distances": True,
         }
         if constraints:
-            cmd_body["constraints"] = constraints
+            find_desc["constraints"] = constraints
+            # knn_first: false is required for constraints to pre-filter
+            # KNN rather than post-filter a global top-k. See
+            # aperturedb-connector-skill.md section 11.
+            find_desc["knn_first"] = False
 
-        cmd = [{"FindDescriptor": cmd_body}]
+        # Pick the Find* command that matches the modality; text sits in
+        # Blob entities with document_type="text", images in Image,
+        # videos in Video.
+        find_content_cmd = {
+            "text":  "FindBlob",
+            "image": "FindImage",
+            "video": "FindVideo",
+        }[modality]
+
+        cmd: list[dict] = [{"FindDescriptor": {**find_desc, "_ref": 1}}]
+        if return_content:
+            cmd.append({find_content_cmd: {
+                "is_connected_to": {
+                    "ref": 1,
+                    "connection_class": _CONN_DESCRIPTOR_ENTRY,
+                },
+                "blobs": True,
+                "results": {"all_properties": True},
+            }})
+
         emb_bytes = _embedding_to_bytes(vector)
 
         try:
-            response, _ = self._db.query(cmd, [emb_bytes])
+            response, response_blobs = self._db.query(cmd, [emb_bytes])
         except Exception as e:
             raise NexusConnectionError(
                 f"ApertureDB search query failed: {e}. "
@@ -2171,21 +2219,36 @@ class Memory:
             ) from e
 
         # ApertureDB may return a bare dict (not a list) when the descriptor
-        # set does not exist or the query is malformed.  Treat it as empty.
+        # set does not exist or the query is malformed. Treat as empty.
         if not isinstance(response, list) or not response:
             return []
-        body = response[0].get("FindDescriptor", {})
-        if body.get("status", 0) != 0:
+        desc_body = response[0].get("FindDescriptor", {})
+        if desc_body.get("status", 0) != 0:
             return []
-        # ApertureDB returns descriptors under "entities"; distance is
-        # embedded as "_distance" on each entity (not a separate list).
-        descriptors = body.get("entities", [])
+        descriptors = desc_body.get("entities", [])
+
+        # Build entry_id → content bytes lookup from the second hop.
+        # Order in the second response is NOT guaranteed to match KNN
+        # rank order, so we key by entry_id and re-associate below.
+        content_by_entry: dict[str, bytes] = {}
+        if return_content and len(response) > 1:
+            content_body = response[1].get(find_content_cmd, {})
+            content_entities = content_body.get("entities", [])
+            blob_start = content_body.get("blobs_start", 0)
+            for ent in content_entities:
+                entry_id = ent.get("entry_id")
+                if not entry_id:
+                    continue
+                idx = blob_start + ent.get("_blob_index", 0)
+                if idx < len(response_blobs):
+                    content_by_entry[entry_id] = response_blobs[idx]
 
         results = []
         for desc in descriptors:
             score = float(desc.get("_distance", 0.0))
             if min_score is not None and score < min_score:
                 continue
+            entry_id = desc.get("entry_id")
             results.append(SearchResult(
                 score=score,
                 modality=modality,
@@ -2198,6 +2261,7 @@ class Memory:
                 text=desc.get("text"),
                 start_frame=desc.get("start_frame"),
                 stop_frame=desc.get("stop_frame"),
+                content=content_by_entry.get(entry_id) if entry_id else None,
                 metadata={
                     k: v for k, v in desc.items()
                     if k not in (
@@ -2207,18 +2271,23 @@ class Memory:
                         "entry_id", "commit_id",
                     )
                 },
-                _entry_id=desc.get("entry_id"),
+                _entry_id=entry_id,
             ))
         return results
 
     def _search_by_metadata(
-        self, filters: dict, k: int
+        self, filters: dict, k: int, modality: Optional[str] = None,
     ) -> list[SearchResult]:
         """Return content entities (Blob, Image, Video) matching metadata filters.
 
-        Searches all three content entity types in a single multi-command
-        query and combines the results. Blob results are returned with
-        modality ``"text"`` (for text blobs) or ``"blob"`` (for raw blobs).
+        When ``modality`` is ``None`` (default), searches all three
+        content entity types in a single multi-command query and
+        combines the results. When ``modality`` is set to ``"text"``,
+        ``"image"``, ``"video"``, or ``"blob"``, dispatches only the
+        matching Find* command so callers get modality-scoped results
+        without over-fetching. Blob results are returned with modality
+        ``"text"`` (for ``document_type="text"`` blobs) or ``"blob"``
+        (for raw blobs).
         """
         constraints = self._build_constraints(filters)
         results_limit = {"all_properties": True, "limit": k}
@@ -2229,11 +2298,30 @@ class Memory:
                 b["constraints"] = constraints
             return b
 
-        cmd = [
-            {"FindBlob": _body()},
-            {"FindImage": _body()},
-            {"FindVideo": _body()},
+        # Dispatch: image/video map cleanly to one Find*; text and blob
+        # both live in Blob entities and are distinguished by
+        # document_type, so both hit FindBlob (differentiated at
+        # result-parsing time below).
+        all_entity_types = [
+            ("FindBlob", None),    # modality derived from document_type
+            ("FindImage", "image"),
+            ("FindVideo", "video"),
         ]
+        if modality is None:
+            selected = all_entity_types
+        elif modality in ("text", "blob"):
+            selected = [("FindBlob", None)]
+        elif modality == "image":
+            selected = [("FindImage", "image")]
+        elif modality == "video":
+            selected = [("FindVideo", "video")]
+        else:
+            raise NexusValidationError(
+                f"Unknown modality {modality!r} for metadata search. "
+                f"Choose one of: 'text', 'image', 'video', 'blob'."
+            )
+
+        cmd = [{name: _body()} for name, _ in selected]
         try:
             response, _ = self._db.query(cmd)
         except Exception as e:
@@ -2246,22 +2334,23 @@ class Memory:
             return []
 
         results = []
-        entity_types = [
-            ("FindBlob", None),    # modality derived from document_type
-            ("FindImage", "image"),
-            ("FindVideo", "video"),
-        ]
-        for resp_item, (cmd_name, fixed_modality) in zip(response, entity_types):
+        for resp_item, (cmd_name, fixed_modality) in zip(response, selected):
             body = resp_item.get(cmd_name, {})
             for ent in body.get("entities", []):
                 if fixed_modality is None:
                     doc_type = ent.get("document_type", "")
-                    modality = "text" if doc_type == "text" else "blob"
+                    entry_modality = "text" if doc_type == "text" else "blob"
                 else:
-                    modality = fixed_modality
+                    entry_modality = fixed_modality
+                # When caller asked for a specific modality but the
+                # dispatch command returns a mixed pool (FindBlob covers
+                # both text and blob), filter out non-matching entries.
+                if (modality in ("text", "blob")
+                        and entry_modality != modality):
+                    continue
                 results.append(SearchResult(
                     score=1.0,
-                    modality=modality,
+                    modality=entry_modality,
                     session_id=ent.get("session_id", ""),
                     context_id=ent.get("context_id", ""),
                     user_id=ent.get("user_id"),
