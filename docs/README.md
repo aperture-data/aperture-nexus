@@ -13,7 +13,7 @@ images, audio, video, and more, and commit it to memory for search
 and retrieval, powered by [ApertureDB](https://aperturedata.io)'s
 vector search and knowledge graph.
 
-![aperture-nexus hello world](https://raw.githubusercontent.com/aperturedata/aperture-nexus/main/demo/demo.gif)
+![aperture-nexus hello world](https://raw.githubusercontent.com/aperture-data/aperture-nexus/main/demo/demo.gif)
 
 ---
 
@@ -70,7 +70,7 @@ useful mnemonic, not the product.
 Try the interactive walkthrough in one command, no setup needed:
 
 ```bash
-git clone https://github.com/aperturedata/aperture-nexus
+git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
 docker compose --profile demo run --rm nexus-demo
 ```
@@ -90,5 +90,22 @@ your own integration.
 | [Configuration](configuration.md) | Every field in `aperture_nexus.json` |
 | [Customer Support Agent](customer-support-agent.md) | Multi-agent pipeline with multimodal memory and semantic image search |
 
-See [`examples/`](https://github.com/aperturedata/aperture-nexus/tree/main/examples)
+See [`examples/`](https://github.com/aperture-data/aperture-nexus/tree/main/examples)
 for runnable scripts covering each data modality.
+
+---
+
+## Related Resources
+
+Longer-form writing on the ideas behind aperture-nexus:
+
+- [Introducing Aperture Nexus: Multimodal Memory](https://www.aperturedata.io/resources/introducing-aperture-nexus-multimodal-memory) — launch post, the KMC model, and the cognition stack.
+- [AI Memory & Cognition: The Architect's Playbook](https://www.aperturedata.io/resources/ai-memory-cognition-the-architects-playbook) — design patterns for enterprise AI memory.
+- [AI Memory & Cognition Landscape Deep Dive](https://www.aperturedata.io/resources/ai-memory-cognition-landscape-deep-dive) — where existing tools sit and what is missing.
+- [The Spectrum of Machine Cognition: Evaluating Frameworks (Part 2A)](https://www.aperturedata.io/resources/the-spectrum-of-machine-cognition-evaluating-frameworks-part2-a) — how to compare cognition frameworks.
+- [Human Memory: The Perfect Template for AI Memory](https://www.aperturedata.io/resources/human-memory-the-perfect-template-for-ai-memory) — the biological analogy that shaped KMC.
+- [Context Graphs: Their Implementation, Human Judgment & Machine Agency](https://www.aperturedata.io/resources/context-graphs-their-implementation-human-judgment-machine-agency) — Context as a first-class citizen.
+
+Podcast — *The Cognitive Layer*:
+
+- [Episode 1: Himanshu (Netflix)](https://www.aperturedata.io/resources/the-cognitive-layer-episode1-himanshu-netflix)

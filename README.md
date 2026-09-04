@@ -29,7 +29,7 @@ Knowledge over time.
 ## Try It Now: One Command
 
 ```bash
-git clone https://github.com/aperturedata/aperture-nexus
+git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
 docker compose --profile demo run --rm nexus-demo
 ```
@@ -115,7 +115,7 @@ results = memory.search(query="missing orders last week")
 aperture-nexus v0.1.0 is not yet on PyPI. Install directly from the repository:
 
 ```bash
-git clone https://github.com/aperturedata/aperture-nexus
+git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
 pip install .
 ```
@@ -302,6 +302,23 @@ for the per-connection breakdown.
 
 ---
 
+## Related Resources
+
+Longer-form writing on the ideas behind aperture-nexus:
+
+- [Introducing Aperture Nexus: Multimodal Memory](https://www.aperturedata.io/resources/introducing-aperture-nexus-multimodal-memory) — launch post, the KMC model, and the cognition stack.
+- [AI Memory & Cognition: The Architect's Playbook](https://www.aperturedata.io/resources/ai-memory-cognition-the-architects-playbook) — design patterns for enterprise AI memory.
+- [AI Memory & Cognition Landscape Deep Dive](https://www.aperturedata.io/resources/ai-memory-cognition-landscape-deep-dive) — where existing tools sit and what is missing.
+- [The Spectrum of Machine Cognition: Evaluating Frameworks (Part 2A)](https://www.aperturedata.io/resources/the-spectrum-of-machine-cognition-evaluating-frameworks-part2-a) — how to compare cognition frameworks.
+- [Human Memory: The Perfect Template for AI Memory](https://www.aperturedata.io/resources/human-memory-the-perfect-template-for-ai-memory) — the biological analogy that shaped KMC.
+- [Context Graphs: Their Implementation, Human Judgment & Machine Agency](https://www.aperturedata.io/resources/context-graphs-their-implementation-human-judgment-machine-agency) — Context as a first-class citizen.
+
+Podcast — *The Cognitive Layer*:
+
+- [Episode 1: Himanshu (Netflix)](https://www.aperturedata.io/resources/the-cognitive-layer-episode1-himanshu-netflix)
+
+---
+
 ## CLI
 
 ```bash
@@ -401,7 +418,7 @@ v0.1 ships the core Nexus API (commit, search, connect, and authenticate) that i
 | Web UI | Browser interface for browsing sessions, contexts, memories, and search |
 | Async commit (validated) | `async_process_and_commit()` re-exposed after live integration testing and persistent task status |
 
-**Shape what gets built:** [Join the v2 discussion →](https://github.com/aperturedata/aperture-nexus/discussions)
+**Shape what gets built:** [Join the v2 discussion →](https://github.com/aperture-data/aperture-nexus/discussions)
 
 Tell us what you're building and what would unblock you. We prioritize based on real use cases.
 

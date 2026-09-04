@@ -109,6 +109,27 @@ retained; the user can no longer authenticate.
 
 ---
 
+### `admin.rotate_key()`
+
+```python
+admin.rotate_key(user_id: str) -> str
+```
+
+Issue a replacement API key for an existing Principal. Generates a new random key, replaces the stored hash, and returns the new plaintext key. The previous key is invalidated immediately. Identity verification of the user is the caller's responsibility (out of band).
+
+**Returns:** `str`, the new plaintext API key. Deliver securely; update the user's `.env`.
+
+**Raises:** `NexusValidationError` if `user_id` is empty or does not exist. `NexusStorageError` if ApertureDB rejects the update.
+
+> **v1 caveat.** Not yet validated against a live ApertureDB instance; emits a runtime warning when called.
+
+```python
+new_key = admin.rotate_key(user_id="alice")
+# Deliver new_key to alice securely; she updates her .env.
+```
+
+---
+
 ## `Memory`
 
 Storage and retrieval engine. The only component that commits and searches

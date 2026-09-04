@@ -25,6 +25,18 @@ remember, retrieve, and reason continuously, the way real teams work.
   fact meaningful rather than merely retrievable. Stamped on every
   memory so retrieval can be scoped precisely.
 
+### The Cognition Stack
+
+The KMC concepts sit inside a layered architecture: ApertureDB provides
+the storage and query substrate, Nexus organizes Knowledge, Memory,
+and Context on top of it, and the reasoning layer above uses that
+substrate to think, decide, and act.
+
+![aperture-nexus cognition stack](blog_image_cognition_stack_v2.png)
+
+For a longer treatment see [Introducing Aperture Nexus: Multimodal Memory](https://www.aperturedata.io/resources/introducing-aperture-nexus-multimodal-memory)
+and [AI Memory & Cognition: The Architect's Playbook](https://www.aperturedata.io/resources/ai-memory-cognition-the-architects-playbook).
+
 ### The KMC Loop
 
 KMC is not three static buckets. It runs as a loop:
@@ -387,7 +399,7 @@ The graph below shows the schema as it appears in ApertureDB after a
 commit. Blue nodes are aperture-nexus entities, slate nodes are
 ApertureDB native storage primitives:
 
-![aperture-nexus ApertureDB schema graph](https://raw.githubusercontent.com/vishakha041/aperture-nexus/main/demo/nexus_schema.png)
+![aperture-nexus ApertureDB schema graph](https://raw.githubusercontent.com/aperture-data/aperture-nexus/main/demo/nexus_schema.png)
 
 ### DescriptorSets
 

@@ -378,12 +378,12 @@ def run_demo() -> None:
     print("    docker compose down -v       # stop and wipe all data")
     blank()
     print("  Next steps:")
-    print("    git clone https://github.com/aperturedata/aperture-nexus")
+    print("    git clone https://github.com/aperture-data/aperture-nexus")
     print("    cd aperture-nexus && pip install .")
     print("    docker compose up -d         # start ApertureDB stack")
     print("    adb-nexus init               # create your principal")
     blank()
-    print("  Docs: https://github.com/aperturedata/aperture-nexus")
+    print("  Docs: https://github.com/aperture-data/aperture-nexus")
     blank()
 
 
