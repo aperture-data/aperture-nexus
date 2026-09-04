@@ -29,7 +29,7 @@ Knowledge over time.
 ## Try It Now: One Command
 
 ```bash
-git clone https://github.com/aperturedata/aperture-nexus
+git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
 docker compose --profile demo run --rm nexus-demo
 ```
@@ -115,7 +115,7 @@ results = memory.search(query="missing orders last week")
 aperture-nexus v0.1.0 is not yet on PyPI. Install directly from the repository:
 
 ```bash
-git clone https://github.com/aperturedata/aperture-nexus
+git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
 pip install .
 ```
@@ -401,7 +401,7 @@ v0.1 ships the core Nexus API (commit, search, connect, and authenticate) that i
 | Web UI | Browser interface for browsing sessions, contexts, memories, and search |
 | Async commit (validated) | `async_process_and_commit()` re-exposed after live integration testing and persistent task status |
 
-**Shape what gets built:** [Join the v2 discussion →](https://github.com/aperturedata/aperture-nexus/discussions)
+**Shape what gets built:** [Join the v2 discussion →](https://github.com/aperture-data/aperture-nexus/discussions)
 
 Tell us what you're building and what would unblock you. We prioritize based on real use cases.
 

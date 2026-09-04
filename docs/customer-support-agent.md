@@ -10,7 +10,7 @@ This example walks through a realistic enterprise support pipeline: multiple age
 share a session, commit text and product photos to memory, and retrieve context
 across tickets using both metadata filters and CLIP semantic image search.
 
-![aperture-nexus customer support demo](https://raw.githubusercontent.com/vishakha041/aperture-nexus/main/demo/customer_support_demo.gif)
+![aperture-nexus customer support demo](https://raw.githubusercontent.com/aperture-data/aperture-nexus/main/demo/customer_support_demo.gif)
 
 ---
 
@@ -28,7 +28,7 @@ across tickets using both metadata filters and CLIP semantic image search.
 The schema below shows the graph aperture-nexus builds in ApertureDB as entries
 are committed:
 
-![aperture-nexus schema graph](https://raw.githubusercontent.com/vishakha041/aperture-nexus/main/demo/nexus_schema.png)
+![aperture-nexus schema graph](https://raw.githubusercontent.com/aperture-data/aperture-nexus/main/demo/nexus_schema.png)
 
 Each `NexusUser` is connected to the `NexusContext` they authored. Each
 `NexusContext` is connected to its `NexusCommit` (for precise removal) and
@@ -258,7 +258,7 @@ one call.
 
 The full script, with seeded org knowledge across three agents, damage photo
 generation, and the live CLIP demo, is in
-[`demo/customer_support_demo.py`](https://github.com/aperturedata/aperture-nexus/blob/main/demo/customer_support_demo.py).
+[`demo/customer_support_demo.py`](https://github.com/aperture-data/aperture-nexus/blob/main/demo/customer_support_demo.py).
 
 Run it against a local Docker stack:
 

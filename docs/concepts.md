@@ -387,7 +387,7 @@ The graph below shows the schema as it appears in ApertureDB after a
 commit. Blue nodes are aperture-nexus entities, slate nodes are
 ApertureDB native storage primitives:
 
-![aperture-nexus ApertureDB schema graph](https://raw.githubusercontent.com/vishakha041/aperture-nexus/main/demo/nexus_schema.png)
+![aperture-nexus ApertureDB schema graph](https://raw.githubusercontent.com/aperture-data/aperture-nexus/main/demo/nexus_schema.png)
 
 ### DescriptorSets
 

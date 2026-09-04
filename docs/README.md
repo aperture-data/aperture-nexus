@@ -13,7 +13,7 @@ images, audio, video, and more, and commit it to memory for search
 and retrieval, powered by [ApertureDB](https://aperturedata.io)'s
 vector search and knowledge graph.
 
-![aperture-nexus hello world](https://raw.githubusercontent.com/aperturedata/aperture-nexus/main/demo/demo.gif)
+![aperture-nexus hello world](https://raw.githubusercontent.com/aperture-data/aperture-nexus/main/demo/demo.gif)
 
 ---
 
@@ -70,7 +70,7 @@ useful mnemonic, not the product.
 Try the interactive walkthrough in one command, no setup needed:
 
 ```bash
-git clone https://github.com/aperturedata/aperture-nexus
+git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
 docker compose --profile demo run --rm nexus-demo
 ```
@@ -90,5 +90,5 @@ your own integration.
 | [Configuration](configuration.md) | Every field in `aperture_nexus.json` |
 | [Customer Support Agent](customer-support-agent.md) | Multi-agent pipeline with multimodal memory and semantic image search |
 
-See [`examples/`](https://github.com/aperturedata/aperture-nexus/tree/main/examples)
+See [`examples/`](https://github.com/aperture-data/aperture-nexus/tree/main/examples)
 for runnable scripts covering each data modality.

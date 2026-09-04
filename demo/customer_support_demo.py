@@ -888,7 +888,7 @@ def main():
     w = W()
     blank()
     print(f"  {BOLD}{CYAN}{'═' * (w - 4)}{RESET}")
-    print(f"  {BOLD}  github.com/aperturedata/aperture-nexus{RESET}")
+    print(f"  {BOLD}  github.com/aperture-data/aperture-nexus{RESET}")
     print(f"  {BOLD}{CYAN}{'═' * (w - 4)}{RESET}")
     blank()
 

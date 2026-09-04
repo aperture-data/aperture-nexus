@@ -13,7 +13,7 @@ Want to see it in action first? Run the interactive demo, no setup
 needed:
 
 ```bash
-git clone https://github.com/aperturedata/aperture-nexus
+git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
 docker compose --profile demo run --rm nexus-demo
 ```
@@ -37,7 +37,7 @@ aperture-nexus is not yet on PyPI. Clone the repository and install
 directly:
 
 ```bash
-git clone https://github.com/aperturedata/aperture-nexus
+git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
 pip install .
 ```
@@ -263,5 +263,5 @@ results = memory.search(filters={"session_id": sid})
 - [Concepts](concepts.md): the full KMC model and storage mapping
 - [API Reference](api-reference.md): all parameters and return types
 - [Configuration](configuration.md): add models and tune processing
-- [`examples/`](https://github.com/aperturedata/aperture-nexus/tree/main/examples):
+- [`examples/`](https://github.com/aperture-data/aperture-nexus/tree/main/examples):
   runnable scripts for each modality

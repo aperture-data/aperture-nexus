@@ -95,10 +95,10 @@ all = [
 adb-nexus = "aperture_nexus.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/vishakha041/aperture-nexus"
+Homepage = "https://github.com/aperture-data/aperture-nexus"
 Documentation = "https://docs.aperturedata.dev/aperture-nexus"
-Repository = "https://github.com/vishakha041/aperture-nexus"
-Issues = "https://github.com/vishakha041/aperture-nexus/issues"
+Repository = "https://github.com/aperture-data/aperture-nexus"
+Issues = "https://github.com/aperture-data/aperture-nexus/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

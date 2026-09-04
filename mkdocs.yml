@@ -1,8 +1,8 @@
 site_name: aperture-nexus
 site_description: The Cognition Engine for Enterprise AI — context, knowledge, and memory for AI workflows, agents, and teams
-site_url: https://aperturedata.github.io/aperture-nexus
-repo_url: https://github.com/aperturedata/aperture-nexus
-repo_name: aperturedata/aperture-nexus
+site_url: https://aperture-data.github.io/aperture-nexus
+repo_url: https://github.com/aperture-data/aperture-nexus
+repo_name: aperture-data/aperture-nexus
 edit_uri: edit/main/docs/
 
 theme:
