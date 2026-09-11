@@ -26,6 +26,61 @@ Knowledge over time.
 
 ---
 
+## Why Nexus
+
+Most memory tools treat agent interactions as disconnected text chunks
+in a vector store. Nothing carries over: not the reasoning, not the
+context, not what actually happened last time. Existing knowledge bases
+get missed, and the original source of information gets lost.
+
+Nexus is the memory layer built on ApertureDB, the unified graph,
+vector, and multimodal database already running in production. Here is
+what changes when you use it.
+
+**Continuity across sessions and tools.** One shared memory backbone
+for every session, tool, and teammate on the same principal. Your
+Claude Code session from this morning, your Cursor session at lunch,
+your teammate joining the project tomorrow all see the same
+accumulated Knowledge and Memory.
+
+**Vector search plus knowledge graph, not vectors alone.** Vector
+search returns the top-K semantically similar chunks and stops. Nexus
+adds the knowledge graph on top, in the same store. Context (who,
+what, when, why, and how) is stamped on every commit; existing
+Knowledge lives alongside. Retrieval combines vector similarity with
+graph structure, so what comes back is not just "closest in embedding
+space" but the specific Memory plus the Knowledge and Context that
+together form the cognitive basis for answering the question. This
+mirrors how human memory works: recall is scoped by the situation you
+are in (Context) and connected to what you already know (Knowledge),
+not just what feels similar to whatever you are thinking about.
+
+**Lineage on demand.** Every commit's origin is right there in the same
+graph. Trace a memory back to the interaction that produced it, spot
+duplicates by source, audit what the agent has been relying on.
+Available when you want it, out of the way when you don't.
+
+**Team and department scale.** Adding a user is one call:
+`NexusAdmin.create_principal(user_id=..., organization=...,
+department=...)`. Every memory carries the principal, organization, and
+department that created it, and search scopes by that frame
+automatically. One memory backbone across the company, not a silo per
+tool or per person.
+
+**Security and privacy.** Admin credentials live only where principals
+are created, never in application code. Every operation enforces the
+caller's permissions. Self-host on Docker Compose or Kubernetes, or run
+on a cloud ApertureDB instance under your control. No third-party
+service sees your memories or your queries.
+
+**Ready for whatever your work adds next.** Text today; documents,
+images, video, audio, or structured records whenever your agents need
+them. Same store, same graph, same API. The capability is already there
+because ApertureDB is what backs Nexus. No second stack to bolt on, no
+migration when your work grows past chat logs.
+
+---
+
 ## Try It Now: One Command
 
 ```bash
