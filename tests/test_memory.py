@@ -1722,6 +1722,83 @@ class TestAtomicDescriptorWrite:
         assert props["organization"] == "AcmeCorp"
         assert props["department"] == "support"
 
+    def test_session_name_and_purpose_written_to_content_entity(
+        self, mock_connector,
+    ):
+        """session_name and purpose from Context land on content entities.
+
+        These are the filter keys api-reference lists for
+        memory.search(); if they aren't stamped on the entity, filters
+        return zero results silently.
+        """
+        captured = []
+
+        def _capture(cmd, blobs=None):
+            captured.append(cmd)
+            if any("FindEntity" in c for c in cmd):
+                return _find_response(count=1)
+            return _ok_response(list(cmd[0].keys())[0])
+
+        mock_connector.query.side_effect = _capture
+        memory = _make_memory(mock_connector)
+        ctx = _make_ctx(session_name="my-session")
+        ctx.purpose = "help debug a rate-limiter"
+        info = _make_info(ctx)
+        info.log(text="hi")
+        memory.commit(ctx, info)
+
+        blob_call = next(
+            cmd for cmd in captured
+            if any("AddBlob" in c for c in cmd)
+        )
+        blob_cmd = next(c for c in blob_call if "AddBlob" in c)
+        props = blob_cmd["AddBlob"]["properties"]
+        assert props["session_name"] == "my-session"
+        assert props["purpose"] == "help debug a rate-limiter"
+
+    def test_context_fields_written_to_descriptor(self, mock_connector):
+        """session_name, purpose, organization, department land on descriptors.
+
+        Semantic search filters run against FindDescriptor constraints,
+        so descriptors must carry the same Context fields as content
+        entities. Without this, filters={"purpose": ...} in a semantic
+        search returns zero even though the memory exists.
+        """
+        captured = []
+
+        def _capture(cmd, blobs=None):
+            captured.append(cmd)
+            if any("FindDescriptorSet" in c for c in cmd):
+                return _find_descriptor_set_response(count=1)
+            if any("FindEntity" in c for c in cmd):
+                return _find_response(count=1)
+            return ([{k: {"status": 0} for k in c} for c in cmd], [])
+
+        mock_connector.query.side_effect = _capture
+        memory = _make_memory(mock_connector)
+        from aperture_nexus.auth import Principal
+        principal = Principal(
+            user_id="alice", user_name="Test User",
+            organization="AcmeCorp", department="support",
+        )
+        ctx = _make_ctx(principal=principal, session_name="rl-design")
+        ctx.purpose = "Architect a per-user rate limiter"
+        info = _make_info(ctx)
+        vec = np.ones(64, dtype=np.float32)
+        info.log(text="chose token bucket", embedding=vec, embedding_model="m")
+        memory.commit(ctx, info)
+
+        atomic = next(
+            cmd for cmd in captured
+            if any("AddDescriptor" in c for c in cmd)
+        )
+        desc_cmd = next(c for c in atomic if "AddDescriptor" in c)
+        props = desc_cmd["AddDescriptor"]["properties"]
+        assert props["session_name"] == "rl-design"
+        assert props["purpose"] == "Architect a per-user rate limiter"
+        assert props["organization"] == "AcmeCorp"
+        assert props["department"] == "support"
+
 
 class TestMetadataSearchContentEntities:
     """_search_by_metadata searches Blob/Image/Video, not NexusContext."""
