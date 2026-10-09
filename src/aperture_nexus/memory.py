@@ -1703,7 +1703,13 @@ class Memory:
         self, entry, ctx: Context, session_id: str, modality: str,
         commit_id: str, entry_id: str,
     ) -> dict:
-        """Build the properties dict for an AddDescriptor command."""
+        """Build the properties dict for an AddDescriptor command.
+
+        Mirrors Context fields (session_name, purpose, organization,
+        department) from the content-entity common_props so that
+        semantic search can filter by them, matching the list of
+        supported filter keys in memory.search().
+        """
         props: dict = {
             "context_id": ctx.id,
             "session_id": session_id,
@@ -1714,6 +1720,14 @@ class Memory:
             "commit_id": commit_id,
             "entry_id": entry_id,
         }
+        if ctx.session_name:
+            props["session_name"] = ctx.session_name
+        if ctx.purpose:
+            props["purpose"] = ctx.purpose
+        if ctx.principal.organization:
+            props["organization"] = ctx.principal.organization
+        if ctx.principal.department:
+            props["department"] = ctx.principal.department
         if entry.metadata:
             props.update(entry.metadata)
         # Store short text inline on the Descriptor for search result hydration
@@ -1740,12 +1754,14 @@ class Memory:
             "commit_id": commit_id,
             "entry_id": entry_id,
         }
-        # Include session_name so entries can be filtered by it (session_name
-        # is also stored on NexusSession, but the filter path queries content
-        # entities directly, so the property must live here too).
+        # Include Context fields (session_name, purpose) and principal
+        # fields (organization, department) so metadata search can filter
+        # by them. Descriptors get the same fields stamped in
+        # _descriptor_props so semantic search can filter equivalently.
         if ctx.session_name:
             common_props["session_name"] = ctx.session_name
-        # Include principal org/dept so content entities can be filtered by them
+        if ctx.purpose:
+            common_props["purpose"] = ctx.purpose
         if ctx.principal.organization:
             common_props["organization"] = ctx.principal.organization
         if ctx.principal.department:

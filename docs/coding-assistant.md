@@ -168,14 +168,13 @@ memory = Memory()
 alice = memory.authenticate(user_id="alice", api_key=os.environ["NEXUS_API_KEY"])
 
 # What did we decide yesterday?
-# In v1, semantic search filters by user_id, session_id, context_id.
-# Broader filters (purpose, session_name, organization, department) work
-# on metadata-only search today and are on the roadmap for semantic
-# search once descriptor stamping catches up.
 prior = memory.search(
     query="rate limiter design decisions",
     modality="text",
-    filters={"user_id": "alice"},
+    filters={
+        "organization": "acme",
+        "purpose": "Architect a per-user rate limiter for the API",
+    },
     k=5,
 )
 print("Yesterday's decisions:")
@@ -209,12 +208,10 @@ print(f"Session 2: implementation notes committed under 'rate-limiter-impl' "
       f"({commit_id[:8]}...).")
 ```
 
-The `filters` on the search scope retrieval to Alice's own memories.
-Semantic similarity on top narrows the results to the specific rate
-limiter thread. In real deployments you would combine this with
-metadata attached at log time via `info.log(text=..., metadata={...})`;
-descriptor-side stamping of Context.purpose and session_name to enable
-those as first-class filters is a v1-to-v2 gap tracked separately.
+The `filters` scope retrieval to Alice's organization and the specific
+`purpose` stamped on the earlier commit. Without that scope, a large
+organization's memory store would return every "rate limiter" mention
+across every team and every year. With it, retrieval is meaningful.
 
 ---
 
@@ -232,19 +229,17 @@ from aperture_nexus import Context, Information, Memory
 memory = Memory()
 alice = memory.authenticate(user_id="alice", api_key=os.environ["NEXUS_API_KEY"])
 
-# Retrieve both prior threads via semantic search, scoped to Alice.
-# Semantic similarity separates design-context matches from
-# implementation-context matches.
+# Retrieve both prior sessions
 design = memory.search(
     query="rate limiter architectural decisions",
     modality="text",
-    filters={"user_id": "alice"},
+    filters={"organization": "acme", "session_name": "rate-limiter-design"},
     k=5,
 )
 impl = memory.search(
-    query="rate limiter implementation and open issues",
+    query="rate limiter implementation notes",
     modality="text",
-    filters={"user_id": "alice"},
+    filters={"organization": "acme", "session_name": "rate-limiter-impl"},
     k=5,
 )
 print("Full context from prior work:")
@@ -284,14 +279,11 @@ the new work all in mind.
 
 The reason the sessions above find the right memories is that Nexus
 stores every commit in the same knowledge graph as the descriptors
-used for vector search. Every committed entry carries `context_id`,
-`session_id`, `user_id`, `commit_id`, `entry_id`, `created_at`, and
-any `metadata` you attach at log time. Search combines vector
-similarity with those properties as constraints in a single ApertureDB
-query, so retrieval is scoped and semantic together. Broader
-Context-side filters (`session_name`, `purpose`, `organization`,
-`department`) work on metadata-only search today; extending descriptor
-stamping so they also work in semantic search is a follow-up.
+used for vector search. `session_name`, `purpose`, `organization`,
+`department`, `user_id`, `created_at`, and any `metadata` you attach
+are properties on each committed entry and on its descriptor. Search
+combines vector similarity with those properties as constraints in a
+single ApertureDB query, so retrieval is scoped and semantic together.
 
 Lineage falls out of the same graph for free. Each memory is connected
 to the `NexusCommit` that created it and the `NexusContext` that

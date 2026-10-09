@@ -333,6 +333,72 @@ class TestClipTextSearch:
         assert matching, "Committed entry not found"
         assert matching[0].text == "inline text entry for CLIP"
 
+    def test_semantic_search_filter_by_purpose(self, clip_memory, test_principal):
+        """purpose stamped by Context is filterable via semantic search."""
+        sid = _unique_sid()
+        purpose = f"purpose-{uuid.uuid4().hex[:8]}"
+        ctx = Context(principal=test_principal, session_id=sid, purpose=purpose)
+        info = Information(context_id=ctx.id)
+        info.log(text="Chose token bucket over sliding window.")
+        clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search(
+            query="rate limiter design", modality="text",
+            embedding_model=_CLIP_MODEL,
+            filters={"purpose": purpose}, k=5,
+        )
+        assert results, (
+            "Expected at least one result when filtering semantic search "
+            f"by purpose={purpose!r}"
+        )
+        assert all(r.session_id == sid for r in results)
+
+    def test_semantic_search_filter_by_session_name(self, clip_memory, test_principal):
+        """session_name from Context is filterable via semantic search."""
+        sid = _unique_sid()
+        sname = f"sn-{uuid.uuid4().hex[:8]}"
+        ctx = Context(principal=test_principal, session_id=sid, session_name=sname)
+        info = Information(context_id=ctx.id)
+        info.log(text="Backing store is Redis with per-user keys.")
+        clip_memory.process_and_commit(ctx, info)
+
+        results = clip_memory.search(
+            query="key-value store choice", modality="text",
+            embedding_model=_CLIP_MODEL,
+            filters={"session_name": sname}, k=5,
+        )
+        assert results, (
+            f"Expected at least one result when filtering by "
+            f"session_name={sname!r}"
+        )
+        assert all(r.session_id == sid for r in results)
+
+    def test_semantic_search_purpose_filter_isolates_across_purposes(
+        self, clip_memory, test_principal,
+    ):
+        """Filter by purpose returns only entries with that purpose, not others."""
+        purpose_a = f"purposeA-{uuid.uuid4().hex[:8]}"
+        purpose_b = f"purposeB-{uuid.uuid4().hex[:8]}"
+        for purpose in (purpose_a, purpose_b):
+            ctx = Context(
+                principal=test_principal, session_id=_unique_sid(),
+                purpose=purpose,
+            )
+            info = Information(context_id=ctx.id)
+            info.log(text=f"Design decision under {purpose}: use CRDTs.")
+            clip_memory.process_and_commit(ctx, info)
+
+        results_a = clip_memory.search(
+            query="design decision CRDTs", modality="text",
+            embedding_model=_CLIP_MODEL,
+            filters={"purpose": purpose_a}, k=10,
+        )
+        assert results_a
+        assert all(r.metadata.get("purpose") == purpose_a for r in results_a), (
+            f"Expected only purpose_a entries; got: "
+            f"{[r.metadata.get('purpose') for r in results_a]}"
+        )
+
 
 @pytest.mark.integration
 class TestClipImageSearch:
