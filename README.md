@@ -175,6 +175,11 @@ cd aperture-nexus
 pip install .
 ```
 
+Requires Python 3.10+, ApertureDB server 0.19.14+, and `aperturedb` Python SDK
+0.5.0+ (installed automatically). See
+[Version compatibility](docs/getting-started.md#version-compatibility) for the
+tested matrix.
+
 Optional features:
 
 ```bash

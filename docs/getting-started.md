@@ -29,6 +29,23 @@ the web UI). While the demo is running you can explore stored data at
 - Python 3.10 or later
 - Docker: [install Docker](https://docs.docker.com/get-docker/)
 
+### Version compatibility
+
+aperture-nexus is tested against the following versions. The Docker Compose
+stack and the `pip install` floor pin these for you; this table is for
+reference and for anyone running against an existing ApertureDB instance.
+
+| Component | Required | Tested on |
+|-----------|----------|-----------|
+| ApertureDB server | 0.19.14 or later | 0.19.14 |
+| `aperturedb` Python SDK | 0.5.0 or later | 0.5.0 |
+| Python | 3.10 or later | 3.10, 3.11 |
+
+Older ApertureDB servers (pre-0.19.14) return a different shape for idempotent
+duplicate-detection responses and are not supported. If you connect
+aperture-nexus to an older server, writes that would be idempotent-success
+instead raise `NexusStorageError`.
+
 ---
 
 ## 1. Install aperture-nexus
