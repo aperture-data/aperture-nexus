@@ -59,32 +59,35 @@ def _hash_key(api_key: str) -> str:
 def _check_response(response, operation: str) -> None:
     """Raise NexusStorageError if any command in the response failed.
 
-    Handles both the normal list-of-dicts format and the bare-dict format
-    that ApertureDB returns for schema/parameter errors.
+    Handles three ApertureDB response shapes: list-of-dicts, bare-dict
+    error, and mixed. Treats "already exists" messages as idempotent
+    success so admin-side idempotent patterns (if_not_found, CreateIndex,
+    AddDescriptorSet) stay safe across server versions.
     """
-    # ApertureDB returns a bare dict (not wrapped in a list) for invalid queries
     if isinstance(response, dict):
         status = response.get("status", -1)
-        if status != 0:
-            raise NexusStorageError(
-                f"{operation} failed (status={status}): "
-                f"{response.get('info', 'no details')}. "
-                f"Check your ApertureDB connection and schema."
-            )
-        return
+        info = response.get("info", "no details") or ""
+        if status == 0 or "already exists" in info.lower():
+            return
+        raise NexusStorageError(
+            f"{operation} failed (status={status}): {info}. "
+            f"Check your ApertureDB connection and schema."
+        )
     for item in response:
         for cmd_name, body in item.items():
-            status = body.get("status", -1) if isinstance(body, dict) else -1
-            if status != 0:
-                info = (
-                    body.get("info", "no details")
-                    if isinstance(body, dict)
-                    else str(body)
-                )
+            if not isinstance(body, dict):
                 raise NexusStorageError(
-                    f"{operation} failed (status={status}): {info}. "
-                    f"Check your ApertureDB connection and schema."
+                    f"{operation} failed: unexpected body for {cmd_name!r}: "
+                    f"{body!r}. Check your ApertureDB connection and schema."
                 )
+            status = body.get("status", -1)
+            info = body.get("info", "no details") or ""
+            if status in (0, 2) or "already exists" in info.lower():
+                continue
+            raise NexusStorageError(
+                f"{operation} failed (status={status}): {info}. "
+                f"Check your ApertureDB connection and schema."
+            )
 
 
 def _entity_exists(db, entity_class: str, constraints: dict) -> bool:
@@ -329,7 +332,12 @@ class NexusAdmin:
         self._defaults_ensured = True
 
     def _ensure_schema(self) -> None:
-        """Create property indexes for fast constraint lookups — idempotent."""
+        """Create property indexes for fast constraint lookups — idempotent.
+
+        Routed through _check_response so that any server shape for the
+        "already exists" case (list-wrapped status=2 or bare-dict
+        status=-1 with "already exists" in info) is treated as success.
+        """
         indexes = [
             (_CLASS_USER, "user_id"),
         ]
@@ -340,13 +348,5 @@ class NexusAdmin:
                 "property_key": prop,
             }}]
             response, _ = self._db.query(cmd)
-            for item in response:
-                for _, body in item.items():
-                    status = body.get("status", -1) if isinstance(body, dict) else -1
-                    if status not in (0, 2):
-                        info = body.get("info", "no details") if isinstance(body, dict) else str(body)
-                        logger.warning(
-                            "CreateIndex %r.%r returned status=%d: %s",
-                            cls, prop, status, info,
-                        )
+            _check_response(response, f"CreateIndex({cls!r}.{prop!r})")
             logger.debug("Ensured index on %s.%s", cls, prop)

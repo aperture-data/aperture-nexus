@@ -208,34 +208,47 @@ class ContextResult:
 def _check_response(response, operation: str) -> None:
     """Raise NexusStorageError if any command in the response failed.
 
-    Handles both the normal list-of-dicts format and the bare-dict format
-    that ApertureDB returns for schema/parameter errors.
+    Handles three ApertureDB response shapes:
+    - Normal list-of-dicts: ``[{"CmdName": {"status": 0, ...}}, ...]``
+    - Bare-dict error: ``{"info": "...", "status": -1}`` returned for
+      schema / parameter errors (e.g. CreateIndex on an existing index
+      starting with server 0.19.x).
+    - List containing a mix of success dicts and bare-dict errors.
+
+    "Already exists" messages are treated as idempotent success for both
+    the list-wrapped status=2 case (older servers) and the bare-dict
+    status=-1 case (0.19.x+). This keeps AddEntity-with-if_not_found,
+    CreateIndex, AddDescriptorSet, and similar idempotent patterns safe
+    to retry.
     """
-    # ApertureDB returns a bare dict (not wrapped in a list) for invalid queries
     if isinstance(response, dict):
         status = response.get("status", -1)
-        if status != 0:
-            raise NexusStorageError(
-                f"{operation} failed (status={status}): "
-                f"{response.get('info', 'no details')}. "
-                f"Check your ApertureDB connection and schema."
-            )
-        return
+        info = response.get("info", "no details") or ""
+        if status == 0 or "already exists" in info.lower():
+            return
+        raise NexusStorageError(
+            f"{operation} failed (status={status}): {info}. "
+            f"Check your ApertureDB connection and schema."
+        )
     for item in response:
         for cmd_name, body in item.items():
-            status = body.get("status", -1) if isinstance(body, dict) else -1
-            # status=0: success; status=2: "object already exists" (expected
-            # from AddEntity/AddDescriptorSet with if_not_found — not an error)
-            if status not in (0, 2):
-                info = (
-                    body.get("info", "no details")
-                    if isinstance(body, dict)
-                    else str(body)
-                )
+            if not isinstance(body, dict):
                 raise NexusStorageError(
-                    f"{operation} failed (status={status}): {info}. "
-                    f"Check your ApertureDB connection and schema."
+                    f"{operation} failed: unexpected body for {cmd_name!r}: "
+                    f"{body!r}. Check your ApertureDB connection and schema."
                 )
+            status = body.get("status", -1)
+            info = body.get("info", "no details") or ""
+            # status=0: success; status=2: "object already exists" (legacy
+            # idempotent path). Also treat any status with "already exists"
+            # in info as idempotent so server-side error-code changes do not
+            # break idempotent write paths.
+            if status in (0, 2) or "already exists" in info.lower():
+                continue
+            raise NexusStorageError(
+                f"{operation} failed (status={status}): {info}. "
+                f"Check your ApertureDB connection and schema."
+            )
 
 
 def _entity_exists(db, entity_class: str, constraints: dict) -> bool:
@@ -407,8 +420,10 @@ class Memory:
         Called automatically on the first ``commit()``. Safe to call
         explicitly at startup to pre-warm the schema before first use.
 
-        ApertureDB returns status=2 when an index already exists — treated
-        as success so this is safe to call on every deployment.
+        Treats "already exists" as success (via _check_response) so this
+        is safe to call on every deployment regardless of whether the
+        server returns the legacy list-wrapped status=2 or the newer
+        bare-dict status=-1 "already exists" shape.
         """
         if self._schema_ensured:
             return
@@ -427,15 +442,7 @@ class Memory:
                 "property_key": prop,
             }}]
             response, _ = self._db.query(cmd)
-            for item in response:
-                for _, body in item.items():
-                    status = body.get("status", -1) if isinstance(body, dict) else -1
-                    if status not in (0, 2):
-                        info = body.get("info", "no details") if isinstance(body, dict) else str(body)
-                        logger.warning(
-                            "CreateIndex %r.%r returned status=%d: %s",
-                            cls, prop, status, info,
-                        )
+            _check_response(response, f"CreateIndex({cls!r}.{prop!r})")
             logger.debug("Ensured index on %s.%s", cls, prop)
         self._schema_ensured = True
 

@@ -32,7 +32,7 @@ name: aperture-nexus-local
 services:
 
   aperturedb:
-    image: aperturedata/aperturedb-community:latest
+    image: aperturedata/aperturedb-community:v0.19.14
     restart: unless-stopped
     # No direct host port — access is through lenz (TCP) or nginx (HTTP).
     environment:
