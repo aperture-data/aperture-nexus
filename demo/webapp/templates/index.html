@@ -68,22 +68,35 @@
       cursor: pointer; color: var(--accent); margin-right: 8px; text-decoration: underline;
     }
     .filters {
-      padding: 10px 24px 14px; background: var(--panel);
+      padding: 12px 24px; background: var(--panel);
       border-bottom: 1px solid var(--border); font-size: 12px;
+      display: flex; flex-direction: column; gap: 10px;
     }
-    .filter-row {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+    .filter-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
     }
-    .filter-row label {
+    .filter-group {
+      display: flex; flex-direction: column; gap: 4px; min-width: 0;
+    }
+    .filter-group label {
       font-weight: 700; letter-spacing: 1.5px; color: var(--muted);
       font-size: 10px;
     }
-    .filter-row select {
-      font-size: 12px; padding: 4px 6px; border: 1px solid var(--border);
+    .filter-group select {
+      font-size: 12px; padding: 5px 8px; border: 1px solid var(--border);
       border-radius: 6px; background: #fff; color: var(--text);
-      max-width: 220px;
+      width: 100%;
     }
-    .dept-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+    .filter-bottom {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .filter-bottom label {
+      font-weight: 700; letter-spacing: 1.5px; color: var(--muted);
+      font-size: 10px;
+    }
+    .dept-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; flex: 1; }
     .dept-chip {
       cursor: pointer; padding: 3px 10px; border-radius: 12px;
       border: 1px solid var(--border); background: #fff;
@@ -93,12 +106,12 @@
     .dept-chip:hover { border-color: var(--accent); color: var(--accent); }
     .dept-chip.active { background: var(--navy); color: #fff; border-color: var(--navy); }
     #fClear {
-      margin-left: auto; font-size: 11px; padding: 3px 10px;
+      margin-left: auto; font-size: 11px; padding: 4px 12px;
       background: #fff; border: 1px solid var(--border); border-radius: 6px;
       color: var(--text-muted); cursor: pointer;
     }
     #fClear:hover { color: var(--navy); border-color: var(--navy); }
-    .filter-row .count { color: var(--muted); font-weight: 400; }
+    .count { color: var(--muted); font-weight: 400; }
     .results {
       flex: 1 1 auto; overflow-y: auto; padding: 18px 24px;
     }
@@ -259,11 +272,17 @@
       </div>
 
       <div id="filters" class="filters">
-        <div class="filter-row">
-          <label>SESSION</label>
-          <select id="fSession"><option value="">all sessions</option></select>
-          <label>PRINCIPAL</label>
-          <select id="fUser"><option value="">any principal</option></select>
+        <div class="filter-pair">
+          <div class="filter-group">
+            <label>SESSION</label>
+            <select id="fSession"><option value="">all sessions</option></select>
+          </div>
+          <div class="filter-group">
+            <label>PRINCIPAL</label>
+            <select id="fUser"><option value="">any principal</option></select>
+          </div>
+        </div>
+        <div class="filter-bottom">
           <label>DEPARTMENT</label>
           <span class="dept-chips" id="fDeptChips"></span>
           <button id="fClear" title="Clear all filters">clear</button>
