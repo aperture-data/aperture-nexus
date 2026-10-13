@@ -630,7 +630,7 @@ def graph_query(
     out = GRAPHS_DIR / f"query-{uuid.uuid4().hex[:8]}.html"
     graph_viz.render_graph(
         nodes, edges,
-        title=f"Nexus memory — results for '{q}'",
+        title=f"Results for: {q[:60] + ('…' if len(q) > 60 else '')}",
         filename=str(out),
         client=MEMORY._db,
         node_colors=NEXUS_NODE_COLORS,
