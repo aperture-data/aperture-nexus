@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Nexus — Ask the Codebase</title>
+  <meta name="viewport" content="width=1200">
+  <style>
+    :root {
+      --navy:        #102069;
+      --navy-2:      #172F94;
+      --accent:      #4B5EAC;
+      --muted:       #828FC5;
+      --panel:       #F7F8FC;
+      --border:      #DADDEE;
+      --text:        #1A2544;
+      --text-muted:  #5B6782;
+      --bg:          #FFFFFF;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; height: 100%; background: var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: var(--text);
+    }
+    header {
+      background: var(--navy); color: #fff; padding: 16px 28px;
+      display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 2px 4px rgba(16,32,105,0.1);
+    }
+    header .title {
+      font-size: 22px; font-weight: 700; letter-spacing: 0.2px;
+    }
+    header .tagline {
+      color: #DADDEE; font-size: 14px; font-weight: 400;
+    }
+    main {
+      display: flex; height: calc(100vh - 68px);
+    }
+    .chat {
+      flex: 0 0 540px; display: flex; flex-direction: column;
+      border-right: 1px solid var(--border); background: var(--panel);
+    }
+    .ask {
+      padding: 20px 24px 16px; border-bottom: 1px solid var(--border); background: #fff;
+    }
+    .ask label {
+      display: block; font-size: 13px; font-weight: 700; color: var(--muted);
+      letter-spacing: 2px; margin-bottom: 10px;
+    }
+    .ask-row { display: flex; gap: 10px; }
+    .ask input[type="text"] {
+      flex: 1; padding: 12px 14px; font-size: 15px;
+      border: 2px solid var(--border); border-radius: 8px; outline: none;
+      font-family: inherit; color: var(--text); background: #fff;
+    }
+    .ask input[type="text"]:focus { border-color: var(--accent); }
+    .ask button {
+      padding: 12px 22px; font-size: 15px; font-weight: 700;
+      background: var(--navy); color: #fff; border: 0; border-radius: 8px;
+      cursor: pointer; letter-spacing: 0.3px;
+    }
+    .ask button:hover { background: var(--navy-2); }
+    .ask button:disabled { background: var(--muted); cursor: not-allowed; }
+    .ask .examples {
+      margin-top: 12px; font-size: 13px; color: var(--text-muted);
+    }
+    .ask .examples span {
+      cursor: pointer; color: var(--accent); margin-right: 8px; text-decoration: underline;
+    }
+    .filters {
+      padding: 12px 24px; background: var(--panel);
+      border-bottom: 1px solid var(--border); font-size: 12px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .filter-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .filter-group {
+      display: flex; flex-direction: column; gap: 4px; min-width: 0;
+    }
+    .filter-group label {
+      font-weight: 700; letter-spacing: 1.5px; color: var(--muted);
+      font-size: 10px;
+    }
+    .filter-group select {
+      font-size: 12px; padding: 5px 8px; border: 1px solid var(--border);
+      border-radius: 6px; background: #fff; color: var(--text);
+      width: 100%;
+    }
+    .filter-bottom {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .filter-bottom label {
+      font-weight: 700; letter-spacing: 1.5px; color: var(--muted);
+      font-size: 10px;
+    }
+    .dept-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+    .dept-chip {
+      cursor: pointer; padding: 3px 10px; border-radius: 12px;
+      border: 1px solid var(--border); background: #fff;
+      color: var(--text-muted); font-size: 11px; font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .dept-chip:hover { border-color: var(--accent); color: var(--accent); }
+    .dept-chip.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+    #fClear {
+      margin-left: auto; font-size: 11px; padding: 4px 12px;
+      background: #fff; border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text-muted); cursor: pointer;
+    }
+    #fClear:hover { color: var(--navy); border-color: var(--navy); }
+    .count { color: var(--muted); font-weight: 400; }
+    .results {
+      flex: 1 1 auto; overflow-y: auto; padding: 18px 24px;
+    }
+    .answer-card {
+      background: #fff; border: 2px solid var(--navy); border-radius: 10px;
+      padding: 16px 18px; margin-bottom: 18px;
+      box-shadow: 0 2px 6px rgba(16,32,105,0.08);
+    }
+    .answer-label {
+      font-size: 11px; font-weight: 700; color: var(--navy);
+      letter-spacing: 2px; margin-bottom: 10px;
+    }
+    .answer-text {
+      font-size: 14px; line-height: 1.55; color: var(--text);
+      white-space: pre-wrap;
+    }
+    .answer-model {
+      display: block; font-size: 11px; color: var(--muted);
+      margin-top: 10px; font-style: italic;
+    }
+    .streaming-cursor {
+      display: inline-block; color: var(--accent); font-weight: 700;
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+    .sources-label {
+      font-size: 11px; font-weight: 700; color: var(--muted);
+      letter-spacing: 2px; margin: 6px 0 10px;
+    }
+    .no-llm {
+      background: #FFF8E7; border: 1px solid #E8CF8E; border-radius: 8px;
+      padding: 10px 14px; margin-bottom: 14px; font-size: 13px; color: #6B5A2A;
+    }
+    .result-card {
+      background: #fff; border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 12px;
+    }
+    .result-card:hover { border-color: var(--accent); }
+    .result-head {
+      display: flex; justify-content: space-between; align-items: baseline;
+      gap: 10px; margin-bottom: 8px;
+    }
+    .result-file {
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 13px; font-weight: 700; color: var(--navy);
+    }
+    .result-score {
+      font-size: 12px; color: var(--muted); font-weight: 600;
+    }
+    .result-folder {
+      display: inline-block; font-size: 11px; font-weight: 700;
+      padding: 2px 8px; border-radius: 4px; margin-bottom: 8px;
+      background: var(--border); color: var(--text-muted); letter-spacing: 1px;
+    }
+    .git-badge {
+      background: var(--navy); color: #fff;
+    }
+    .diagram-badge {
+      background: #0C7A5A; color: #fff;
+    }
+    .result-image {
+      margin: 10px 0; border-radius: 8px; overflow: hidden;
+      border: 1px solid var(--border); background: #fff;
+    }
+    .result-image img {
+      width: 100%; height: auto; display: block;
+    }
+    .git-meta {
+      font-size: 12px; color: var(--text-muted); margin-left: 8px;
+    }
+    .result-text {
+      font-size: 13px; line-height: 1.55; color: var(--text);
+      white-space: pre-wrap; max-height: 180px; overflow: hidden; position: relative;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+    }
+    .result-text.expanded { max-height: none; }
+    .result-expand {
+      display: block; margin-top: 6px; font-size: 12px; color: var(--accent);
+      cursor: pointer; font-weight: 700;
+    }
+    .status {
+      padding: 20px 24px; color: var(--text-muted); font-size: 14px; font-style: italic;
+    }
+    .right-pane {
+      flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0;
+    }
+    .diagrams {
+      flex: 0 0 auto; background: #FFFFFF; border-bottom: 1px solid var(--border);
+      padding: 0 18px; max-height: 0; overflow: hidden;
+      transition: max-height 0.35s ease, padding 0.35s ease, border-bottom-width 0.35s ease;
+      border-bottom-width: 0;
+    }
+    .diagrams.visible {
+      padding: 14px 18px; max-height: 320px; border-bottom-width: 1px;
+    }
+    .diagrams-label {
+      font-size: 11px; font-weight: 700; color: var(--muted);
+      letter-spacing: 2px; margin-bottom: 10px;
+    }
+    .diagrams-strip {
+      display: flex; gap: 14px; overflow-x: auto; padding-bottom: 4px;
+    }
+    .diagram-tile {
+      flex: 0 0 auto; max-width: 420px; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+      background: #fff; transition: border-color 0.15s;
+    }
+    .diagram-tile:hover { border-color: var(--accent); }
+    .diagram-tile img {
+      display: block; max-width: 420px; max-height: 240px;
+      width: auto; height: auto; background: #fff;
+    }
+    .diagram-tile .tile-label {
+      padding: 6px 10px; font-size: 12px; font-weight: 700; color: var(--navy);
+      border-top: 1px solid var(--border);
+    }
+    .graph {
+      flex: 1 1 auto; position: relative; background: #0b1020; min-height: 0;
+    }
+    .graph iframe {
+      width: 100%; height: 100%; border: 0; display: block;
+    }
+    .graph .placeholder {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      color: #828FC5; font-size: 16px; text-align: center;
+    }
+    .graph .placeholder .dot {
+      font-size: 48px; color: var(--accent); margin-bottom: 10px;
+    }
+    /* Git diff cards start fully collapsed — just show the header. */
+    .result-text.diff-collapsed { max-height: 0; padding: 0; margin: 0; border: 0; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="title">Aperture Nexus</div>
+    <div class="tagline">Ask the aperture-nexus codebase anything — semantic + metadata search over a knowledge graph</div>
+  </div>
+  <div class="tagline">localhost:9001</div>
+</header>
+
+<main>
+  <section class="chat">
+    <div class="ask">
+      <label>ASK NEXUS ABOUT ITSELF</label>
+      <div class="ask-row">
+        <input id="q" type="text" placeholder="How does Memory.commit() work?" autocomplete="off" autofocus>
+        <button id="go">Search</button>
+      </div>
+      <div class="examples">
+        Try:
+        <span data-q="What is the difference between Information and Memory?">Information vs Memory</span>
+        <span data-q="Who added the department and organization fields to Principal and when?">Principal fields: when &amp; who</span>
+        <span data-q="Show me a diagram of the Nexus architecture and components">Show architecture</span>
+        <span data-lineage="src/aperture_nexus/memory.py">Lineage of memory.py</span>
+      </div>
+
+      <div id="filters" class="filters">
+        <div class="filter-pair">
+          <div class="filter-group">
+            <label>SESSION</label>
+            <select id="fSession"><option value="">all sessions</option></select>
+          </div>
+          <div class="filter-group">
+            <label>PRINCIPAL</label>
+            <select id="fUser"><option value="">any principal</option></select>
+          </div>
+        </div>
+        <div class="filter-bottom">
+          <label>DEPARTMENT</label>
+          <span class="dept-chips" id="fDeptChips"></span>
+          <button id="fClear" title="Clear all filters">clear</button>
+        </div>
+      </div>
+    </div>
+    <div id="results" class="results">
+      <div class="status">Type a question above and press Search.</div>
+    </div>
+  </section>
+  <section class="right-pane">
+    <div class="diagrams" id="diagrams">
+      <div class="diagrams-label">DIAGRAMS RETRIEVED</div>
+      <div class="diagrams-strip" id="diagramsStrip"></div>
+    </div>
+    <div class="graph">
+      <iframe id="graph" src="/graph/schema"></iframe>
+    </div>
+  </section>
+</main>
+
+<script>
+  const qInput        = document.getElementById('q');
+  const goBtn         = document.getElementById('go');
+  const results       = document.getElementById('results');
+  const graph         = document.getElementById('graph');
+  const diagramsPane  = document.getElementById('diagrams');
+  const diagramsStrip = document.getElementById('diagramsStrip');
+  const fSession      = document.getElementById('fSession');
+  const fUser         = document.getElementById('fUser');
+  const fDeptChips    = document.getElementById('fDeptChips');
+  const fClear        = document.getElementById('fClear');
+
+  // Active filters (empty = no filter)
+  let activeDept = '';
+
+  function activeFilters() {
+    return {
+      session_name: fSession.value || null,
+      user_id:      fUser.value || null,
+      department:   activeDept || null,
+    };
+  }
+
+  function filtersToQS() {
+    const f = activeFilters();
+    const parts = [];
+    for (const k of ['session_name', 'user_id', 'department']) {
+      if (f[k]) parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(f[k]));
+    }
+    return parts.length ? '&' + parts.join('&') : '';
+  }
+
+  async function loadCounts() {
+    try {
+      const r = await fetch('/counts');
+      if (!r.ok) throw new Error('counts failed');
+      const data = await r.json();
+      // Populate sessions dropdown — grouped a bit so PRs cluster.
+      const sess = Object.entries(data.sessions || {});
+      const nonPr = sess.filter(([n]) => !n.startsWith('PR #') && !n.startsWith('commit '));
+      const pr    = sess.filter(([n]) =>  n.startsWith('PR #'));
+      const other = sess.filter(([n]) =>  n.startsWith('commit '));
+      const makeOpt = ([name, n]) => {
+        const o = document.createElement('option');
+        o.value = name; o.textContent = `${name} (${n})`;
+        return o;
+      };
+      // Clear then re-populate (keep the "all" default option).
+      fSession.length = 1;
+      if (nonPr.length) {
+        const g = document.createElement('optgroup'); g.label = 'collections';
+        nonPr.forEach(e => g.appendChild(makeOpt(e)));
+        fSession.appendChild(g);
+      }
+      if (pr.length) {
+        const g = document.createElement('optgroup'); g.label = 'pull requests';
+        pr.forEach(e => g.appendChild(makeOpt(e)));
+        fSession.appendChild(g);
+      }
+      if (other.length) {
+        const g = document.createElement('optgroup'); g.label = 'direct commits';
+        other.forEach(e => g.appendChild(makeOpt(e)));
+        fSession.appendChild(g);
+      }
+      // Principals
+      fUser.length = 1;
+      for (const [uid, n] of Object.entries(data.principals || {})) {
+        const o = document.createElement('option');
+        o.value = uid; o.textContent = `${uid} (${n})`;
+        fUser.appendChild(o);
+      }
+      // Department chips
+      fDeptChips.innerHTML = '';
+      for (const [dep, n] of Object.entries(data.departments || {})) {
+        const c = document.createElement('span');
+        c.className = 'dept-chip';
+        c.dataset.dep = dep;
+        c.innerHTML = escapeHtml(dep) + ' <span class="count">(' + n + ')</span>';
+        c.addEventListener('click', () => {
+          activeDept = (activeDept === dep) ? '' : dep;
+          fDeptChips.querySelectorAll('.dept-chip').forEach(x => {
+            x.classList.toggle('active', x.dataset.dep === activeDept);
+          });
+        });
+        fDeptChips.appendChild(c);
+      }
+    } catch (e) {
+      console.warn('loadCounts failed', e);
+    }
+  }
+
+  fClear.addEventListener('click', () => {
+    fSession.value = ''; fUser.value = ''; activeDept = '';
+    fDeptChips.querySelectorAll('.dept-chip.active').forEach(x => x.classList.remove('active'));
+  });
+
+  loadCounts();
+
+  function renderDiagramsStrip(items) {
+    const diagrams = (items || []).filter(it => it.source_kind === 'diagram' && it.image_url);
+    // Dedupe by figure_id — same diagram can appear in results more than once.
+    const seen = new Set();
+    const unique = [];
+    for (const d of diagrams) {
+      if (!seen.has(d.figure_id)) { seen.add(d.figure_id); unique.push(d); }
+    }
+    if (!unique.length) {
+      diagramsPane.classList.remove('visible');
+      diagramsStrip.innerHTML = '';
+      return;
+    }
+    diagramsStrip.innerHTML = unique.map(d => (
+      '<a class="diagram-tile" href="' + escapeHtml(d.image_url) + '" target="_blank" rel="noopener">' +
+      '  <img src="' + escapeHtml(d.image_url) + '" alt="' + escapeHtml(d.figure_id || '') + '">' +
+      '  <div class="tile-label">' + escapeHtml(d.figure_id || 'diagram') + '</div>' +
+      '</a>'
+    )).join('');
+    diagramsPane.classList.add('visible');
+  }
+
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  let currentStream = null;
+
+  async function search() {
+    const query = qInput.value.trim();
+    if (!query) return;
+    goBtn.disabled = true; goBtn.textContent = 'Searching…';
+    results.innerHTML = '<div class="status">Searching…</div>';
+    // Close any previous stream before starting a new one.
+    try {
+      if (currentStream) { currentStream.close(); currentStream = null; }
+    } catch (err) { console.warn('closing prev stream', err); }
+
+    // NB: we deliberately do NOT reload the graph iframe here. The iframe
+    // reload shows ~1-2 s of blank pane while react-force-graph renders.
+    // Instead, we trigger it below once 'sources' arrives — by then the
+    // chat panel has useful content and the old graph stays visible as
+    // context until the new one swaps in.
+    const fqs = filtersToQS();
+
+    // Stream sources first (fast), then the answer token-by-token.
+    const url = '/synthesize?q=' + encodeURIComponent(query) + '&k=8' + fqs;
+    const es = new EventSource(url);
+    currentStream = es;
+    let answerText = '';
+    let gotSources = false;
+
+    es.addEventListener('sources', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        gotSources = true;
+        renderResults({answer: '', answer_model: null, streaming: true, results: data.results}, query);
+        renderDiagramsStrip(data.results);
+        // Reload the graph only once sources are in — avoids showing a
+        // blank iframe between click and first answer frame.
+        graph.src = '/graph/query?q=' + encodeURIComponent(query) + fqs;
+      } catch (err) { console.warn('sources parse', err); }
+    });
+
+    es.addEventListener('chunk', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        answerText += data.text || '';
+        updateAnswerText(answerText);
+      } catch (err) { console.warn('chunk parse', err); }
+    });
+
+    let completed = false;
+    es.addEventListener('done', (e) => {
+      completed = true;
+      try {
+        const data = JSON.parse(e.data);
+        finaliseAnswer(answerText, data.model);
+      } catch (err) { /* ignore */ }
+      es.close(); if (currentStream === es) currentStream = null;
+      goBtn.disabled = false; goBtn.textContent = 'Search';
+    });
+
+    es.addEventListener('error', (e) => {
+      // EventSource fires 'error' on normal close too — only report when
+      // we actually failed (no data at all, and we never completed).
+      if (es !== currentStream) return;         // superseded by a newer search
+      if (completed) return;                     // normal close after done
+      if (!gotSources) {
+        console.warn('synthesize stream errored before sources', e);
+        results.innerHTML = '<div class="status">Error — see console.</div>';
+      } else {
+        // Had sources but no done — show what we have, mark incomplete.
+        console.warn('synthesize stream closed before done', e);
+        finaliseAnswer(answerText + ' …', null);
+      }
+      es.close(); if (currentStream === es) currentStream = null;
+      goBtn.disabled = false; goBtn.textContent = 'Search';
+    });
+  }
+
+  function updateAnswerText(txt) {
+    const el = document.getElementById('answerText');
+    if (el) el.textContent = txt;
+  }
+
+  function finaliseAnswer(txt, model) {
+    const el = document.getElementById('answerText');
+    const foot = document.getElementById('answerFoot');
+    if (el) el.textContent = txt;
+    if (foot && model) foot.textContent = 'synthesised by ' + model + ' from the sources below';
+  }
+
+  function renderResults(data, query) {
+    const items = data.results || [];
+    if (!items.length) {
+      results.innerHTML = '<div class="status">No matches for <b>' + escapeHtml(query) + '</b>.</div>';
+      return;
+    }
+    let html = '';
+    if (data.streaming) {
+      html += (
+        '<div class="answer-card">' +
+        '  <div class="answer-label">ANSWER</div>' +
+        '  <div class="answer-text" id="answerText"><span class="streaming-cursor">▎</span></div>' +
+        '  <span class="answer-model" id="answerFoot">synthesising…</span>' +
+        '</div>'
+      );
+    } else if (data.answer) {
+      html += (
+        '<div class="answer-card">' +
+        '  <div class="answer-label">ANSWER</div>' +
+        '  <div class="answer-text" id="answerText">' + escapeHtml(data.answer) + '</div>' +
+        '  <span class="answer-model" id="answerFoot">synthesised by ' + escapeHtml(data.answer_model) + ' from the sources below</span>' +
+        '</div>'
+      );
+    } else {
+      html += (
+        '<div class="no-llm">' +
+        '  No synthesised answer — set <code>ANTHROPIC_API_KEY</code> and restart to turn this on. ' +
+        '  Raw search results shown below.' +
+        '</div>'
+      );
+    }
+    html += '<div class="sources-label">SOURCES</div>';
+    html += items.map((it, i) => {
+      const text = escapeHtml(it.text);
+      let head, imageHtml = '';
+      // Diff cards start fully collapsed — one-line commit header, no body
+      // visible until the user clicks expand. Commit-message, file and
+      // diagram cards keep the preview-height behaviour.
+      const isDiff = it.source_kind === 'git' && it.kind === 'diff';
+      const bodyClass = isDiff ? 'result-text diff-collapsed' : 'result-text';
+      const expandLabel = isDiff ? 'show diff' : 'expand';
+      if (it.source_kind === 'git') {
+        const date = (it.commit_date || '').slice(0, 10);
+        const subject = it.commit_subject || '(no subject)';
+        const kindBadge = it.kind === 'diff' ? 'diff' : 'commit msg';
+        head = (
+          '<div class="result-head">' +
+          '  <div class="result-file">' + escapeHtml(it.commit_short || '') + ' · ' + escapeHtml(subject) + '</div>' +
+          '  <div class="result-score">score ' + it.score.toFixed(3) + '</div>' +
+          '</div>' +
+          '<div><span class="result-folder git-badge">GIT · ' + escapeHtml(kindBadge) + '</span>' +
+          '  <span class="git-meta"> ' + escapeHtml(it.author || '') + ' · ' + escapeHtml(date) + '</span></div>'
+        );
+      } else if (it.source_kind === 'diagram') {
+        head = (
+          '<div class="result-head">' +
+          '  <div class="result-file">' + escapeHtml(it.figure_id || 'diagram') + '</div>' +
+          '  <div class="result-score">score ' + it.score.toFixed(3) + '</div>' +
+          '</div>' +
+          '<span class="result-folder diagram-badge">DIAGRAM</span>'
+        );
+        if (it.image_url) {
+          imageHtml = '<div class="result-image"><img src="' + escapeHtml(it.image_url) + '" alt="' + escapeHtml(it.figure_id || '') + '"></div>';
+        }
+      } else {
+        const folderBadge = it.folder ? '<span class="result-folder">' + escapeHtml(it.folder) + '</span>' : '';
+        head = (
+          '<div class="result-head">' +
+          '  <div class="result-file">' + escapeHtml(it.file_path) + '</div>' +
+          '  <div class="result-score">score ' + it.score.toFixed(3) + '</div>' +
+          '</div>' +
+          folderBadge
+        );
+      }
+      return (
+        '<div class="result-card">' +
+        head +
+        imageHtml +
+        '  <pre class="' + bodyClass + '" id="rt' + i + '">' + text + '</pre>' +
+        '  <a class="result-expand" data-tgt="rt' + i + '" data-expand-label="' + escapeHtml(expandLabel) + '">' + escapeHtml(expandLabel) + '</a>' +
+        '</div>'
+      );
+    }).join('');
+    // After renderResults runs below, re-render each card type correctly.
+    results.innerHTML = html;
+    results.querySelectorAll('.result-expand').forEach(el => {
+      el.addEventListener('click', () => {
+        const tgt = document.getElementById(el.dataset.tgt);
+        tgt.classList.toggle('expanded');
+        tgt.classList.remove('diff-collapsed');
+        const expandLabel = el.dataset.expandLabel || 'expand';
+        el.textContent = tgt.classList.contains('expanded') ? 'collapse' : expandLabel;
+      });
+    });
+  }
+
+  goBtn.addEventListener('click', search);
+  qInput.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+  document.querySelectorAll('.examples span').forEach(el => {
+    el.addEventListener('click', () => {
+      if (el.dataset.lineage) {
+        showLineage(el.dataset.lineage);
+      } else if (el.dataset.q) {
+        qInput.value = el.dataset.q; search();
+      }
+    });
+  });
+
+  function showLineage(file) {
+    qInput.value = 'Lineage of ' + file;
+    results.innerHTML = (
+      '<div class="status">' +
+      '  <b>Graph query (no LLM) — walking the memory graph.</b><br>' +
+      '  Showing every PR / commit / principal in Nexus that touched <code>' +
+      escapeHtml(file) + '</code>. Nexus-only: this is a graph traversal, ' +
+      '  not a semantic search.' +
+      '</div>'
+    );
+    diagramsPane.classList.remove('visible');
+    graph.src = '/graph/lineage?file=' + encodeURIComponent(file);
+  }
+</script>
+</body>
+</html>

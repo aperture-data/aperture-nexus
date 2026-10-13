@@ -66,6 +66,14 @@ clip = [
     "open-clip-torch>=2.24",
 ]
 
+# Sentence-transformers for text-only semantic search — stronger than
+# CLIP's text tower for document retrieval and specific-attribution
+# queries. Pair with a HuggingFace model id like
+# "BAAI/bge-small-en-v1.5" or "all-MiniLM-L6-v2" in models.text_embedding.
+sentence-transformers = [
+    "sentence-transformers>=3.0",
+]
+
 # Integration test dependencies (spins up local ApertureDB via Docker)
 integration = [
     "testcontainers>=4.4",

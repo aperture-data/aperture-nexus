@@ -160,8 +160,10 @@ class Information:
         ``remove()`` to discard the entry before it is committed.
 
         Args:
-            text: Plain text. Long text is chunked automatically at
-                commit time.
+            text: Plain text. In v1, text is stored as-is — the caller
+                is responsible for chunking before log() when the content
+                is longer than what their embedding model accepts.
+                Automatic chunking at commit time is planned for v2.
             image: Image in any common form: file path, URL, bytes,
                 PIL Image, or numpy array (HW or HWC uint8/float32).
                 File existence and read permission are checked

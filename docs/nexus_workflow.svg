@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 620" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .section-tag { font-size: 18px; font-weight: 700; fill: #828FC5; letter-spacing: 3px; }
+      .box-h       { font-size: 22px; font-weight: 700; fill: #FFFFFF; }
+      .box-h-sm    { font-size: 16px; font-weight: 700; fill: #FFFFFF; }
+      .box-side    { font-size: 20px; font-weight: 700; fill: #102069; }
+      .edge-l      { font-size: 15px; font-weight: 600; fill: #4B5EAC; letter-spacing: 0.5px; }
+      .divider     { stroke: #DADDEE; stroke-width: 1.5; stroke-dasharray: 6,6; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 z" fill="#4B5EAC"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1600" height="620" fill="#FFFFFF"/>
+
+  <!-- =================== WRITE section =================== -->
+  <text x="60" y="35" class="section-tag">WRITE</text>
+
+  <!-- info.log + Buffer, center y=200 -->
+  <g transform="translate(60, 156)">
+    <rect width="240" height="88" rx="12" fill="#102069"/>
+    <text x="120" y="54" class="box-h" text-anchor="middle">info.log(...)</text>
+  </g>
+
+  <g>
+    <line x1="305" y1="200" x2="373" y2="200" stroke="#4B5EAC" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+
+  <g transform="translate(377, 156)">
+    <rect width="240" height="88" rx="12" fill="#102069"/>
+    <text x="120" y="54" class="box-h" text-anchor="middle">Buffer (local)</text>
+  </g>
+
+  <!-- Three commit methods: centers at y=96, y=200, y=304 (104px between centers, 30px gaps) -->
+  <!-- Box width 360 (was 320), font-size 16 (was 18) to fit async_process_and_commit() -->
+  <g>
+    <line x1="622" y1="200" x2="700" y2="200" stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="700" y1="96"  x2="700" y2="304" stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="700" y1="96"  x2="738" y2="96"  stroke="#4B5EAC" stroke-width="3" marker-end="url(#arrow)"/>
+    <line x1="700" y1="200" x2="738" y2="200" stroke="#4B5EAC" stroke-width="3" marker-end="url(#arrow)"/>
+    <line x1="700" y1="304" x2="738" y2="304" stroke="#4B5EAC" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+
+  <g transform="translate(742, 59)">
+    <rect width="360" height="74" rx="12" fill="#102069"/>
+    <text x="180" y="46" class="box-h-sm" text-anchor="middle">Memory.commit()</text>
+  </g>
+
+  <g transform="translate(742, 163)">
+    <rect width="360" height="74" rx="12" fill="#102069"/>
+    <text x="180" y="46" class="box-h-sm" text-anchor="middle">Memory.process_and_commit()</text>
+  </g>
+
+  <g transform="translate(742, 267)">
+    <rect width="360" height="74" rx="12" fill="#102069"/>
+    <text x="180" y="46" class="box-h-sm" text-anchor="middle">Memory.async_process_and_commit()</text>
+  </g>
+
+  <!-- Merge back and arrow to ApertureDB -->
+  <g>
+    <line x1="1102" y1="96"  x2="1160" y2="96"  stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="1102" y1="200" x2="1160" y2="200" stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="1102" y1="304" x2="1160" y2="304" stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="1160" y1="96"  x2="1160" y2="304" stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="1160" y1="200" x2="1258" y2="200" stroke="#4B5EAC" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+
+  <g transform="translate(1262, 156)">
+    <rect width="278" height="88" rx="12" fill="#102069"/>
+    <text x="139" y="54" class="box-h" text-anchor="middle">ApertureDB</text>
+  </g>
+
+  <!-- =================== Divider =================== -->
+  <line x1="60" y1="370" x2="1540" y2="370" class="divider"/>
+
+  <!-- =================== QUERY section =================== -->
+  <text x="60" y="402" class="section-tag">QUERY</text>
+
+  <!-- Agent/App left, center y=500 -->
+  <g transform="translate(60, 456)">
+    <rect width="240" height="88" rx="12" fill="#FFFFFF" stroke="#102069" stroke-width="2.5"/>
+    <text x="120" y="54" class="box-side" text-anchor="middle">Agent / App</text>
+  </g>
+
+  <!-- Fork from App to two routes -->
+  <g>
+    <line x1="305" y1="500" x2="370" y2="500" stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="370" y1="440" x2="370" y2="560" stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="370" y1="440" x2="408" y2="440" stroke="#4B5EAC" stroke-width="3" marker-end="url(#arrow)"/>
+    <line x1="370" y1="560" x2="408" y2="560" stroke="#4B5EAC" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- Route 1: Memory.search() -->
+  <g transform="translate(412, 403)">
+    <rect width="420" height="74" rx="12" fill="#102069"/>
+    <text x="210" y="46" class="box-h-sm" text-anchor="middle">Memory.search()</text>
+  </g>
+
+  <!-- Route 2: Direct ApertureDB query (outlined = bypass Nexus) -->
+  <g transform="translate(412, 523)">
+    <rect width="420" height="74" rx="12" fill="#FFFFFF" stroke="#102069" stroke-width="2.5"/>
+    <text x="210" y="46" class="box-side" text-anchor="middle">Direct ApertureDB query</text>
+  </g>
+
+  <!-- Merge routes to ApertureDB -->
+  <g>
+    <line x1="832" y1="440" x2="890" y2="440" stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="832" y1="560" x2="890" y2="560" stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="890" y1="440" x2="890" y2="560" stroke="#4B5EAC" stroke-width="3"/>
+    <line x1="890" y1="500" x2="988" y2="500" stroke="#4B5EAC" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- ApertureDB (query side) -->
+  <g transform="translate(992, 456)">
+    <rect width="240" height="88" rx="12" fill="#102069"/>
+    <text x="120" y="54" class="box-h" text-anchor="middle">ApertureDB</text>
+  </g>
+
+  <!-- Results arrow -->
+  <g>
+    <line x1="1236" y1="500" x2="1304" y2="500" stroke="#4B5EAC" stroke-width="3" marker-end="url(#arrow)"/>
+    <text x="1270" y="489" class="edge-l" text-anchor="middle">results</text>
+  </g>
+
+  <!-- Agent/App final -->
+  <g transform="translate(1308, 456)">
+    <rect width="232" height="88" rx="12" fill="#FFFFFF" stroke="#102069" stroke-width="2.5"/>
+    <text x="116" y="54" class="box-side" text-anchor="middle">Agent / App</text>
+  </g>
+
+</svg>
