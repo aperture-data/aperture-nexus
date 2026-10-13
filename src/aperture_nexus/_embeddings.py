@@ -279,8 +279,118 @@ class ClipEmbedder:
         return results
 
 
-# Module-level embedder cache keyed by (model_name, pretrained)
-_embedder_cache: dict[tuple, ClipEmbedder] = {}
+# ---------------------------------------------------------------------------
+# Sentence-transformers backend — purpose-built for text retrieval.
+# ---------------------------------------------------------------------------
+#
+# Why we have this alongside CLIP: CLIP's text tower is weak at specific
+# text-only queries ("who added X when") because it was trained on
+# image-caption pairs, not retrieval tasks. Sentence-transformers models
+# like BAAI/bge-small-en-v1.5 and all-MiniLM-L6-v2 are trained on MS
+# MARCO-style retrieval data and rank the right chunk reliably.
+#
+# Install:
+#     pip install aperture-nexus[sentence-transformers]
+#
+# Model names that route here (anything with "/" is treated as a HF repo id):
+#     BAAI/bge-small-en-v1.5    384-dim, ~130MB  (strong default for English)
+#     BAAI/bge-base-en-v1.5     768-dim, ~440MB
+#     sentence-transformers/all-MiniLM-L6-v2    384-dim, ~90MB  (classic)
+#     intfloat/e5-small-v2      384-dim
+#     any other HuggingFace sentence-transformers compatible model id
+
+_ST_KNOWN_PREFIXES = (
+    "BAAI/", "sentence-transformers/", "intfloat/", "mixedbread-ai/",
+    "nomic-ai/", "jinaai/", "thenlper/",
+)
+
+# Bare names that are commonly used without a HF org prefix.
+_ST_BARE_ALIASES = {
+    "all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2",
+    "all-mpnet-base-v2": "sentence-transformers/all-mpnet-base-v2",
+    "bge-small-en-v1.5": "BAAI/bge-small-en-v1.5",
+    "bge-base-en-v1.5": "BAAI/bge-base-en-v1.5",
+}
+
+
+def is_sentence_transformers_model(name: str) -> bool:
+    """True if name looks like a HuggingFace sentence-transformers model id."""
+    if name in _ST_BARE_ALIASES:
+        return True
+    if any(name.startswith(p) for p in _ST_KNOWN_PREFIXES):
+        return True
+    # Any other HF org/model shape (contains "/") also routes here.
+    return "/" in name and not is_clip_model(name)
+
+
+class SentenceTransformersEmbedder:
+    """Text embedder backed by sentence-transformers.
+
+    Text-only — raises on image/video inputs. Lazy-loads the model on
+    first use. Normalises embeddings so cosine similarity equals dot
+    product (same convention as ClipEmbedder).
+
+    Args:
+        model_name: HuggingFace sentence-transformers model id, e.g.
+            ``"BAAI/bge-small-en-v1.5"`` or ``"all-MiniLM-L6-v2"``.
+
+    Raises:
+        NexusConfigError: If sentence-transformers is not installed.
+    """
+
+    def __init__(self, model_name: str):
+        self._model_name = _ST_BARE_ALIASES.get(model_name, model_name)
+        self._model = None
+
+    def _load(self):
+        if self._model is not None:
+            return
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise NexusConfigError(
+                "This embedding model requires sentence-transformers. "
+                "Install it with: pip install aperture-nexus[sentence-transformers] "
+                "(or: pip install sentence-transformers)."
+            )
+        self._model = SentenceTransformer(self._model_name)
+
+    def embed_text(self, texts: list[str]) -> list[np.ndarray]:
+        """Embed a list of text strings.
+
+        Returns:
+            List of float32 numpy arrays, one per input string. L2-normalised.
+        """
+        self._load()
+        arr = self._model.encode(
+            texts,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+        return [arr[i].astype(np.float32) for i in range(len(texts))]
+
+    def embed_image(self, image) -> np.ndarray:
+        raise NexusConfigError(
+            f"Model {self._model_name!r} is a text-only embedder. "
+            f"For image embeddings, configure a CLIP model (e.g. 'ViT-B/16') "
+            f"in models.image_embedding."
+        )
+
+    def embed_video(self, video, **kwargs):
+        raise NexusConfigError(
+            f"Model {self._model_name!r} is a text-only embedder. "
+            f"For video embeddings, configure a CLIP model (e.g. 'ViT-B/16') "
+            f"in models.video_embedding."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
+# Module-level embedder cache keyed by (model_name, pretrained-or-None)
+_embedder_cache: dict[tuple, object] = {}
 
 
 def get_clip_embedder(
@@ -300,3 +410,44 @@ def get_clip_embedder(
     if key not in _embedder_cache:
         _embedder_cache[key] = ClipEmbedder(model_name, pretrained)
     return _embedder_cache[key]
+
+
+def get_sentence_transformers_embedder(
+    model_name: str,
+) -> SentenceTransformersEmbedder:
+    """Return a cached SentenceTransformersEmbedder for the given model."""
+    key = (model_name, None)
+    if key not in _embedder_cache:
+        _embedder_cache[key] = SentenceTransformersEmbedder(model_name)
+    return _embedder_cache[key]
+
+
+def get_text_embedder(model_name: str):
+    """Return the appropriate text embedder for the given model name.
+
+    Routes CLIP names to ClipEmbedder, HuggingFace-style text model ids
+    to SentenceTransformersEmbedder.
+
+    Args:
+        model_name: Embedding model name. CLIP names ("ViT-B/16", "RN50")
+            route to ClipEmbedder; sentence-transformers model ids
+            ("BAAI/bge-small-en-v1.5", "all-MiniLM-L6-v2") route to
+            SentenceTransformersEmbedder.
+
+    Returns:
+        An embedder instance with ``embed_text(texts) -> list[np.ndarray]``.
+
+    Raises:
+        NexusConfigError: If the model name is not recognised as either
+            kind, or if the required library is not installed.
+    """
+    if is_clip_model(model_name):
+        return get_clip_embedder(model_name)
+    if is_sentence_transformers_model(model_name):
+        return get_sentence_transformers_embedder(model_name)
+    raise NexusConfigError(
+        f"Unknown text embedding model {model_name!r}. "
+        f"Use a CLIP model (e.g. 'ViT-B/16') or a HuggingFace "
+        f"sentence-transformers model id (e.g. 'BAAI/bge-small-en-v1.5' "
+        f"or 'all-MiniLM-L6-v2')."
+    )
