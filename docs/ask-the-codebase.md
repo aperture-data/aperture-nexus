@@ -11,6 +11,15 @@ aperture-nexus codebase and see:
 
 ![ask-the-codebase demo](https://raw.githubusercontent.com/aperture-data/aperture-nexus/main/demo/ask-the-codebase.gif)
 
+The three retrieval moments the webapp demonstrates — each a query
+shape Nexus is uniquely good at:
+
+| | Retrieval shape | What the UI does |
+|---|---|---|
+| **Semantic** | `Memory.search(query, filters)` | Natural-language question → ranked chunks → Claude-synthesised answer with citations |
+| **Scoped** | `Memory.search(filters={"session_name": ..., "user_id": ..., "department": ...})` | Dropdowns + chips above the chat narrow by PR, principal, or collection — live counts fed by `/counts` |
+| **Lineage** | ApertureDB graph traversal (`_Blob` → `nexus_commit_entry` → `NexusCommit` → `nexus_context_commit` → `NexusContext`) | "Lineage of memory.py" chip walks the graph to surface every PR / commit / principal that ever touched a file |
+
 Live locally at `http://localhost:9001` once you run the three ingest
 scripts and start the server.
 
@@ -337,6 +346,63 @@ with anthropic_client.messages.stream(
 
 That's the whole stack — ~250 lines of application code around the
 Nexus primitives.
+
+---
+
+## Adding a new session or principal
+
+The whole demo workspace — three principals, 25+ sessions, 100-ish
+commits, 1,800+ chunks — was built from the same four API calls
+repeated in a loop. Adding a fourth principal or a new session later
+takes the same two steps you'd use for the first:
+
+**New principal.** Run once at setup; stores the user record and
+returns their API key:
+
+```python
+from aperture_nexus import NexusAdmin
+
+admin = NexusAdmin()
+api_key = admin.create_principal(
+    user_id="bob",
+    user_name="Bob Builder",
+    organization="nexus-demo",
+    department="eng",
+)
+# Deliver api_key to Bob out-of-band. Nexus never stores the plaintext.
+```
+
+**New session.** Just name one — it materialises on the first commit
+that references it. No separate "create session" call:
+
+```python
+from aperture_nexus import Context, Information, Memory
+
+memory = Memory()
+bob = memory.authenticate(user_id="bob", api_key=api_key)
+
+ctx = Context(
+    principal=bob,
+    session_name="investigation: memory-leak-in-commit",   # new session
+    purpose="Reproducing the leak reported in #117",
+    organization="nexus-demo",
+)
+info = Information(context_id=ctx.id)
+info.log(text="Reproduced with 10k consecutive commits; heap grows ~2 MB/commit")
+info.log(image="profiles/heap-10k.png")
+memory.commit(ctx, info)
+```
+
+That's it. Bob now appears in the Principal filter dropdown of this
+demo UI, and the new session appears in the Session dropdown with its
+chunk count — no code change, no restart, the next page refresh picks
+them up from the `/counts` endpoint.
+
+The same pattern scales to every "episode" worth remembering: one
+customer ticket is a session, one PR is a session, one coding sprint
+is a session, one incident post-mortem is a session. Nexus stamps the
+session on every chunk so later searches can scope precisely without
+needing a separate index per episode.
 
 ---
 

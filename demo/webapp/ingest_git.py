@@ -44,7 +44,17 @@ KEYS_DIR = WEBAPP_DIR / ".keys"
 KEYS_DIR.mkdir(parents=True, exist_ok=True)
 
 DEMO_WORKSPACE = "nexus-demo"
-DEMO_SESSION = "aperture-nexus-codebase"
+# Git ingest: one Session PER GIT COMMIT (which, in this repo, maps 1:1
+# to a squash-merged PR). Session names look like
+# "PR #10: Memory demo" or, when the commit has no PR number in its
+# subject, "commit 8983e6a1: Initial commit".
+#
+# This gives the demo ~21 distinct sessions to filter by — enough for the
+# session dropdown and lineage queries to feel real — while keeping file
+# ingest in its own session (ingest.py sets its own DEMO_SESSION).
+
+# PR number lives at the end of a GitHub squash-merge subject: "foo (#12)".
+_PR_RE = re.compile(r"\(#(\d+)\)\s*$")
 # Must match the model used by ingest.py — descriptor sets are keyed
 # by model, so mixing within one session makes search miss half the data.
 TEXT_MODEL = "BAAI/bge-small-en-v1.5"
@@ -91,6 +101,18 @@ def _git(args: list[str]) -> str:
     return subprocess.check_output(
         ["git", *args], cwd=REPO_ROOT, text=True, errors="replace",
     )
+
+
+def _session_name_for(commit: dict) -> str:
+    """One Session per commit — labelled by PR number when present."""
+    subject = commit["subject"]
+    m = _PR_RE.search(subject)
+    if m:
+        pr = m.group(1)
+        clean = _PR_RE.sub("", subject).strip().rstrip(":")
+        return f"PR #{pr}: {clean[:80]}"
+    short = commit["sha"][:8]
+    return f"commit {short}: {subject[:80]}"
 
 
 def _principal_name(author_name: str, author_email: str) -> str:
@@ -163,15 +185,14 @@ def _ensure_principal(admin: NexusAdmin, user_id: str, user_name: str) -> str:
 # ----------------------------------------------------------------------
 
 def _reset(memory: Memory) -> None:
-    LOG.info("resetting git-history entries from session %r…", DEMO_SESSION)
-    # Query everything in the demo session with department=git-history.
+    """Remove every per-PR git-history session the previous ingest wrote."""
+    LOG.info("resetting git-history entries…")
     probes = memory.search(
         filters={
-            "session_name": DEMO_SESSION,
             "organization": DEMO_WORKSPACE,
             "department": "git-history",
         },
-        k=1000,
+        k=5000,
     )
     LOG.info("  found %d entries to remove", len(probes))
     if probes:
@@ -226,11 +247,13 @@ def main(argv: list[str] | None = None) -> int:
             LOG.info("  principal: %s  (%s <%s>)", pid, c["author_name"], c["author_email"])
         m, principal = mp_for(pid, c["author_name"])
 
-        # Context per commit so each shows up as its own node in the graph.
+        # One Session + one Context per commit — session labelled by PR
+        # number so filters and lineage queries can scope to it.
+        session_name = _session_name_for(c)
         purpose = c["subject"][:200]  # purpose field has a soft length limit
         ctx = Context(
             principal=principal,
-            session_name=DEMO_SESSION,
+            session_name=session_name,
             purpose=purpose,
             organization=DEMO_WORKSPACE,
             department="git-history",

@@ -65,7 +65,11 @@ INGEST_PATHS: dict[str, list[str]] = {
 
 DEMO_WORKSPACE = "nexus-demo"
 DEMO_USER = "nexus-demo-user"
-DEMO_SESSION = "aperture-nexus-codebase"
+# Files go into their own session. Git history (ingest_git.py) uses a
+# session PER PR, and diagrams (ingest_images.py) use their own session.
+# All three sessions share the workspace so a cross-session search sees
+# everything by default.
+DEMO_SESSION = "codebase: current state"
 # BGE-small is a purpose-built text retrieval model (384-dim, ~130MB,
 # CPU-fast) that handles specific-attribution queries much better than
 # CLIP's text tower. See nexus_clip_text_search_limits memory for why.

@@ -29,13 +29,12 @@ URL = os.environ.get("NEXUS_DEMO_URL", "http://localhost:9001")
 VIEWPORT = {"width": 1400, "height": 900}
 
 # Beats to click (chip label-match → wait seconds).
-# Each beat allows: sources + answer streaming (~3-4 s) + graph settle
-# (~2 s) + reading dwell (~4-5 s) before moving on. Natural speed on
-# playback so the viewer can actually read; no post-recording speedup.
+# Each beat shows one query shape Nexus is good at.
 BEATS = [
-    ("Information vs Memory", 10.0),
-    ("Principal fields: when & who", 11.0),
-    ("Show architecture", 11.0),
+    ("Information vs Memory",         10.0),  # semantic
+    ("Principal fields: when & who",  11.0),  # semantic + git attribution
+    ("Show architecture",             11.0),  # semantic + multimodal
+    ("Lineage of memory.py",           9.0),  # graph traversal
 ]
 
 # No ffmpeg speedup — uniform fast-forward made the reading phase too

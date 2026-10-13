@@ -39,7 +39,9 @@ WEBAPP_DIR = Path(__file__).resolve().parent
 
 DEMO_WORKSPACE = "nexus-demo"
 DEMO_USER = "nexus-demo-user"
-DEMO_SESSION = "aperture-nexus-codebase"
+# Diagrams get their own session so the filter UI can scope to them
+# cleanly. Git ingest uses PR-per-session; file ingest uses its own.
+DEMO_SESSION = "architecture diagrams"
 TEXT_MODEL = "BAAI/bge-small-en-v1.5"
 IMAGE_MODEL = "ViT-B/16"  # CLIP for image embeddings
 API_KEY_FILE = WEBAPP_DIR / ".nexus-demo.key"
@@ -123,10 +125,9 @@ def _memory_for_demo_user() -> Memory:
 
 
 def _reset(memory: Memory) -> None:
-    LOG.info("resetting diagram entries from session %r…", DEMO_SESSION)
+    LOG.info("resetting diagram entries…")
     probes = memory.search(
         filters={
-            "session_name": DEMO_SESSION,
             "organization": DEMO_WORKSPACE,
             "department": "diagrams",
         },

@@ -67,6 +67,38 @@
     .ask .examples span {
       cursor: pointer; color: var(--accent); margin-right: 8px; text-decoration: underline;
     }
+    .filters {
+      padding: 10px 24px 14px; background: var(--panel);
+      border-bottom: 1px solid var(--border); font-size: 12px;
+    }
+    .filter-row {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+    }
+    .filter-row label {
+      font-weight: 700; letter-spacing: 1.5px; color: var(--muted);
+      font-size: 10px;
+    }
+    .filter-row select {
+      font-size: 12px; padding: 4px 6px; border: 1px solid var(--border);
+      border-radius: 6px; background: #fff; color: var(--text);
+      max-width: 220px;
+    }
+    .dept-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+    .dept-chip {
+      cursor: pointer; padding: 3px 10px; border-radius: 12px;
+      border: 1px solid var(--border); background: #fff;
+      color: var(--text-muted); font-size: 11px; font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .dept-chip:hover { border-color: var(--accent); color: var(--accent); }
+    .dept-chip.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+    #fClear {
+      margin-left: auto; font-size: 11px; padding: 3px 10px;
+      background: #fff; border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text-muted); cursor: pointer;
+    }
+    #fClear:hover { color: var(--navy); border-color: var(--navy); }
+    .filter-row .count { color: var(--muted); font-weight: 400; }
     .results {
       flex: 1 1 auto; overflow-y: auto; padding: 18px 24px;
     }
@@ -222,9 +254,20 @@
         Try:
         <span data-q="What is the difference between Information and Memory?">Information vs Memory</span>
         <span data-q="Who added the department and organization fields to Principal and when?">Principal fields: when &amp; who</span>
-        <span data-q="When was authentication added to the project?">When was auth added</span>
         <span data-q="Show me a diagram of the Nexus architecture and components">Show architecture</span>
-        <span data-q="Diagram of the write and query workflow in Nexus">Show workflow diagram</span>
+        <span data-lineage="src/aperture_nexus/memory.py">Lineage of memory.py</span>
+      </div>
+
+      <div id="filters" class="filters">
+        <div class="filter-row">
+          <label>SESSION</label>
+          <select id="fSession"><option value="">all sessions</option></select>
+          <label>PRINCIPAL</label>
+          <select id="fUser"><option value="">any principal</option></select>
+          <label>DEPARTMENT</label>
+          <span class="dept-chips" id="fDeptChips"></span>
+          <button id="fClear" title="Clear all filters">clear</button>
+        </div>
       </div>
     </div>
     <div id="results" class="results">
@@ -249,6 +292,96 @@
   const graph         = document.getElementById('graph');
   const diagramsPane  = document.getElementById('diagrams');
   const diagramsStrip = document.getElementById('diagramsStrip');
+  const fSession      = document.getElementById('fSession');
+  const fUser         = document.getElementById('fUser');
+  const fDeptChips    = document.getElementById('fDeptChips');
+  const fClear        = document.getElementById('fClear');
+
+  // Active filters (empty = no filter)
+  let activeDept = '';
+
+  function activeFilters() {
+    return {
+      session_name: fSession.value || null,
+      user_id:      fUser.value || null,
+      department:   activeDept || null,
+    };
+  }
+
+  function filtersToQS() {
+    const f = activeFilters();
+    const parts = [];
+    for (const k of ['session_name', 'user_id', 'department']) {
+      if (f[k]) parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(f[k]));
+    }
+    return parts.length ? '&' + parts.join('&') : '';
+  }
+
+  async function loadCounts() {
+    try {
+      const r = await fetch('/counts');
+      if (!r.ok) throw new Error('counts failed');
+      const data = await r.json();
+      // Populate sessions dropdown — grouped a bit so PRs cluster.
+      const sess = Object.entries(data.sessions || {});
+      const nonPr = sess.filter(([n]) => !n.startsWith('PR #') && !n.startsWith('commit '));
+      const pr    = sess.filter(([n]) =>  n.startsWith('PR #'));
+      const other = sess.filter(([n]) =>  n.startsWith('commit '));
+      const makeOpt = ([name, n]) => {
+        const o = document.createElement('option');
+        o.value = name; o.textContent = `${name} (${n})`;
+        return o;
+      };
+      // Clear then re-populate (keep the "all" default option).
+      fSession.length = 1;
+      if (nonPr.length) {
+        const g = document.createElement('optgroup'); g.label = 'collections';
+        nonPr.forEach(e => g.appendChild(makeOpt(e)));
+        fSession.appendChild(g);
+      }
+      if (pr.length) {
+        const g = document.createElement('optgroup'); g.label = 'pull requests';
+        pr.forEach(e => g.appendChild(makeOpt(e)));
+        fSession.appendChild(g);
+      }
+      if (other.length) {
+        const g = document.createElement('optgroup'); g.label = 'direct commits';
+        other.forEach(e => g.appendChild(makeOpt(e)));
+        fSession.appendChild(g);
+      }
+      // Principals
+      fUser.length = 1;
+      for (const [uid, n] of Object.entries(data.principals || {})) {
+        const o = document.createElement('option');
+        o.value = uid; o.textContent = `${uid} (${n})`;
+        fUser.appendChild(o);
+      }
+      // Department chips
+      fDeptChips.innerHTML = '';
+      for (const [dep, n] of Object.entries(data.departments || {})) {
+        const c = document.createElement('span');
+        c.className = 'dept-chip';
+        c.dataset.dep = dep;
+        c.innerHTML = escapeHtml(dep) + ' <span class="count">(' + n + ')</span>';
+        c.addEventListener('click', () => {
+          activeDept = (activeDept === dep) ? '' : dep;
+          fDeptChips.querySelectorAll('.dept-chip').forEach(x => {
+            x.classList.toggle('active', x.dataset.dep === activeDept);
+          });
+        });
+        fDeptChips.appendChild(c);
+      }
+    } catch (e) {
+      console.warn('loadCounts failed', e);
+    }
+  }
+
+  fClear.addEventListener('click', () => {
+    fSession.value = ''; fUser.value = ''; activeDept = '';
+    fDeptChips.querySelectorAll('.dept-chip.active').forEach(x => x.classList.remove('active'));
+  });
+
+  loadCounts();
 
   function renderDiagramsStrip(items) {
     const diagrams = (items || []).filter(it => it.source_kind === 'diagram' && it.image_url);
@@ -293,9 +426,10 @@
     // Instead, we trigger it below once 'sources' arrives — by then the
     // chat panel has useful content and the old graph stays visible as
     // context until the new one swaps in.
+    const fqs = filtersToQS();
 
     // Stream sources first (fast), then the answer token-by-token.
-    const url = '/synthesize?q=' + encodeURIComponent(query) + '&k=8';
+    const url = '/synthesize?q=' + encodeURIComponent(query) + '&k=8' + fqs;
     const es = new EventSource(url);
     currentStream = es;
     let answerText = '';
@@ -309,7 +443,7 @@
         renderDiagramsStrip(data.results);
         // Reload the graph only once sources are in — avoids showing a
         // blank iframe between click and first answer frame.
-        graph.src = '/graph/query?q=' + encodeURIComponent(query);
+        graph.src = '/graph/query?q=' + encodeURIComponent(query) + fqs;
       } catch (err) { console.warn('sources parse', err); }
     });
 
@@ -461,8 +595,28 @@
   goBtn.addEventListener('click', search);
   qInput.addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
   document.querySelectorAll('.examples span').forEach(el => {
-    el.addEventListener('click', () => { qInput.value = el.dataset.q; search(); });
+    el.addEventListener('click', () => {
+      if (el.dataset.lineage) {
+        showLineage(el.dataset.lineage);
+      } else if (el.dataset.q) {
+        qInput.value = el.dataset.q; search();
+      }
+    });
   });
+
+  function showLineage(file) {
+    qInput.value = 'Lineage of ' + file;
+    results.innerHTML = (
+      '<div class="status">' +
+      '  <b>Graph query (no LLM) — walking the memory graph.</b><br>' +
+      '  Showing every PR / commit / principal in Nexus that touched <code>' +
+      escapeHtml(file) + '</code>. Nexus-only: this is a graph traversal, ' +
+      '  not a semantic search.' +
+      '</div>'
+    );
+    diagramsPane.classList.remove('visible');
+    graph.src = '/graph/lineage?file=' + encodeURIComponent(file);
+  }
 </script>
 </body>
 </html>

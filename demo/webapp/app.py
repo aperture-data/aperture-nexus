@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -58,8 +59,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
 
 DEMO_WORKSPACE = "nexus-demo"
 DEMO_USER = "nexus-demo-user"
-DEMO_SESSION = "aperture-nexus-codebase"
-# Must match the model the ingest scripts used.
+# Default search scope is the whole workspace (every session). The UI
+# exposes session + principal + department as optional filter chips.
 TEXT_MODEL = "BAAI/bge-small-en-v1.5"
 API_KEY_FILE = WEBAPP_DIR / ".nexus-demo.key"
 
@@ -208,7 +209,10 @@ def _startup() -> None:
 
 class SearchRequest(BaseModel):
     query: str
-    k: int = 5
+    k: int = 6
+    session_name: Optional[str] = None
+    user_id: Optional[str] = None
+    department: Optional[str] = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -216,28 +220,42 @@ def index() -> HTMLResponse:
     return HTMLResponse((WEBAPP_DIR / "templates" / "index.html").read_text())
 
 
-def _run_search(query: str, k: int) -> list[dict]:
+def _build_filters(
+    session_name: Optional[str] = None,
+    user_id: Optional[str] = None,
+    department: Optional[str] = None,
+) -> dict:
+    """Build the Memory.search filters dict, scoped to the workspace."""
+    f: dict = {"organization": DEMO_WORKSPACE}
+    if session_name:
+        f["session_name"] = session_name
+    if user_id:
+        f["user_id"] = user_id
+    if department:
+        f["department"] = department
+    return f
+
+
+def _run_search(
+    query: str, k: int,
+    session_name: Optional[str] = None,
+    user_id: Optional[str] = None,
+    department: Optional[str] = None,
+) -> list[dict]:
     """Run Memory.search and format results for JSON transport.
 
     Retries once if the shared ApertureDB connection has gone stale.
     """
     assert MEMORY is not None
+    filters = _build_filters(session_name, user_id, department)
     try:
-        results = MEMORY.search(
-            query=query, modality="text",
-            filters={"session_name": DEMO_SESSION, "organization": DEMO_WORKSPACE},
-            k=k,
-        )
+        results = MEMORY.search(query=query, modality="text", filters=filters, k=k)
     except Exception as e:
         if not _is_connection_error(e):
             raise
         LOG.warning("search hit stale connection, reconnecting: %s", e)
         _reconnect_memory()
-        results = MEMORY.search(
-            query=query, modality="text",
-            filters={"session_name": DEMO_SESSION, "organization": DEMO_WORKSPACE},
-            k=k,
-        )
+        results = MEMORY.search(query=query, modality="text", filters=filters, k=k)
     payload = []
     for r in results:
         meta = getattr(r, "metadata", None) or {}
@@ -292,11 +310,22 @@ def search(req: SearchRequest) -> JSONResponse:
     """Fast path — just the retrieved chunks, no LLM call."""
     if not req.query.strip():
         raise HTTPException(400, "query is empty")
-    return JSONResponse({"results": _run_search(req.query, req.k)})
+    return JSONResponse({"results": _run_search(
+        req.query, req.k,
+        session_name=req.session_name,
+        user_id=req.user_id,
+        department=req.department,
+    )})
 
 
 @app.get("/synthesize")
-def synthesize(q: str = Query(..., min_length=1), k: int = 6) -> StreamingResponse:
+def synthesize(
+    q: str = Query(..., min_length=1),
+    k: int = 6,
+    session_name: Optional[str] = None,
+    user_id: Optional[str] = None,
+    department: Optional[str] = None,
+) -> StreamingResponse:
     """SSE stream — sources first, then the LLM answer token-by-token.
 
     Events emitted:
@@ -310,7 +339,10 @@ def synthesize(q: str = Query(..., min_length=1), k: int = 6) -> StreamingRespon
 
     def generate():
         try:
-            results = _run_search(q, k)
+            results = _run_search(
+                q, k,
+                session_name=session_name, user_id=user_id, department=department,
+            )
             yield _event("sources", {"results": results})
             if LLM_CLIENT is None or not results:
                 yield _event("done", {"model": None})
@@ -359,7 +391,13 @@ def graph_schema() -> HTMLResponse:
 
 
 @app.get("/graph/query", response_class=HTMLResponse)
-def graph_query(q: str = Query(..., min_length=1), k: int = 8) -> HTMLResponse:
+def graph_query(
+    q: str = Query(..., min_length=1),
+    k: int = 8,
+    session_name: Optional[str] = None,
+    user_id: Optional[str] = None,
+    department: Optional[str] = None,
+) -> HTMLResponse:
     """Render a graph where the search results are highlighted.
 
     Anchors the graph on the matched Blob chunks (via file_path from
@@ -367,11 +405,8 @@ def graph_query(q: str = Query(..., min_length=1), k: int = 8) -> HTMLResponse:
     NexusSession → NexusUser).
     """
     assert MEMORY is not None
-    results = MEMORY.search(
-        query=q, modality="text",
-        filters={"session_name": DEMO_SESSION, "organization": DEMO_WORKSPACE},
-        k=k,
-    )
+    filters = _build_filters(session_name, user_id, department)
+    results = MEMORY.search(query=q, modality="text", filters=filters, k=k)
     if not results:
         return HTMLResponse(
             "<p style='color:#eaeaea;font-family:sans-serif;padding:20px'>"
@@ -534,6 +569,178 @@ def graph_query(q: str = Query(..., min_length=1), k: int = 8) -> HTMLResponse:
         client=MEMORY._db,
         node_colors=NEXUS_NODE_COLORS,
         highlight_ids=[n["id"] for n in seed_nodes],
+        embed=False,
+    )
+    return HTMLResponse(out.read_text())
+
+
+# ----------------------------------------------------------------------
+# Counts endpoint — powers the live-count filter chips
+# ----------------------------------------------------------------------
+
+@app.get("/counts")
+def counts() -> JSONResponse:
+    """Return the catalog of sessions, principals, and departments
+    present in the demo workspace, each with its Blob entry count.
+    The UI uses this to populate the filter chip strip."""
+    assert MEMORY is not None
+    db = MEMORY._db
+
+    def _bucket(prop: str) -> dict:
+        """Count _Blob entries grouped by one property."""
+        resp, _ = db.query([{"FindBlob": {
+            "constraints": {"organization": ["==", DEMO_WORKSPACE]},
+            "blobs": False,
+            "results": {"list": [prop]},
+            "limit": 10000,
+        }}])
+        if not isinstance(resp, list):
+            return {}
+        entities = resp[0].get("FindBlob", {}).get("entities", []) or []
+        out: dict[str, int] = {}
+        for e in entities:
+            v = e.get(prop)
+            if v is None or v == "":
+                continue
+            out[str(v)] = out.get(str(v), 0) + 1
+        return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
+
+    try:
+        return JSONResponse({
+            "sessions":    _bucket("session_name"),
+            "principals":  _bucket("user_id"),
+            "departments": _bucket("department"),
+            "total_blobs": sum(_bucket("session_name").values()),
+        })
+    except Exception as e:
+        if _is_connection_error(e):
+            _reconnect_memory()
+            return counts()
+        raise
+
+
+# ----------------------------------------------------------------------
+# Lineage — walk the graph from a file to every PR that touched it
+# ----------------------------------------------------------------------
+
+@app.get("/graph/lineage", response_class=HTMLResponse)
+def graph_lineage(file: str = Query(..., min_length=1)) -> HTMLResponse:
+    """Render a graph showing every PR / commit / principal that ever
+    touched a given file. The Nexus-only moment: not just "what does
+    this file say" (RAG) but "how did it get this way" (graph lineage).
+    """
+    assert MEMORY is not None
+    db = MEMORY._db
+
+    # Find every _Blob entry whose metadata links back to this file.
+    # Files appear via file_path (file ingest); git chunks that modified
+    # this file appear in their diff text, but we match structurally:
+    # a git chunk doesn't carry file_path, so for history we instead
+    # walk from NexusCommits whose git diff mentions the file.
+    #
+    # Simpler, graph-native path: find Blobs with file_path==file (file
+    # ingest), AND Blobs that are git diff chunks whose session is a
+    # PR that touched the file. For the demo we use the straightforward
+    # structural query: all Blobs tagged with this file_path, plus all
+    # git-history Blobs in the same workspace whose diff text mentions
+    # the file's basename.
+
+    base = os.path.basename(file)
+
+    # Which git commits touched this file? Ask git locally — ApertureDB
+    # can't do substring queries, and the diff text in Nexus isn't
+    # directly file-indexed. git log --follow handles renames.
+    try:
+        git_output = subprocess.check_output(
+            ["git", "log", "--follow", "--format=%H", "--", file],
+            cwd=str(REPO_ROOT), text=True, errors="replace",
+            stderr=subprocess.DEVNULL,
+        )
+        commit_shas = [s for s in git_output.strip().split("\n") if s]
+    except Exception as e:
+        LOG.warning("git log for %s failed: %s", file, e)
+        commit_shas = []
+
+    anchor_nodes = []
+    # Anchor 1: one Blob representing the file (from file-ingest chunks).
+    file_blobs = graph_viz.find_nodes(
+        db, "_Blob",
+        constraints={"file_path": ["==", file]},
+        limit=1,
+        label_props=NEXUS_LABEL_PROPS,
+    )
+    for n in file_blobs:
+        n["label"] = f"{base} (current)"
+        n["props"] = {"source": "file", "file_path": file}
+        anchor_nodes.append(n)
+
+    # Anchor 2: one Blob per matching git commit (the commit_message chunk,
+    # which is one per commit — avoids pulling in all N diff chunks).
+    if commit_shas:
+        git_blobs = graph_viz.find_nodes(
+            db, "_Blob",
+            constraints={
+                "commit_sha": ["in", commit_shas],
+                "kind": ["==", "commit_message"],
+            },
+            limit=200,
+            label_props=NEXUS_LABEL_PROPS,
+        )
+        seen_shas: set[str] = set()
+        for n in git_blobs:
+            sha = (n.get("props") or {}).get("commit_sha")
+            if sha and sha not in seen_shas:
+                seen_shas.add(sha)
+                p = n.get("props") or {}
+                subject = (p.get("commit_subject") or "")[:40]
+                n["label"] = f"{sha[:8]} · {subject}"
+                n["props"] = {
+                    "source": "git_commit",
+                    "commit_sha": sha,
+                    "commit_subject": p.get("commit_subject", ""),
+                    "author": p.get("author", ""),
+                    "commit_date": p.get("commit_date", ""),
+                }
+                anchor_nodes.append(n)
+
+    if not anchor_nodes:
+        return HTMLResponse(
+            "<p style='color:#eaeaea;font-family:sans-serif;padding:20px'>"
+            f"No Nexus entries found for file <b>{base}</b>.</p>"
+        )
+
+    # Expand UP: Commit → Context (= PR) → Session → User. No Blob/Image
+    # fan-out — keeps the graph focused on the PR lineage.
+    nodes, edges = graph_viz.expand(
+        db, anchor_nodes, depth=2, per_class=4,
+        exclude={"_Blob", "_Image", "_Descriptor", "_DescriptorSet"},
+        label_props=NEXUS_LABEL_PROPS,
+        max_nodes=200,
+    )
+    # Add anchor nodes back (expand excludes _Blob, which includes our
+    # seeds — put them in the final node set so edges render).
+    nodes = list(anchor_nodes) + nodes
+
+    # Rename ugly UUID-y labels to the PR title (purpose) for Contexts
+    # and the short SHA for Commits.
+    for n in nodes:
+        p = n.get("props") or {}
+        if n["cls"] == "NexusContext" and p.get("purpose"):
+            n["label"] = p["purpose"][:60]
+        elif n["cls"] == "NexusSession" and p.get("session_name"):
+            n["label"] = p["session_name"][:60]
+        elif n["cls"] == "NexusCommit":
+            cid = p.get("commit_id", "")
+            n["label"] = f"commit {cid[:8]}" if cid else n["label"]
+
+    out = GRAPHS_DIR / f"lineage-{uuid.uuid4().hex[:8]}.html"
+    graph_viz.render_graph(
+        nodes, edges,
+        title=f"Lineage of {base}",
+        filename=str(out),
+        client=db,
+        node_colors=NEXUS_NODE_COLORS,
+        highlight_ids=[n["id"] for n in anchor_nodes],
         embed=False,
     )
     return HTMLResponse(out.read_text())
