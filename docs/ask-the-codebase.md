@@ -1,18 +1,14 @@
-# Ask the Codebase: an interactive demo
+# Ask the Codebase: an interactive demo app
 
-A small web app that lets you ask natural-language questions about an
-aperture-nexus codebase and see:
-
-- a Claude-synthesised **answer** that cites specific files and commits
-- the **source chunks** that fed the answer — file snippets, git
-  commits (author, date, diff), and architecture diagrams rendered inline
-- an interactive **memory graph** on the right, re-rendered on every
-  search, showing exactly which pieces of Nexus's memory match
+A web app that ingests a git repo into Nexus and lets you query it
+three ways: semantic chat, scoped filtering, and graph-walked lineage.
+The example repo in the demo is aperture-nexus itself, but `python
+demo/webapp/ingest.py --repo /path/to/other/repo` works on any git
+repo on disk.
 
 ![ask-the-codebase demo](https://raw.githubusercontent.com/aperture-data/aperture-nexus/main/demo/ask-the-codebase.gif)
 
-The three retrieval moments the webapp demonstrates — each a query
-shape Nexus is uniquely good at:
+The three retrieval shapes:
 
 | | Retrieval shape | What the UI does |
 |---|---|---|
@@ -20,8 +16,8 @@ shape Nexus is uniquely good at:
 | **Scoped** | `Memory.search(filters={"session_name": ..., "user_id": ..., "department": ...})` | Dropdowns + chips above the chat narrow by PR, principal, or collection — live counts fed by `/counts` |
 | **Lineage** | ApertureDB graph traversal (`_Blob` → `nexus_commit_entry` → `NexusCommit` → `nexus_context_commit` → `NexusContext`) | "Lineage of memory.py" chip walks the graph to surface every PR / commit / principal that ever touched a file |
 
-Live locally at `http://localhost:9001` once you run the three ingest
-scripts and start the server.
+Live locally at `http://localhost:9001` once ApertureDB is up, the
+three ingest scripts have run, and the server is started.
 
 ---
 
@@ -89,82 +85,60 @@ Three choices in the stack matter:
 
 ## Running it locally
 
-Prerequisites: the local ApertureDB Docker stack running (`docker
-compose up -d` from the repo root), Python 3.10+, and the
-`sentence-transformers` and `clip` extras installed:
+The full setup — environment, ApertureDB, ingest, LLM key, server
+start — lives in [`demo/webapp/README.md`](https://github.com/aperture-data/aperture-nexus/blob/main/demo/webapp/README.md).
+Short version:
 
-```bash
-pip install ".[sentence-transformers,clip,ui]"
-```
-
-Then, from the repo root:
-
-```bash
-# One-time ingest — ~2 min total, dominated by embedding model downloads.
-python demo/webapp/ingest.py
-python demo/webapp/ingest_git.py
-python demo/webapp/ingest_images.py
-
-# Start the webapp.
-ANTHROPIC_API_KEY=sk-ant-... \
-  ANTHROPIC_WORKSPACE_ID=wrkspc_... \
-  uvicorn demo.webapp.app:app --port 9001 --host 0.0.0.0
-```
-
-Open `http://localhost:9001` and try the example chips in the UI. The
-synthesised-answer panel is optional — if no `ANTHROPIC_API_KEY` is
-set, the app still runs; it just shows a soft notice and skips the
-synthesis step.
-
-To use a different LLM, set `NEXUS_DEMO_LLM` (any
-`claude-sonnet-5-5` / `claude-haiku-5-5` / `claude-opus-5-5` id).
-
-### Resetting the demo workspace
-
-Each ingest script accepts `--reset` to wipe its own slice of memory
-before re-ingesting. For a full reset, bring the Docker stack down with
-volumes removed:
-
-```bash
-docker compose down -v && docker compose up -d
-python demo/webapp/ingest.py
-python demo/webapp/ingest_git.py
-python demo/webapp/ingest_images.py
-```
+1. **ApertureDB.** Community in Docker (`docker compose up -d` from the
+   repo root), or point `APERTUREDB_KEY` / `APERTUREDB_JSON` at an
+   ApertureDB Cloud / VPC endpoint — the webapp works identically.
+2. **Install.** `pip install -e ".[sentence-transformers,clip,ui]"`
+   plus `anthropic` for the synthesised-answer panel (optional).
+3. **Ingest.** Three scripts, each independent and each accepting
+   `--repo /path/to/any/repo` for a different codebase:
+   ```bash
+   python demo/webapp/ingest.py
+   python demo/webapp/ingest_git.py
+   python demo/webapp/ingest_images.py
+   ```
+4. **Run.** `uvicorn demo.webapp.app:app --port 9001 --host 0.0.0.0`,
+   open `http://localhost:9001`.
 
 ---
 
 ## Architecture
 
-See [`demo/webapp/README.md`](https://github.com/aperture-data/aperture-nexus/blob/main/demo/webapp/README.md)
-for the file layout and endpoint contract. The short version:
-
-- **Backend** (`app.py`) is a thin FastAPI wrapper around a single long-lived
-  `Memory` instance plus an Anthropic client. Three endpoints:
-  - `POST /search` — fast path, returns ranked chunks only, no LLM wait
-  - `GET  /synthesize` — SSE stream: emits a `sources` event with the
-    chunks first, then `chunk` events with LLM text, then `done`
-  - `GET  /graph/query?q=…` — runs the same search, builds a graph
-    seeded on matching Blobs (one per file / commit / figure id)
-    expanded two hops upward (Commit → Context → Session → User), and
-    returns an interactive HTML page
+- **Backend** (`app.py`) is a thin FastAPI wrapper around a single
+  long-lived `Memory` instance plus an Anthropic client:
+  - `POST /search` — fast path, returns ranked chunks only
+  - `GET  /synthesize` — SSE stream: `sources` event (chunks), then
+    `chunk` events (streamed LLM text), then `done`
+  - `GET  /graph/query?q=…` — same search, rendered as a graph seeded
+    on matching Blobs and expanded upward through Commits → Contexts
+    → Sessions → Users
+  - `GET  /graph/lineage?file=…` — walks `git log --follow` plus the
+    Nexus graph to show every PR that ever touched the file
+  - `GET  /counts` — live Blob counts per Session, Principal,
+    Department; powers the filter chip labels
+  - `GET  /figure/{id}` — serves a named architecture diagram
 - **Frontend** (`templates/index.html`) is vanilla JS. On every search:
-  reloads the graph iframe in parallel with opening the EventSource for
-  the stream.
-- **Graph viz** (`graph_viz.py`) is a schema-agnostic ApertureDB
-  renderer — the same library used in
-  [`aperturedb-applications/notebooks/gcs-auto-annotate`](https://github.com/aperture-data/aperturedb-applications/tree/main/notebooks/gcs-auto-annotate).
-  It inspects live schema with `GetSchema`, builds a react-force-graph
-  page, and inlines each node's hero media (an image, a video, a blob
-  preview) directly into the page's details panel.
+  calls `/counts` to refresh the filter chips, opens an SSE stream for
+  the synthesised answer, and reloads the graph iframe once sources
+  arrive.
+- **Graph viz** (`graph_viz.py`) is a reusable, schema-agnostic
+  ApertureDB → interactive HTML tool: inspect any workspace with
+  `GetSchema`, pass its result through `render_schema` / `render_query`
+  / `render_graph`, get back a `react-force-graph` page with the
+  node's hero media (image, video, blob preview) inlined into the
+  details panel. Drop it into any ApertureDB app you build.
 
-Diagram retrieval is intentionally not CLIP image search. Each diagram
-is logged *twice* — once as a text caption (BGE-indexed, text-searchable)
-and once as an image (CLIP-indexed, usable later for image-to-image
-queries). When a caption surfaces for a text query, the UI pulls up the
-paired image from Nexus and renders it inline. The caption-and-image
-sibling pair lives in a dedicated "architecture diagrams" context, so a
-graph query also reveals the full set of diagrams Nexus knows about.
+Diagram retrieval is a paired-logging trick: each diagram is logged
+twice — once as a text caption (BGE-indexed, text-searchable) and once
+as the image bytes (CLIP-indexed, usable later for image-to-image
+queries). When a caption surfaces for a text query, the UI pulls up
+the paired image from Nexus and renders it inline. Caption and image
+sit in a dedicated "architecture diagrams" session, so a graph query
+also reveals the full set of diagrams Nexus knows about.
 
 ---
 
@@ -408,9 +382,18 @@ needing a separate index per episode.
 
 ## Try it on your own repo
 
-The three ingest scripts take their paths from `REPO_ROOT` at the top of
-each script — pointing them at a different checkout works today without
-code changes. A hosted version where visitors paste a public GitHub URL
-and chat with that repo is on the roadmap; the open design question is
-how to isolate per-visitor workspaces inside a shared ApertureDB without
-duplicating the DB per user.
+Both ingest scripts take a `--repo` argument:
+
+```bash
+python demo/webapp/ingest.py       --repo /path/to/your/project
+python demo/webapp/ingest_git.py   --repo /path/to/your/project
+```
+
+Without flags they default to this aperture-nexus checkout. Diagrams
+(`ingest_images.py`) are specific to our architecture; omit for other
+repos.
+
+A hosted version where visitors paste a public GitHub URL and chat
+with that repo is on the roadmap. The open design question is how to
+isolate per-visitor workspaces inside a shared ApertureDB Cloud
+instance without duplicating the DB per user.

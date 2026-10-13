@@ -38,13 +38,23 @@ from pydantic import BaseModel  # noqa: E402
 
 from aperture_nexus import Memory  # noqa: E402
 
-# Optional: Anthropic SDK for LLM-synthesised answers. Falls back cleanly
-# to raw-results-only mode if the SDK or API key is missing.
+# Optional: LLM backends for the synthesised-answer panel. Falls back
+# cleanly to raw-results-only mode if neither SDK is installed or no key
+# is set. Two providers supported:
+#   - Anthropic (default)         : ANTHROPIC_API_KEY (+ optional
+#     ANTHROPIC_WORKSPACE_ID for user-scoped keys)
+#   - OpenAI-compatible endpoints : OPENAI_API_KEY (+ optional
+#     OPENAI_BASE_URL for Together / Groq / Fireworks / LocalAI)
 try:
     import anthropic  # noqa: E402
     _ANTHROPIC_OK = True
 except ImportError:
     _ANTHROPIC_OK = False
+try:
+    import openai  # noqa: E402
+    _OPENAI_OK = True
+except ImportError:
+    _OPENAI_OK = False
 
 WEBAPP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = WEBAPP_DIR.parents[1]
@@ -64,7 +74,13 @@ DEMO_USER = "nexus-demo-user"
 TEXT_MODEL = "BAAI/bge-small-en-v1.5"
 API_KEY_FILE = WEBAPP_DIR / ".nexus-demo.key"
 
-LLM_MODEL = os.environ.get("NEXUS_DEMO_LLM", "claude-sonnet-5-5")
+# NEXUS_DEMO_LLM_PROVIDER: "anthropic" (default) or "openai". Auto-switched
+# to "openai" when only OPENAI_API_KEY is set and ANTHROPIC_API_KEY is not.
+LLM_PROVIDER = os.environ.get("NEXUS_DEMO_LLM_PROVIDER", "").strip().lower()
+LLM_MODEL = os.environ.get(
+    "NEXUS_DEMO_LLM",
+    "claude-sonnet-5-5" if LLM_PROVIDER != "openai" else "gpt-4o-mini",
+)
 LLM_MAX_TOKENS = 1000
 LLM_SYSTEM = (
     "You are an expert on aperture-nexus, a Python memory layer for AI agents built on "
@@ -126,6 +142,7 @@ def _load_memory() -> Memory:
 
 MEMORY: Optional[Memory] = None
 LLM_CLIENT = None  # type: ignore[var-annotated]
+LLM_ACTIVE_PROVIDER: Optional[str] = None
 
 
 def _is_connection_error(e: Exception) -> bool:
@@ -144,19 +161,38 @@ def _reconnect_memory() -> None:
 
 
 def _load_llm():
-    """Return an Anthropic client if the SDK + key are available, else None.
+    """Pick an LLM client based on which env vars are set.
 
-    If ``ANTHROPIC_WORKSPACE_ID`` is set, it's passed as the
-    ``anthropic-workspace-id`` default header — needed for user-scoped
-    (``sk-ant-usr-...``) keys. Workspace-scoped (``sk-ant-wrkspc_...``)
-    keys don't need this.
+    Resolution order:
+      - explicit NEXUS_DEMO_LLM_PROVIDER=openai  → OpenAI only
+      - explicit NEXUS_DEMO_LLM_PROVIDER=anthropic → Anthropic only
+      - default: Anthropic if ANTHROPIC_API_KEY set, else OpenAI if
+        OPENAI_API_KEY set, else None (fallback mode)
+
+    Returns a tuple (provider, client) or (None, None).
     """
-    if not _ANTHROPIC_OK:
-        LOG.info("anthropic SDK not installed — summary disabled")
-        return None
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        LOG.info("ANTHROPIC_API_KEY not set — summary disabled")
-        return None
+    want = LLM_PROVIDER
+    have_anthropic = _ANTHROPIC_OK and bool(os.environ.get("ANTHROPIC_API_KEY"))
+    have_openai    = _OPENAI_OK and bool(os.environ.get("OPENAI_API_KEY"))
+
+    if want == "openai" and have_openai:
+        return "openai", _openai_client()
+    if want == "anthropic" and have_anthropic:
+        return "anthropic", _anthropic_client()
+    if want and (want == "openai" or want == "anthropic"):
+        LOG.info("NEXUS_DEMO_LLM_PROVIDER=%r but key or SDK missing — summary disabled", want)
+        return None, None
+
+    # No explicit provider — pick what's available.
+    if have_anthropic:
+        return "anthropic", _anthropic_client()
+    if have_openai:
+        return "openai", _openai_client()
+    LOG.info("no LLM key set (ANTHROPIC_API_KEY / OPENAI_API_KEY) — summary disabled")
+    return None, None
+
+
+def _anthropic_client():
     try:
         workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID")
         # Exclude zstd from Accept-Encoding: anthropic 1.4.0 ships with httpx2,
@@ -166,12 +202,27 @@ def _load_llm():
         default_headers: dict = {"accept-encoding": "gzip, deflate"}
         if workspace:
             default_headers["anthropic-workspace-id"] = workspace
-            LOG.info("using workspace id %s", workspace)
+            LOG.info("using Anthropic workspace id %s", workspace)
         c = anthropic.Anthropic(default_headers=default_headers)
-        LOG.info("LLM ready — synthesising answers with %s", LLM_MODEL)
+        LOG.info("LLM ready — synthesising answers via Anthropic %s", LLM_MODEL)
         return c
     except Exception as e:
         LOG.warning("could not initialise anthropic client: %s", e)
+        return None
+
+
+def _openai_client():
+    try:
+        base_url = os.environ.get("OPENAI_BASE_URL")  # for Together, Groq, LocalAI, etc.
+        kwargs = {}
+        if base_url:
+            kwargs["base_url"] = base_url
+            LOG.info("using OpenAI-compatible endpoint %s", base_url)
+        c = openai.OpenAI(**kwargs)
+        LOG.info("LLM ready — synthesising answers via OpenAI %s", LLM_MODEL)
+        return c
+    except Exception as e:
+        LOG.warning("could not initialise openai client: %s", e)
         return None
 
 
@@ -201,9 +252,9 @@ app = FastAPI(title="Nexus Demo")
 
 @app.on_event("startup")
 def _startup() -> None:
-    global MEMORY, LLM_CLIENT
+    global MEMORY, LLM_CLIENT, LLM_ACTIVE_PROVIDER
     MEMORY = _load_memory()
-    LLM_CLIENT = _load_llm()
+    LLM_ACTIVE_PROVIDER, LLM_CLIENT = _load_llm()
     LOG.info("Memory ready — authenticated as %r", DEMO_USER)
 
 
@@ -348,15 +399,30 @@ def synthesize(
                 yield _event("done", {"model": None})
                 return
             prompt = _build_user_prompt(q, results)
-            with LLM_CLIENT.messages.stream(
-                model=LLM_MODEL,
-                max_tokens=LLM_MAX_TOKENS,
-                system=LLM_SYSTEM,
-                messages=[{"role": "user", "content": prompt}],
-            ) as stream:
-                for text in stream.text_stream:
-                    yield _event("chunk", {"text": text})
-            yield _event("done", {"model": LLM_MODEL})
+            if LLM_ACTIVE_PROVIDER == "anthropic":
+                with LLM_CLIENT.messages.stream(
+                    model=LLM_MODEL,
+                    max_tokens=LLM_MAX_TOKENS,
+                    system=LLM_SYSTEM,
+                    messages=[{"role": "user", "content": prompt}],
+                ) as stream:
+                    for text in stream.text_stream:
+                        yield _event("chunk", {"text": text})
+            else:  # openai (or openai-compatible endpoint)
+                stream = LLM_CLIENT.chat.completions.create(
+                    model=LLM_MODEL,
+                    max_tokens=LLM_MAX_TOKENS,
+                    messages=[
+                        {"role": "system", "content": LLM_SYSTEM},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    stream=True,
+                )
+                for ev in stream:
+                    delta = (ev.choices[0].delta.content or "") if ev.choices else ""
+                    if delta:
+                        yield _event("chunk", {"text": delta})
+            yield _event("done", {"model": f"{LLM_ACTIVE_PROVIDER}:{LLM_MODEL}"})
         except Exception as e:
             LOG.warning("synthesize failed: %s", e)
             yield _event("error", {"message": str(e)})

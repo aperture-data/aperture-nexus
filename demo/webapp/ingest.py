@@ -153,28 +153,67 @@ def _reset(memory: Memory) -> None:
     LOG.info("  removed %d session(s)", len(sids))
 
 
-def _iter_files() -> Iterable[tuple[str, Path]]:
-    for folder, rel_paths in INGEST_PATHS.items():
+def _iter_nexus_files(repo_root: Path) -> Iterable[tuple[str, Path]]:
+    """Walk the curated aperture-nexus file list."""
+    for folder, rel_paths in NEXUS_INGEST_PATHS.items():
         for rel in rel_paths:
-            p = REPO_ROOT / rel
+            p = repo_root / rel
             if p.exists() and p.is_file():
                 yield folder, p
             else:
                 LOG.warning("missing (skipped): %s", rel)
 
 
-def _folder_purpose(folder: str) -> str:
+def _iter_repo_files(repo_root: Path) -> Iterable[tuple[str, Path]]:
+    """Walk any git repo: *.py + *.md files, grouped by top-level folder.
+    Skips vendored directories and oversized files."""
+    for pattern in DEFAULT_PATTERNS:
+        for p in sorted(repo_root.glob(pattern)):
+            if not p.is_file():
+                continue
+            if any(part in SKIP_DIRS for part in p.parts):
+                continue
+            try:
+                if p.stat().st_size > MAX_FILE_BYTES:
+                    LOG.info("  skipped (too big): %s", p.relative_to(repo_root))
+                    continue
+            except OSError:
+                continue
+            rel = p.relative_to(repo_root)
+            folder = rel.parts[0] if len(rel.parts) > 1 else "root"
+            yield folder, p
+
+
+def _folder_purpose(folder: str, repo_name: str) -> str:
     return {
-        "root": "aperture-nexus project overview and dev guide",
-        "src": "aperture-nexus Python API source",
-        "docs": "aperture-nexus user-facing documentation",
-    }.get(folder, folder)
+        "root": f"{repo_name} project overview and top-level files",
+        "src": f"{repo_name} source code",
+        "docs": f"{repo_name} documentation",
+        "tests": f"{repo_name} test suite",
+    }.get(folder, f"{repo_name}/{folder}")
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = argv if argv is not None else sys.argv[1:]
-    reset = "--reset" in argv
+    import argparse
+    p = argparse.ArgumentParser(
+        description="Ingest a git repo's source + docs into Nexus. "
+                    "Default target is the aperture-nexus checkout this script lives in; "
+                    "pass --repo /path/to/other/repo to ingest a different one.",
+    )
+    p.add_argument("--repo", type=str, default=None,
+                   help="Path to a git repo. Defaults to the aperture-nexus checkout.")
+    p.add_argument("--reset", action="store_true",
+                   help="Wipe prior ingested data for this session before loading.")
+    args = p.parse_args(argv)
 
+    repo_root = Path(args.repo).resolve() if args.repo else DEFAULT_REPO_ROOT
+    if not repo_root.is_dir():
+        LOG.error("repo path does not exist: %s", repo_root)
+        return 2
+    repo_name = repo_root.name
+    use_nexus_curation = (repo_root == DEFAULT_REPO_ROOT)
+
+    LOG.info("ingesting from %s", repo_root)
     LOG.info("connecting to ApertureDB and Nexus…")
     admin = NexusAdmin()
     memory = Memory()
@@ -184,15 +223,16 @@ def main(argv: list[str] | None = None) -> int:
     principal = memory.authenticate(user_id=DEMO_USER, api_key=api_key)
     LOG.info("authenticated as %r (workspace=%r)", DEMO_USER, DEMO_WORKSPACE)
 
-    if reset:
+    if args.reset:
         _reset(memory)
     elif _already_ingested(memory):
         LOG.info("session %r already has entries — skipping ingest.", DEMO_SESSION)
         LOG.info("re-run with --reset to wipe and reload.")
         return 0
 
+    iter_fn = _iter_nexus_files if use_nexus_curation else _iter_repo_files
     files_by_folder: dict[str, list[Path]] = {}
-    for folder, path in _iter_files():
+    for folder, path in iter_fn(repo_root):
         files_by_folder.setdefault(folder, []).append(path)
 
     total_files = sum(len(v) for v in files_by_folder.values())
@@ -204,12 +244,12 @@ def main(argv: list[str] | None = None) -> int:
         ctx = Context(
             principal=principal,
             session_name=DEMO_SESSION,
-            purpose=_folder_purpose(folder),
+            purpose=_folder_purpose(folder, repo_name),
             organization=DEMO_WORKSPACE,
             department=folder,
         )
         for p in paths:
-            rel = p.relative_to(REPO_ROOT).as_posix()
+            rel = p.relative_to(repo_root).as_posix()
             try:
                 text = p.read_text(encoding="utf-8")
             except UnicodeDecodeError:

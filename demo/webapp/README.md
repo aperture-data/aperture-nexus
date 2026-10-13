@@ -1,144 +1,178 @@
-# Nexus demo web app
+# ask-the-codebase: a codebase-ingestion app on Nexus
 
-A single-page app that lets you ask questions about the aperture-nexus
-codebase and see:
+A single-page web app that ingests any git repo into Nexus and lets
+you query it three ways:
 
-- the top semantically-matching chunks (file, snippet, score)
-- an interactive graph of the Nexus memory, with the matching chunks
-  highlighted
+- **Semantic chat** — natural-language question, Nexus retrieves the
+  matching chunks, an LLM synthesises an answer with per-claim citations.
+- **Scoped filters** — narrow by Session (PR), Principal (author), or
+  Department. Live counts shown on every chip.
+- **Graph lineage** — walk the memory graph from a file to every PR /
+  commit / principal that ever touched it.
 
-The app ingests this repo's own source and docs into Nexus, so the demo
-is Nexus-storing-Nexus. Good for showing the aha: "my memory layer can
-answer questions about itself, with provenance and a visible graph."
+The example repo is this one (aperture-nexus itself) because we had
+it handy, but `python demo/webapp/ingest.py --repo /path/to/other/repo`
+works on any git repo on disk.
 
-## Prerequisites
+## Setup — replicating on a fresh machine
 
-- The local ApertureDB Docker stack running (`docker compose up -d` from
-  `aperture-nexus/`). The webapp defaults to `localhost:55556` with
-  `admin`/`admin`.
-- Python packages: `fastapi`, `uvicorn[standard]`, plus the aperture-nexus
-  `[clip]` extra for CLIP text embeddings.
+### 1. ApertureDB
 
-## One-time ingest
+Pick one.
 
+**Option A — Community edition in Docker (easiest for local dev):**
+From `aperture-nexus/`:
 ```bash
-python demo/webapp/ingest.py              # loads the Nexus repo
-python demo/webapp/ingest.py --reset      # wipe and reload
+docker compose up -d
+```
+That brings up ApertureDB (community), the Lenz TCP gateway, and the
+Web UI (`http://localhost:8087`). The webapp defaults to this stack
+at `localhost:55556`, `admin`/`admin`.
+
+**Option B — ApertureDB Cloud or VPC** (production-grade, managed):
+Get a connection key from the ApertureData console, then export it
+before running the webapp (or write it into `aperture_nexus.json`):
+```bash
+export APERTUREDB_KEY=adbp_...
+```
+or JSON form for an on-prem/VPC deployment:
+```bash
+export APERTUREDB_JSON='{"host":"your-host","port":55555,
+    "username":"...","password":"...","use_ssl":true}'
+```
+Everything the webapp does — ingest, search, graph queries, lineage —
+runs identically against Cloud/VPC. The only difference is where the
+TCP endpoint lives.
+
+### 2. Python environment
+
+Python 3.10+. From `aperture-nexus/`:
+```bash
+pip install -e ".[sentence-transformers,clip,ui]"
+pip install anthropic openai playwright  # LLM clients + optional GIF recorder
+```
+`anthropic` and `openai` are both optional — install only the one you
+plan to use. Install `playwright` only if you want to re-record the GIF.
+
+### 3. Ingest
+
+Three scripts, each independent. Run against the aperture-nexus repo:
+```bash
+python demo/webapp/ingest.py          # ~17 files, ~5 min
+python demo/webapp/ingest_git.py      # all git commits, grouped per PR
+python demo/webapp/ingest_images.py   # architecture diagrams
 ```
 
-The script:
+Or against any other git repo on disk:
+```bash
+python demo/webapp/ingest.py       --repo /path/to/other/repo
+python demo/webapp/ingest_git.py   --repo /path/to/other/repo
+```
 
-- Creates a demo principal (`nexus-demo-user`, workspace `nexus-demo`) and
-  caches its API key under `demo/webapp/.nexus-demo.key`.
-- Loads ~18 key files (README, CLAUDE.md, core src modules, user-facing
-  docs), chunks each at ~1200 chars so chunk text lands inline on the
-  Descriptor, and commits each file via `Memory.process_and_commit()`
-  with the CLIP `ViT-B-32` text encoder.
-- Is idempotent: re-running with no flag is a no-op; `--reset` wipes.
+Each script accepts `--reset` to wipe its own slice of memory before
+reloading.
 
-Expect ~1 minute wall-clock on first run (CLIP model download + ~326
-chunks to embed).
+### 4. LLM key (optional)
 
-## Run the server
+The synthesised-answer panel is powered by an LLM. Pick one of
+Anthropic, OpenAI, or any OpenAI-compatible endpoint (Together, Groq,
+Fireworks, LocalAI, …). You can also run with no key — raw search
+chunks and the graph still work.
+
+**Anthropic** — workspace-scoped key (`sk-ant-wrkspc_...`) is simplest:
+```bash
+export ANTHROPIC_API_KEY=sk-ant-wrkspc-...
+```
+User-scoped key (`sk-ant-usr-...`) — also set the workspace id:
+```bash
+export ANTHROPIC_API_KEY=sk-ant-usr-...
+export ANTHROPIC_WORKSPACE_ID=wrkspc_...
+```
+
+**OpenAI** (or an OpenAI-compatible endpoint):
+```bash
+export OPENAI_API_KEY=sk-...
+# optional — point at Together, Groq, Fireworks, Ollama, LocalAI, etc.
+export OPENAI_BASE_URL=https://api.together.xyz/v1
+```
+
+**Choosing / overriding** — if both keys are set, Anthropic wins by
+default. Force a provider with:
+```bash
+export NEXUS_DEMO_LLM_PROVIDER=openai    # or 'anthropic'
+```
+Override the model with `NEXUS_DEMO_LLM`. Defaults: `claude-sonnet-5-5`
+on Anthropic, `gpt-4o-mini` on OpenAI.
+
+### 5. Start the server
 
 ```bash
-# Minimal — raw results only, no synthesised answer.
 uvicorn demo.webapp.app:app --port 9001 --host 0.0.0.0
-
-# With LLM synthesis (recommended for the demo): set your Anthropic key.
-#   Workspace-scoped key (sk-ant-wrkspc_...): the key alone is enough.
-#   User-scoped key (sk-ant-usr-...): also set ANTHROPIC_WORKSPACE_ID.
-ANTHROPIC_API_KEY=sk-ant-... \
-  ANTHROPIC_WORKSPACE_ID=wrkspc_... \
-  uvicorn demo.webapp.app:app --port 9001 --host 0.0.0.0
 ```
 
-Open `http://localhost:9001/` in a browser.
-
-**Model selection.** Defaults to `claude-sonnet-5-5`. Override with
-`NEXUS_DEMO_LLM=claude-haiku-5-5` for faster/cheaper, or
-`NEXUS_DEMO_LLM=claude-opus-4-7` for highest-quality.
-
-**Fallback behaviour.** If the `anthropic` SDK isn't installed or the key
-isn't set, the server starts fine — the UI shows a soft notice telling
-you how to turn synthesis on and still displays the raw search chunks
-and the graph. Good for demoing without a network connection.
-
-- **Chat (left):** type a question, hit Enter. Returns 6 ranked
-  snippets with file path, folder, score, and the chunk text.
-- **Graph (right):** iframe that reloads with each search, showing the
-  matched chunks highlighted inside the Nexus memory graph. Hover to
-  highlight connections. Click a node for its details and the query
-  that fetches it.
+Open `http://localhost:9001`.
 
 ## What the app shows
 
-- `GET /` — the UI
-- `POST /search` — JSON `{query, k}` →
-  `{answer, answer_model, results[]}`. `answer` and `answer_model` are
-  `null` when the LLM is disabled; `results[]` is always present.
-- `GET /graph/schema` — the whole workspace's schema (classes + edges)
-- `GET /graph/query?q=...` — a graph centred on the Blob chunks that
-  match the query, expanded 2 hops up the graph (Commit → Context →
-  Session → User)
+- **Chat (left):** chips pre-fill four demo questions. Type anything,
+  hit Enter. The ANSWER card streams in token-by-token; SOURCES below
+  it show the retrieved chunks with file paths, commit SHAs, authors,
+  dates, scores.
+- **Filters (left, above chat):** Session dropdown, Principal dropdown,
+  Department chips. Live counts fetched from `/counts`. Narrow a search
+  to a specific PR or author.
+- **Graph (right):** reloads with each query. Hover a node for its
+  connections; click for its properties and the ApertureDB query that
+  fetches it. The "Lineage of memory.py" chip triggers a graph-only
+  query that walks `git log --follow` + Nexus's graph edges to show
+  every PR that ever modified the file.
 
-## Hosting it elsewhere
+## Endpoint contract
 
-**The hard part is ApertureDB.** The app is a thin FastAPI wrapper and
-runs anywhere Python runs — the challenge is where ApertureDB lives.
-
-- **HuggingFace Spaces (Docker):** write a single `Dockerfile` that
-  installs the aperturedb-community image + lenz + this app, bake the
-  ingest into the image build, and `uvicorn` on container start. Free
-  CPU tier should be enough for the demo but check memory headroom —
-  ApertureDB wants ~1 GB.
-- **Dedicated VM (Fly.io, Railway, DigitalOcean):** more
-  predictable than Spaces; a single $5/mo VM runs the whole stack
-  comfortably.
-- **Managed ApertureDB (cloud):** separate the webapp from the DB. Deploy
-  the webapp on any free Python host (Streamlit Cloud, Railway free
-  tier), set `APERTUREDB_JSON` to point at the cloud instance.
-
-Whatever path you pick, keep the one-time ingest step out of the request
-cycle — bake it into the deploy or run it once with `--reset`.
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`  | `/` | UI |
+| `POST` | `/search` | `{query, k, session_name?, user_id?, department?}` → `{results[]}` |
+| `GET`  | `/synthesize?q=…` | SSE stream: `sources` event (chunks), then `chunk` events (streamed LLM text), then `done`. Same filter params as /search. |
+| `GET`  | `/counts` | `{sessions, principals, departments, total_blobs}` with per-bucket chunk counts. Powers the filter chip labels. |
+| `GET`  | `/graph/schema` | Interactive HTML page: full workspace schema. |
+| `GET`  | `/graph/query?q=…` | Interactive HTML: graph centred on the chunks that match the query. Same filter params. |
+| `GET`  | `/graph/lineage?file=…` | Interactive HTML: every PR / commit / principal that ever touched a given file. |
+| `GET`  | `/figure/{id}` | Serves a named architecture diagram. |
 
 ## File layout
 
 ```
 demo/webapp/
 ├── app.py              # FastAPI backend
-├── ingest.py           # One-time repo ingest
-├── graph_viz.py        # Interactive ApertureDB graph (copied from
-│                       #   aperturedb-applications/notebooks/gcs-auto-annotate/)
+├── ingest.py           # Walks a repo's source + docs
+├── ingest_git.py       # Walks `git log --patch`, one Session per PR
+├── ingest_images.py    # Pairs each architecture diagram with its caption
+├── graph_viz.py        # Reusable, schema-agnostic ApertureDB → interactive
+│                       # graph page. Drop into any other ApertureDB app.
+├── record_gif.py       # Playwright headless recording of the 4-beat demo
 ├── templates/
-│   └── index.html      # Chat + graph UI
-├── graphs/             # Generated graph HTML files (served at /graphs/*)
-├── static/             # (reserved for future assets)
-├── .nexus-demo.key     # Cached API key (gitignore; recreated by ingest)
-└── README.md
+│   └── index.html      # Chat + filters + graph UI
+├── graphs/             # Generated graph HTML (gitignored)
+└── RECORDING.md        # Manual GIF playbook
 ```
 
-## Known gaps
+## Hosting elsewhere
 
-- `Memory` does not chunk long text at commit time today despite the
-  docstring on `Information.log()` saying it does — the ingest script
-  pre-chunks so chunks fit under Nexus's 2000-char inline-text threshold.
-  When Memory ships automatic chunking, the ingest can go back to one
-  `log()` call per file.
-- `SearchResult` does not expose `commit_id` or `entry_id` publicly
-  (`entry_id` is internal). The graph anchors on `file_path` from the
-  result's `metadata` instead; works for this demo, but any future demo
-  anchoring on commit should wait for the Memory API to surface those.
-- The direct-ApertureDB query path shown in the Nexus workflow diagram
-  is not demonstrated in this app yet; both query paths currently go
-  through `Memory.search()`.
-- Semantic search uses CLIP's text tower (`ViT-B-32`) because that is
-  the embedding model Nexus ships with today. CLIP's text tower is
-  weak at typo tolerance (subword tokenizer, 77-token limit). Typos
-  like `inforamation` land far from `information` in CLIP's text
-  embedding space. A sentence-transformers model would handle this
-  better and is on the roadmap (see `nexus_benchmark_resilience_metrics`
-  memory for the benchmark context).
-- `CLAUDE.md` is intentionally excluded from the ingest — it is the
-  Claude Code dev guide, dense enough to dominate every search result.
-  Add it back only if you specifically want to query dev-guide material.
+The webapp is a thin FastAPI wrapper. The ApertureDB side is the only
+hosting question:
+
+- **ApertureDB Cloud or VPC** — point `APERTUREDB_KEY` or
+  `APERTUREDB_JSON` at the managed endpoint. Deploy the webapp on any
+  Python host (Streamlit Cloud, Fly.io, Railway, HuggingFace Spaces).
+  Clean separation of concerns and the one we'd recommend for a shared
+  public demo.
+- **Community in Docker, bundled on HF Spaces** — one Dockerfile with
+  ApertureDB + Lenz + the webapp. Free tier works for small datasets;
+  memory headroom is the main constraint.
+- **Dedicated VM** — Fly.io, Railway, DigitalOcean. One modest VM
+  runs the whole stack with room to grow.
+
+Whatever path you pick, keep the one-time ingest step out of the
+request cycle — bake it into the image build, or run it once with
+`--reset` after deploy.

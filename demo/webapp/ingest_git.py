@@ -38,7 +38,7 @@ from aperture_nexus import Context, Information, Memory, NexusAdmin  # noqa: E40
 LOG = logging.getLogger("nexus-demo.ingest_git")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
 WEBAPP_DIR = Path(__file__).resolve().parent
 KEYS_DIR = WEBAPP_DIR / ".keys"
 KEYS_DIR.mkdir(parents=True, exist_ok=True)
@@ -97,9 +97,12 @@ def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP)
 # Git log parsing
 # ----------------------------------------------------------------------
 
+_REPO_ROOT = DEFAULT_REPO_ROOT   # overridden in main() when --repo is passed
+
+
 def _git(args: list[str]) -> str:
     return subprocess.check_output(
-        ["git", *args], cwd=REPO_ROOT, text=True, errors="replace",
+        ["git", *args], cwd=_REPO_ROOT, text=True, errors="replace",
     )
 
 
@@ -206,9 +209,21 @@ def _reset(memory: Memory) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--reset", action="store_true", help="wipe git-history entries before ingesting")
-    p.add_argument("--limit", type=int, default=None, help="only ingest the N most recent commits")
+    p.add_argument("--repo", type=str, default=None,
+                   help="Path to a git repo. Defaults to the aperture-nexus checkout.")
+    p.add_argument("--reset", action="store_true",
+                   help="Wipe git-history entries before ingesting.")
+    p.add_argument("--limit", type=int, default=None,
+                   help="Only ingest the N most recent commits.")
     args = p.parse_args(argv)
+
+    global _REPO_ROOT
+    if args.repo:
+        _REPO_ROOT = Path(args.repo).resolve()
+        if not _REPO_ROOT.is_dir():
+            LOG.error("repo path does not exist: %s", _REPO_ROOT)
+            return 2
+    LOG.info("ingesting git history from %s", _REPO_ROOT)
 
     LOG.info("connecting to ApertureDB and Nexus…")
     admin = NexusAdmin()
