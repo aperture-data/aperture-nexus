@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .nexus-tag { font-size: 16px; font-weight: 700; fill: #828FC5; letter-spacing: 3px; }
+      .card-h    { font-size: 26px; font-weight: 700; fill: #FFFFFF; }
+      .card-s    { font-size: 16px; font-weight: 600; fill: #DADDEE; }
+      .card-b    { font-size: 15px; font-weight: 400; fill: #DADDEE; }
+      .card-k    { font-size: 14px; font-weight: 700; fill: #FFFFFF; letter-spacing: 1.5px; }
+      .foot      { font-size: 22px; font-weight: 400; fill: #5B6782; }
+      .foot-b    { font-size: 22px; font-weight: 700; fill: #102069; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1600" height="900" fill="#FFFFFF"/>
+
+  <!-- Container label -->
+  <text x="60" y="46" class="nexus-tag">APERTURE NEXUS — PYTHON API</text>
+
+  <!-- Container -->
+  <rect x="40" y="60" width="1520" height="730" rx="20" fill="#F7F8FC" stroke="#DADDEE" stroke-width="2"/>
+
+  <!-- Grid: 3 cols × 2 rows. Card w=460 h=330, gap 30. Total: 3*460+2*30=1440 wide, 2*330+1*32=692 tall. -->
+  <!-- Center in 1520 wide × 730 tall: left margin 40, top margin 19 -->
+  <!-- Card x: 80, 570, 1060.  Card y: 79, 441 -->
+
+  <!-- NexusAdmin -->
+  <g transform="translate(80, 79)">
+    <rect width="460" height="330" rx="14" fill="#102069"/>
+    <text x="26" y="46" class="card-h">NexusAdmin</text>
+    <text x="26" y="74" class="card-s">Identity authority</text>
+    <line x1="26" y1="92" x2="434" y2="92" stroke="#4B5EAC" stroke-width="1"/>
+
+    <text x="26" y="124" class="card-b">Operator-facing. Used at setup</text>
+    <text x="26" y="146" class="card-b">time to provision users and keys.</text>
+    <text x="26" y="168" class="card-b">Not on the agent hot path.</text>
+
+    <text x="26" y="222" class="card-k">KEY METHODS</text>
+    <text x="26" y="252" class="card-b">· create_principal()</text>
+    <text x="26" y="276" class="card-b">· rotate_key()</text>
+    <text x="26" y="300" class="card-b">· delete_principal()</text>
+  </g>
+
+  <!-- Principal -->
+  <g transform="translate(570, 79)">
+    <rect width="460" height="330" rx="14" fill="#102069"/>
+    <text x="26" y="46" class="card-h">Principal</text>
+    <text x="26" y="74" class="card-s">User identity</text>
+    <line x1="26" y1="92" x2="434" y2="92" stroke="#4B5EAC" stroke-width="1"/>
+
+    <text x="26" y="124" class="card-b">Returned by Memory.authenticate.</text>
+    <text x="26" y="146" class="card-b">Stamped on every write for</text>
+    <text x="26" y="168" class="card-b">provenance and filtered retrieval.</text>
+
+    <text x="26" y="222" class="card-k">KEY FIELDS</text>
+    <text x="26" y="252" class="card-b">· user_id</text>
+    <text x="26" y="276" class="card-b">· workspace</text>
+    <text x="26" y="300" class="card-b">· scope  ·  department</text>
+  </g>
+
+  <!-- Session -->
+  <g transform="translate(1060, 79)">
+    <rect width="460" height="330" rx="14" fill="#102069"/>
+    <text x="26" y="46" class="card-h">Session</text>
+    <text x="26" y="74" class="card-s">Shared thread of work</text>
+    <line x1="26" y1="92" x2="434" y2="92" stroke="#4B5EAC" stroke-width="1"/>
+
+    <text x="26" y="124" class="card-b">A unit many participants can</text>
+    <text x="26" y="146" class="card-b">share — agents, pipelines, humans.</text>
+    <text x="26" y="168" class="card-b">Materialises when a Context names</text>
+    <text x="26" y="190" class="card-b">a session; one Session holds many.</text>
+
+    <text x="26" y="238" class="card-k">ADDRESSED BY</text>
+    <text x="26" y="268" class="card-b">· Context.session_name</text>
+    <text x="26" y="292" class="card-b">· Context.session_id</text>
+    <text x="26" y="316" class="card-b">· generate_session_id()</text>
+  </g>
+
+  <!-- Context -->
+  <g transform="translate(80, 441)">
+    <rect width="460" height="330" rx="14" fill="#102069"/>
+    <text x="26" y="46" class="card-h">Context</text>
+    <text x="26" y="74" class="card-s">Per-participant metadata</text>
+    <line x1="26" y1="92" x2="434" y2="92" stroke="#4B5EAC" stroke-width="1"/>
+
+    <text x="26" y="124" class="card-b">Who, when, and why for one unit</text>
+    <text x="26" y="146" class="card-b">of work. Stamped on every entry</text>
+    <text x="26" y="168" class="card-b">so search can filter by it.</text>
+
+    <text x="26" y="222" class="card-k">KEY FIELDS</text>
+    <text x="26" y="252" class="card-b">· principal</text>
+    <text x="26" y="276" class="card-b">· session_name  /  session_id</text>
+    <text x="26" y="300" class="card-b">· purpose  ·  tags</text>
+  </g>
+
+  <!-- Information -->
+  <g transform="translate(570, 441)">
+    <rect width="460" height="330" rx="14" fill="#102069"/>
+    <text x="26" y="46" class="card-h">Information</text>
+    <text x="26" y="74" class="card-s">Multimodal buffer</text>
+    <line x1="26" y1="92" x2="434" y2="92" stroke="#4B5EAC" stroke-width="1"/>
+
+    <text x="26" y="124" class="card-b">Captures text, images, video,</text>
+    <text x="26" y="146" class="card-b">documents under a Context.</text>
+    <text x="26" y="168" class="card-b">Validates and chunks locally.</text>
+    <text x="26" y="190" class="card-b">No DB touch until commit.</text>
+
+    <text x="26" y="238" class="card-k">KEY METHODS</text>
+    <text x="26" y="268" class="card-b">· log()</text>
+    <text x="26" y="292" class="card-b">· remove()  ·  remove_tagged()</text>
+    <text x="26" y="316" class="card-b">· connect()</text>
+  </g>
+
+  <!-- Memory -->
+  <g transform="translate(1060, 441)">
+    <rect width="460" height="330" rx="14" fill="#102069"/>
+    <text x="26" y="46" class="card-h">Memory</text>
+    <text x="26" y="74" class="card-s">The engine</text>
+    <line x1="26" y1="92" x2="434" y2="92" stroke="#4B5EAC" stroke-width="1"/>
+
+    <text x="26" y="124" class="card-b">Persists Information to ApertureDB</text>
+    <text x="26" y="146" class="card-b">and queries it back. Semantic +</text>
+    <text x="26" y="168" class="card-b">metadata search over a graph.</text>
+
+    <text x="26" y="222" class="card-k">KEY METHODS</text>
+    <!-- Methods in two columns -->
+    <text x="26" y="252" class="card-b">· commit()</text>
+    <text x="26" y="276" class="card-b">· process_and_commit()</text>
+    <text x="26" y="300" class="card-b">· async_process_and_commit()</text>
+
+    <text x="286" y="252" class="card-b">· search()</text>
+    <text x="286" y="276" class="card-b">· connect()</text>
+    <text x="286" y="300" class="card-b">· remove()</text>
+  </g>
+
+  <!-- Backed-by line -->
+  <text x="440" y="852" class="foot">Backed by</text>
+  <text x="562" y="852" class="foot-b">ApertureDB</text>
+  <text x="712" y="852" class="foot">— knowledge graph  ·  vector search  ·  multimodal storage</text>
+
+</svg>

@@ -209,3 +209,9 @@ __marimo__/
 # Demo env files
 demo/.env*
 site/
+
+# Nexus demo webapp artefacts
+nohup.out
+demo/webapp/.nexus-demo.key
+demo/webapp/.keys/
+demo/webapp/graphs/*.html
