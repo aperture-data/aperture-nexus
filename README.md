@@ -98,8 +98,9 @@ The first run downloads Docker images if not already cached, so allow
 
 The walkthrough pauses at each step so you can read what's happening before
 it proceeds. All services (ApertureDB, the Lenz gateway, and the web UI)
-start automatically. Explore stored data at **http://localhost:8087**
-(ApertureDB web UI) while the demo is running.
+start automatically. Explore stored data at **https://localhost:8443**
+(ApertureDB web UI; http://localhost:8087 redirects there, and the certificate
+is self-signed) while the demo is running.
 
 > **Note:** Use `run --rm` (above), not `docker compose up`. The `up` variant
 > does not allocate a terminal, so the demo cannot pause for input and will
@@ -287,8 +288,10 @@ aperture-nexus requires a running ApertureDB instance.
 docker compose up -d
 ```
 
-Starts ApertureDB, the Lenz TCP gateway, and the ApertureDB Web UI.
-Data persists across restarts. aperture-nexus connects on port `55556`
+Starts ApertureDB, the Lenz TCP gateway, and the ApertureDB Web UI from the
+published ApertureDB Docker Compose package
+(`aperturedata/aperturedb-compose-single-node`). `APERTUREDB_VERSION` selects
+a release; the default is the latest. Data persists across restarts. aperture-nexus connects on port `55556`
 by default.
 
 ```
@@ -296,15 +299,14 @@ docker compose down      # stop (data preserved)
 docker compose down -v   # stop and wipe all data
 ```
 
-**ApertureDB Web UI** is available at `http://localhost:8087` after startup.
+**ApertureDB Web UI** is available at `https://localhost:8443` after startup;
+`http://localhost:8087` redirects there. The certificate is self-signed.
 Use it to inspect what is stored in ApertureDB (entities, connections,
 descriptors, images), which is a useful way to verify that memories were
 committed correctly.
 
-> **Community edition note:** The Docker image
-> (`aperturedata/aperturedb-community`) is licensed for evaluation and
-> development only, with no production use. See the
-> [ApertureDB community edition license](https://www.aperturedata.io/docker-license)
+> **License note:** See the
+> [ApertureDB Docker image license](https://www.aperturedata.io/docker-license)
 > and [contact ApertureData](https://www.aperturedata.io/contact-us) for
 > production licensing.
 

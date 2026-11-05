@@ -1,0 +1,16 @@
+# Merged into the ApertureDB Docker Compose package by docker-compose.yml.
+# The demo waits until the database and the gateway accept connections.
+services:
+  aperturedb:
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/55553'"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+  lenz:
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/55551'"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
