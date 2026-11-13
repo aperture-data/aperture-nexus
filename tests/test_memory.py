@@ -56,7 +56,7 @@ def _find_response(count: int = 0, entities: list | None = None) -> tuple:
 
 
 def _find_descriptor_set_response(count: int = 0) -> tuple:
-    return ([{"FindDescriptorSet": {"status": 0, "count": count}}], [])
+    return ([{"GetIndexes": {"status": 0, "indexes": [{}] * count}}], [])
 
 
 def _find_descriptor_response(
@@ -355,7 +355,7 @@ class TestCommitWithDescriptors:
             _ok_conn_response(),                        # session_context + user_context
             _ok_commit_response(),                      # ensure_commit
             _find_descriptor_set_response(count=0),     # _ensure_descriptor_sets: not found
-            _ok_response("AddDescriptorSet"),           # create dset
+            _ok_response("CreateIndex"),           # create dset
             _ok_atomic_write_response("AddBlob"),       # 2×Find+AddBlob+AddDesc+3×AddConn
         ]
         memory = _make_memory(mock_connector)
@@ -489,11 +489,11 @@ class TestVideoClipEmbeddings:
         # video entry with 2 pre-generated clip embeddings (simulating what
         # _generate_missing_embeddings does when a CLIP model is configured).
         # Expected query sequence:
-        #   1. _ensure_descriptor_sets → FindDescriptorSet (exists)
+        #   1. _ensure_descriptor_sets → GetIndexes (exists)
         #   2. commit: AddEntity session (if_not_found), AddEntity context (if_not_found),
         #              nexus_session_context connection
         #   3. AddVideo
-        #   4. _write_video_clip_descriptors → FindDescriptorSet + AddDescriptor × 2
+        #   4. _write_video_clip_descriptors → GetIndexes + AddDescriptor × 2
         clip1 = np.ones(128, dtype=np.float32)
         clip2 = np.zeros(128, dtype=np.float32) + 0.5
         # _ensure_descriptor_sets is now called inside commit(), after
@@ -540,7 +540,7 @@ class TestVideoClipEmbeddings:
 
         def _capture(cmd, blobs=None):
             captured_cmds.append(cmd)
-            if any("FindDescriptorSet" in c for c in cmd):
+            if any("GetIndexes" in c for c in cmd):
                 return _find_descriptor_set_response(count=1)
             if any("FindEntity" in c for c in cmd):
                 return _find_response(count=1)
@@ -891,16 +891,16 @@ def _ok_response(cmd_name: str) -> tuple:
 
 
 def _find_dset_response(names: list[str]) -> tuple:
-    entities = [{"_name": n} for n in names]
-    body = {"status": 0, "returned": len(entities), "entities": entities}
-    return ([{"FindDescriptorSet": body}], [])
+    entities = [{"class": n} for n in names]
+    body = {"status": 0, "returned": len(entities), "indexes": entities}
+    return ([{"GetIndexes": body}], [])
 
 
 class TestRemove:
     def _content_delete_responses(self, dset_names: list[str]):
         """Responses for _delete_content_by_constraints:
         DeleteBlob, DeleteImage, DeleteVideo,
-        FindDescriptorSet, DeleteDescriptor × len(dset_names).
+        GetIndexes, DeleteDescriptor × len(dset_names).
         """
         responses = [
             _ok_response("DeleteBlob"),
@@ -940,7 +940,7 @@ class TestRemove:
         mock_connector.query.side_effect = self._commit_id_delete_responses([])
         memory = _make_memory(mock_connector)
         memory.remove(commit_id="cid-123")
-        # 3 content deletes + FindDescriptorSet + DeleteNexusCommit = 5 calls
+        # 3 content deletes + GetIndexes + DeleteNexusCommit = 5 calls
         assert mock_connector.query.call_count == 5
 
     # -- context_id= alone triggers DeleteEntity for commits then context --
@@ -949,7 +949,7 @@ class TestRemove:
         mock_connector.query.side_effect = self._context_delete_responses([])
         memory = _make_memory(mock_connector)
         memory.remove(context_id="ctx-xyz")
-        # 3 content + FindDescriptorSet + DeleteNexusCommit + DeleteNexusContext = 6
+        # 3 content + GetIndexes + DeleteNexusCommit + DeleteNexusContext = 6
         assert mock_connector.query.call_count == 6
 
     def test_remove_by_context_id_with_dsets(self, mock_connector):
@@ -957,7 +957,7 @@ class TestRemove:
         mock_connector.query.side_effect = self._context_delete_responses(dsets)
         memory = _make_memory(mock_connector)
         memory.remove(context_id="ctx-abc")
-        # 3 content + FindDescriptorSet + 2 desc deletes + DeleteNexusCommit + DeleteNexusContext = 8
+        # 3 content + GetIndexes + 2 desc deletes + DeleteNexusCommit + DeleteNexusContext = 8
         assert mock_connector.query.call_count == 8
 
     def test_remove_context_id_combined_skips_entity_delete(self, mock_connector):
@@ -974,7 +974,7 @@ class TestRemove:
         mock_connector.query.side_effect = self._session_delete_responses([])
         memory = _make_memory(mock_connector)
         memory.remove(session_id="sid-abc")
-        # 3 content deletes + FindDescriptorSet + 3 DeleteEntity = 7 calls
+        # 3 content deletes + GetIndexes + 3 DeleteEntity = 7 calls
         assert mock_connector.query.call_count == 7
 
     def test_remove_by_session_id_combined_skips_entity_delete(self, mock_connector):
@@ -1346,18 +1346,15 @@ class TestResolveSessionId:
 class TestBuildConstraints:
     def test_known_keys_included(self):
         result = Memory._build_constraints({"session_id": "s-1", "user_id": "alice"})
-        assert result == {
-            "session_id": ["==", "s-1"],
-            "user_id": ["==", "alice"],
-        }
+        assert result == ['all', ['$session_id', '==', 's-1'], ['$user_id', '==', 'alice']]
 
     def test_session_name_allowed(self):
         result = Memory._build_constraints({"session_name": "my-session"})
-        assert result == {"session_name": ["==", "my-session"]}
+        assert result == ['$session_name', '==', 'my-session']
 
     def test_context_id_allowed(self):
         result = Memory._build_constraints({"context_id": "ctx-abc"})
-        assert result == {"context_id": ["==", "ctx-abc"]}
+        assert result == ['$context_id', '==', 'ctx-abc']
 
     def test_all_allowed_keys(self):
         filters = {
@@ -1371,7 +1368,8 @@ class TestBuildConstraints:
             "purpose": "triage",
         }
         result = Memory._build_constraints(filters)
-        assert set(result) == set(filters)
+        assert result[0] == "all"
+        assert {predicate[0][1:] for predicate in result[1:]} == set(filters)
 
     def test_unknown_key_raises(self):
         from aperture_nexus.exceptions import NexusValidationError
@@ -1384,7 +1382,7 @@ class TestBuildConstraints:
             Memory._build_constraints({"session_name_typo": "x"})
 
     def test_empty_filters_returns_empty(self):
-        assert Memory._build_constraints({}) == {}
+        assert Memory._build_constraints({}) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1396,7 +1394,7 @@ class TestEnsureDescriptorSet:
     def test_creates_when_absent(self, mock_connector):
         mock_connector.query.side_effect = [
             _find_descriptor_set_response(count=0),
-            _ok_response("AddDescriptorSet"),
+            _ok_response("CreateIndex"),
         ]
         memory = _make_memory(mock_connector)
         vec = np.ones(128, dtype=np.float32)
@@ -1414,12 +1412,13 @@ class TestEnsureDescriptorSet:
 
     def test_find_error_raises_storage_error(self, mock_connector):
         mock_connector.query.side_effect = [
-            ([{"FindDescriptorSet": {"status": -1, "info": "internal error"}}], []),
+            ([{"GetIndexes": {"status": -1, "info": "internal error"}}], []),
         ]
         memory = _make_memory(mock_connector)
         vec = np.ones(128, dtype=np.float32)
         with pytest.raises(NexusStorageError):
-            memory._ensure_descriptor_set("nexus_text__mymodel", vec, "text", "mymodel", "CS", "HNSW")
+            memory._ensure_descriptor_set("nexus_text__mymodel", vec,
+                                          "text", "mymodel", "CS", "HNSW")
 
     def test_infers_dimensions_from_embedding(self, mock_connector):
         captured = []
@@ -1428,14 +1427,14 @@ class TestEnsureDescriptorSet:
             if mock_connector.query.call_count == 1:
                 return _find_descriptor_set_response(count=0)
             captured.extend(cmd)
-            return _ok_response("AddDescriptorSet")
+            return _ok_response("CreateIndex")
 
         mock_connector.query.side_effect = side_effect
         memory = _make_memory(mock_connector)
         vec = np.ones(256, dtype=np.float32)
         memory._ensure_descriptor_set("nexus_text__mymodel", vec, "text", "mymodel", "CS", "HNSW")
-        add_cmd = next(c for c in captured if "AddDescriptorSet" in c)
-        assert add_cmd["AddDescriptorSet"]["dimensions"] == 256
+        add_cmd = next(c for c in captured if "CreateIndex" in c)
+        assert add_cmd["CreateIndex"]["params"]["dimensions"] == 256
 
 
 # ---------------------------------------------------------------------------
@@ -1574,7 +1573,7 @@ class TestAtomicDescriptorWrite:
 
         def _capture(cmd, blobs=None):
             captured.append(cmd)
-            if any("FindDescriptorSet" in c for c in cmd):
+            if any("GetIndexes" in c for c in cmd):
                 return _find_descriptor_set_response(count=1)
             if any("FindEntity" in c for c in cmd):
                 return _find_response(count=1)
@@ -1608,7 +1607,7 @@ class TestAtomicDescriptorWrite:
 
         def _capture(cmd, blobs=None):
             captured.append(cmd)
-            if any("FindDescriptorSet" in c for c in cmd):
+            if any("GetIndexes" in c for c in cmd):
                 return _find_descriptor_set_response(count=1)
             if any("FindEntity" in c for c in cmd):
                 return _find_response(count=1)
@@ -1639,7 +1638,7 @@ class TestAtomicDescriptorWrite:
 
         def _capture(cmd, blobs=None):
             captured.append(cmd)
-            if any("FindDescriptorSet" in c for c in cmd):
+            if any("GetIndexes" in c for c in cmd):
                 return _find_descriptor_set_response(count=1)
             if any("FindEntity" in c for c in cmd):
                 return _find_response(count=1)
@@ -1768,7 +1767,7 @@ class TestAtomicDescriptorWrite:
 
         def _capture(cmd, blobs=None):
             captured.append(cmd)
-            if any("FindDescriptorSet" in c for c in cmd):
+            if any("GetIndexes" in c for c in cmd):
                 return _find_descriptor_set_response(count=1)
             if any("FindEntity" in c for c in cmd):
                 return _find_response(count=1)
@@ -1946,7 +1945,7 @@ class TestModalityPriority:
         mock_embedder.embed_text.side_effect = fake_embed_text
 
         with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
-             patch("aperture_nexus._embeddings.get_clip_embedder", return_value=mock_embedder):
+                patch("aperture_nexus._embeddings.get_clip_embedder", return_value=mock_embedder):
             memory.process_and_commit(ctx, info)
 
         # image embedding was generated; text embedder was never called
@@ -1992,8 +1991,8 @@ class TestContextEmbedding:
         info.log(text="hello", embedding=vec, embedding_model="ViT-B/16")
 
         with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
-             patch("aperture_nexus._embeddings.get_clip_embedder",
-                   return_value=mock_embedder):
+            patch("aperture_nexus._embeddings.get_clip_embedder",
+                  return_value=mock_embedder):
             mid = memory.process_and_commit(ctx, info)
 
         assert isinstance(mid, str)
@@ -2024,8 +2023,8 @@ class TestContextEmbedding:
         info.log(text="hello", embedding=vec, embedding_model="ViT-B/16")
 
         with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
-             patch("aperture_nexus._embeddings.get_clip_embedder",
-                   return_value=mock_embedder):
+            patch("aperture_nexus._embeddings.get_clip_embedder",
+                  return_value=mock_embedder):
             mid = memory.process_and_commit(ctx, info)
 
         assert isinstance(mid, str)
@@ -2065,11 +2064,11 @@ class TestContextEmbedding:
             captured_cmds.append(cmd)
             if any("AddEntity" in c for c in cmd):
                 return _ok_response("AddEntity")
-            if any("FindDescriptorSet" in c for c in cmd):
+            if any("GetIndexes" in c for c in cmd):
                 return _find_descriptor_set_response(count=1)
             if any("FindEntity" in c and "AddConnection" in c
                    for c in cmd) or (
-                   len(cmd) == 3 and "AddConnection" in cmd[-1]):
+                    len(cmd) == 3 and "AddConnection" in cmd[-1]):
                 return _ok_conn_response()
             if any("AddBlob" in c or "AddImage" in c for c in cmd):
                 return _ok_atomic_write_response("AddBlob")
@@ -2100,8 +2099,8 @@ class TestContextEmbedding:
         mock_embedder.embed_text.return_value = [np.ones(dim, dtype=np.float32)]
 
         with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
-             patch("aperture_nexus._embeddings.get_clip_embedder",
-                   return_value=mock_embedder):
+            patch("aperture_nexus._embeddings.get_clip_embedder",
+                  return_value=mock_embedder):
             memory.process_and_commit(ctx, info)
 
         # Find the AddDescriptor call for the context embedding
@@ -2164,8 +2163,8 @@ class TestSearchContexts:
         mock_embedder.embed_text.return_value = [np.ones(512, dtype=np.float32)]
 
         with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
-             patch("aperture_nexus._embeddings.get_clip_embedder",
-                   return_value=mock_embedder):
+            patch("aperture_nexus._embeddings.get_clip_embedder",
+                  return_value=mock_embedder):
             results = memory.search_contexts("order inquiry")
 
         assert len(results) == 1
@@ -2196,8 +2195,8 @@ class TestSearchContexts:
         mock_embedder.embed_text.return_value = [np.ones(512, dtype=np.float32)]
 
         with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
-             patch("aperture_nexus._embeddings.get_clip_embedder",
-                   return_value=mock_embedder):
+            patch("aperture_nexus._embeddings.get_clip_embedder",
+                  return_value=mock_embedder):
             results = memory.search_contexts("nothing here")
 
         assert results == []
@@ -2217,15 +2216,15 @@ class TestSearchContexts:
         mock_embedder.embed_text.return_value = [np.ones(512, dtype=np.float32)]
 
         with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
-             patch("aperture_nexus._embeddings.get_clip_embedder",
-                   return_value=mock_embedder):
+            patch("aperture_nexus._embeddings.get_clip_embedder",
+                  return_value=mock_embedder):
             memory.search_contexts(
                 "order", filters={"session_id": "s-42", "user_id": "bob"}
             )
 
         cmd = captured[0][0]["FindDescriptor"]
-        assert cmd["constraints"]["session_id"] == ["==", "s-42"]
-        assert cmd["constraints"]["user_id"] == ["==", "bob"]
+        assert cmd["constraints"] == [
+            "all", ["$session_id", "==", "s-42"], ["$user_id", "==", "bob"]]
 
     def test_uses_nexus_context_descriptor_set(self, mock_connector):
         captured: list = []
@@ -2242,11 +2241,11 @@ class TestSearchContexts:
         mock_embedder.embed_text.return_value = [np.ones(512, dtype=np.float32)]
 
         with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
-             patch("aperture_nexus._embeddings.get_clip_embedder",
-                   return_value=mock_embedder):
+            patch("aperture_nexus._embeddings.get_clip_embedder",
+                  return_value=mock_embedder):
             memory.search_contexts("anything")
 
-        dset = captured[0][0]["FindDescriptor"]["set"]
+        dset = captured[0][0]["FindDescriptor"]["with_class"]
         assert dset == "nexus_context__ViT-B/16"
 
     def test_connection_error_propagated(self, mock_connector):
@@ -2258,7 +2257,7 @@ class TestSearchContexts:
         mock_embedder.embed_text.return_value = [np.ones(512, dtype=np.float32)]
 
         with patch("aperture_nexus._embeddings.is_clip_model", return_value=True), \
-             patch("aperture_nexus._embeddings.get_clip_embedder",
-                   return_value=mock_embedder):
+            patch("aperture_nexus._embeddings.get_clip_embedder",
+                  return_value=mock_embedder):
             with pytest.raises(NexusConnectionError, match="network timeout"):
                 memory.search_contexts("query")

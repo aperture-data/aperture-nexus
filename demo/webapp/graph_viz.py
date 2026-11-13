@@ -7,7 +7,7 @@ can be explored without per-schema code.  Nothing in this file knows about a par
     import graph_viz as gv
 
     gv.render_schema(client)                                          # classes + connections, live counts
-    gv.render_neighborhood(client, "_Image", {"id": ["==", "abc"]})   # start somewhere, expand outwards
+    gv.render_neighborhood(client, "image:NexusImage", ["$id", "==", "abc"])   # start somewhere, expand outwards
     gv.render_query(client, [{"FindImage": {...}}])                   # draw what ANY query returned
 
 How navigation works
@@ -25,16 +25,17 @@ In the page
 
 Command line
     python graph_viz.py schema
-    python graph_viz.py node _Image --where gcs_object_stem=9614 --depth 1
+    python graph_viz.py node image:NexusImage --where gcs_object_stem=9614 --depth 1
     python graph_viz.py query my_query.json
 
-Compared with the aperture-nexus version: native types (_Image, _BoundingBox, ...) work everywhere,
+Compared with the aperture-nexus version: typed classes (image:NexusImage, bounding_box:Region, ...) work everywhere,
 neighbours come from batched, capped queries instead of one query per node, nodes are identified by
 _uniqueid (no ``id`` property required), payloads are sniffed instead of assumed, the page escapes
 all data, and template substitution is single-pass.  ``get_entities`` / ``get_edges`` / ``get_blobs``
 and the three ``get_*_data_uri`` helpers are gone - ``find_nodes`` / ``expand`` / ``get_payload_uri``
 replace them.
 """
+
 import argparse
 import base64
 import copy
@@ -43,6 +44,8 @@ import os
 import re
 import sys
 import webbrowser
+
+from aperture_nexus._query import literal as _literal
 
 try:  # the CLI and file output work without IPython; notebooks get inline display
     from IPython.display import IFrame, Markdown, display
@@ -66,8 +69,10 @@ SYSTEM_EDGE_COLOR = "rgba(150,150,150,0.5)"
 
 
 def _color_for(cls, node_colors):
-    if node_colors and cls in node_colors:
-        return node_colors[cls]
+    if node_colors:
+        color = node_colors.get(cls, node_colors.get(_typed_class(cls)[0]))
+        if color:
+            return color
     if cls not in _auto_colors:
         _auto_colors[cls] = _DEFAULT_PALETTE[len(_auto_colors) % len(_DEFAULT_PALETTE)]
     return _auto_colors[cls]
@@ -83,7 +88,7 @@ def _label_for(entity, cls, label_props):
             value = str(value)
             # hash-like ids make unreadable labels: shorten them
             return value if cand != "id" or len(value) <= 16 else value[:8] + "\u2026"
-    if cls == "_Descriptor":  # a vector: its only readable property would be an internal id
+    if _typed_class(cls)[0] == "descriptor":  # a vector: its only readable property would be an internal id
         return "embedding"
     return str(entity.get("_uniqueid", cls))
 
@@ -100,26 +105,40 @@ def _edge4(edge):
 # Object types and how to find them
 # ---------------------------------------------------------------------------------------------
 
-# Native classes -> Find command.  Any other class name is a user entity (FindEntity with_class).
+# Class identities include the native target so equal class names remain distinct.
 NATIVE_FIND = {
-    "_Image": "FindImage", "_Video": "FindVideo", "_Blob": "FindBlob", "_Clip": "FindClip",
-    "_BoundingBox": "FindBoundingBox", "_Polygon": "FindPolygon", "_Frame": "FindFrame",
-    "_Descriptor": "FindDescriptor", "_DescriptorSet": "FindDescriptorSet",
+    "entity": "FindEntity", "image": "FindImage", "video": "FindVideo",
+    "blob": "FindBlob", "clip": "FindClip", "bounding_box": "FindBoundingBox",
+    "polygon": "FindPolygon", "frame": "FindFrame", "descriptor": "FindDescriptor",
 }
 _FIND_TO_CLASS = {v: k for k, v in NATIVE_FIND.items()}
-_HAS_BLOB = ("_Image", "_Video", "_Blob", "_Clip", "_Frame", "_BoundingBox", "_Polygon", "_Descriptor")
-_PIXELS = {"_Image": "image", "_BoundingBox": "image", "_Frame": "image", "_Video": "video", "_Blob": "file"}
+_FIND_TO_CLASS["FindDescriptorBatch"] = "descriptor"
+_HAS_BLOB = set(NATIVE_FIND) - {"entity"}
+_PIXELS = {"image": "image", "bounding_box": "image",
+           "frame": "image", "video": "video", "blob": "file"}
+
+
+def _typed_class(cls):
+    target, sep, name = cls.partition(":")
+    return (target, name) if sep and target in NATIVE_FIND else ("entity", cls)
+
+
+def _class_key(target, name):
+    if target == "entity":
+        prefix, separator, _ = name.partition(":")
+        return f"entity:{name}" if separator and prefix in NATIVE_FIND else name
+    return f"{target}:{name}"
 
 
 def _find(cls, constraints=None, ref=None, limit=None, sort=None, extra=None, results=None):
-    """One Find* command for objects of ``cls``; by default returns all their properties."""
-    cmd = NATIVE_FIND.get(cls, "FindEntity")
-    body = {"uniqueids": True, "results": results or {"all_properties": True}}
-    if cmd == "FindEntity":
-        body["with_class"] = cls
-    if cls in _HAS_BLOB:
+    """Build a Find command for an entity name or ``target:class`` identity."""
+    target, name = _typed_class(cls)
+    cmd = NATIVE_FIND[target]
+    body = {"with_class": name, "uniqueids": True,
+            "results": results or {"all_properties": True}}
+    if target in _HAS_BLOB:
         body["blobs"] = False
-    if cls in ("_BoundingBox", "_Polygon") and results is None:
+    if target in ("bounding_box", "polygon") and results is None:
         body["coordinates"] = True
     if constraints:
         body["constraints"] = constraints
@@ -134,29 +153,31 @@ def _find(cls, constraints=None, ref=None, limit=None, sort=None, extra=None, re
 
 
 def snippet(cls, uniqueid=None, limit=10):
-    """The query that fetches one object (or a few of a class) - shown in the page."""
-    cmd = NATIVE_FIND.get(cls, "FindEntity")
-    body = {}
-    if cmd == "FindEntity":
-        body["with_class"] = cls
-    if uniqueid:
-        body["constraints"] = {"_uniqueid": ["==", uniqueid]}
-    else:
-        body["limit"] = limit
-    if cls in _HAS_BLOB:
-        body["blobs"] = False
-    body["results"] = {"all_properties": True}
-    return json.dumps([{cmd: body}], indent=2)
+    """The scoped query displayed for one object or class."""
+    query = _find(cls, ["$_uniqueid", "==", _literal(uniqueid)] if uniqueid else None,
+                  limit=None if uniqueid else limit)
+    return json.dumps([query], indent=2)
 
 
 def get_schema(client):
-    """Live schema: ``{"classes": {cls: {count, properties}}, "connections": [{class, src, dst, count}]}``."""
+    """Return typed classes and customer connection endpoints from server 1.0."""
     resp, _ = client.query([{"GetSchema": {}}])
     schema = resp[0].get("GetSchema", {})
-    classes = {cls: {"count": info.get("matched", 0), "properties": sorted((info.get("properties") or {}).keys())}
-               for cls, info in (schema.get("entities", {}).get("classes") or {}).items()}
-    connections = [{"class": conn, "src": p.get("src"), "dst": p.get("dst"), "count": p.get("matched", 0)}
-                   for conn, pairs in (schema.get("connections", {}).get("classes") or {}).items() for p in pairs]
+    if schema.get("status", 0) != 0:
+        raise ValueError(schema.get("info", "GetSchema failed"))
+    classes = {
+        _class_key(node["type"], node["class"]): {
+            "count": node.get("matched", 0),
+            "properties": sorted((node.get("properties") or {}).keys()),
+        }
+        for node in schema.get("nodes", [])
+    }
+    connections = [{
+        "class": edge["class"],
+        "src": _class_key(edge["src_type"], edge["src_class"]),
+        "dst": _class_key(edge["dst_type"], edge["dst_class"]),
+        "count": edge.get("matched", 0),
+    } for edge in schema.get("edges", [])]
     return {"classes": classes, "connections": connections}
 
 
@@ -175,42 +196,20 @@ def find_nodes(client, cls, constraints=None, limit=25, sort=None, label_props=N
     return [_node(e, cls, label_props) for e in body.get("entities", [])]
 
 
-_BATCHED = {}   # id(client) -> does this server support group_by_source + per_group?
-
-
 def _neighbours(client, cls, ids, conn_class, other, per_class, sort):
-    """``{source _uniqueid: [neighbour entity, ...]}`` for the nodes ``ids`` of class ``cls``.
-
-    Uses one batched query (``group_by_source`` + ``per_group``, newer servers).  If the server
-    rejects those parameters it falls back - once, remembered per connection - to one query per
-    source node, which gives the same result more slowly.
-    """
-    key = id(client)
-    anchor = _find(cls, {"_uniqueid": ["in", ids]}, ref=1, results={"list": ["_uniqueid"]})
-    if _BATCHED.get(key, True):
-        batched = _find(other, sort=sort, limit=per_class, extra={
-            "is_connected_to": {"ref": 1, "connection_class": conn_class},
-            "group_by_source": True, "per_group": True})
-        resp, _ = client.query([anchor, batched])
-        status = None if isinstance(resp, dict) else list(resp[1].values())[0]
-        if status is not None and status.get("status", 0) == 0 and isinstance(status.get("entities"), dict):
-            _BATCHED[key] = True
-            return status["entities"]
-        info = str(resp.get("info") if isinstance(resp, dict) else (status or {}).get("info"))
-        if "group_by_source" not in info and "per_group" not in info:
-            return {}  # this class pair cannot be walked generically (e.g. descriptors need a set name): skip it
-        _BATCHED[key] = False
-    groups = {}
-    for uid in ids:
-        one = _find(cls, {"_uniqueid": ["==", uid]}, ref=1, results={"list": ["_uniqueid"]})
-        near = _find(other, sort=sort, limit=per_class,
-                     extra={"is_connected_to": {"ref": 1, "connection_class": conn_class}})
-        resp, _ = client.query([one, near])
-        if isinstance(resp, dict):
-            continue
-        body = list(resp[1].values())[0]
-        groups[uid] = body.get("entities", []) if body.get("status", 0) == 0 else []
-    return groups
+    """Fetch capped neighbours grouped by their source unique id."""
+    anchor = _find(cls, ["$_uniqueid", "in", _literal(ids)], ref=1,
+                   results={"list": ["_uniqueid"]})
+    near = _find(other, sort=sort, limit=per_class, extra={
+        "is_connected_to": {"ref": 1, "connection_class": conn_class},
+        "group_by_source": True, "per_group": True})
+    resp, _ = client.query([anchor, near])
+    if isinstance(resp, dict):
+        raise ValueError(resp.get("info", "Neighbour query failed"))
+    body = next(iter(resp[1].values()))
+    if body.get("status", 0) != 0:
+        raise ValueError(body.get("info", "Neighbour query failed"))
+    return body.get("entities", {})
 
 
 def expand(client, nodes, depth=1, per_class=8, sort=None, include=None, exclude=None,
@@ -242,7 +241,7 @@ def expand(client, nodes, depth=1, per_class=8, sort=None, include=None, exclude
                 outgoing = cls == conn["src"]
                 other = conn["dst"] if outgoing else conn["src"]
                 if other not in schema["classes"] or (include and other not in include) \
-                        or (exclude and other in exclude):
+                        or (exclude and (other in exclude or _typed_class(other)[0] in exclude)):
                     continue
                 for start in range(0, len(ids), 100):
                     groups = _neighbours(client, cls, ids[start:start + 100], conn["class"], other,
@@ -256,7 +255,8 @@ def expand(client, nodes, depth=1, per_class=8, sort=None, include=None, exclude
                                     continue
                                 by_id[nid] = _node(entity, other, label_props)
                                 added.append(by_id[nid])
-                            edge = (src_id, nid, conn["class"]) if outgoing else (nid, src_id, conn["class"])
+                            edge = (src_id, nid, conn["class"]) if outgoing else (
+                                nid, src_id, conn["class"])
                             if edge not in seen_edges:
                                 seen_edges.add(edge)
                                 edges.append(edge)
@@ -302,11 +302,13 @@ def get_payload_uri(client, cls, uniqueid, max_side=None, dims=None, max_bytes=8
     For images, ``dims=(width, height)`` plus ``max_side`` shrinks the picture on the server
     (resize operation) so pages stay small.
     """
-    cmd = NATIVE_FIND.get(cls)
-    if cmd is None or cls not in _PIXELS:
+    target, name = _typed_class(cls)
+    cmd = NATIVE_FIND[target]
+    if target not in _PIXELS:
         return None
-    body = {"constraints": {"_uniqueid": ["==", uniqueid]}, "blobs": True, "results": {"list": ["_uniqueid"]}}
-    if cls == "_Image" and max_side and dims and max(dims) > max_side:
+    body = {'with_class': name, 'constraints': [
+        '$_uniqueid', '==', _literal(uniqueid)], 'blobs': True, 'results': {'list': ['_uniqueid']}}
+    if _typed_class(cls)[0] == "image" and max_side and dims and max(dims) > max_side:
         body["operations"] = [{"type": "resize", "scale": round(max_side / max(dims), 4)}]
     resp, blobs = client.query([{cmd: body}])
     if isinstance(resp, dict) or not blobs or len(blobs[0]) > max_bytes:
@@ -315,7 +317,8 @@ def get_payload_uri(client, cls, uniqueid, max_side=None, dims=None, max_bytes=8
 
 
 def _dims(props):
-    w, h = props.get("width") or props.get("_image_width"), props.get("height") or props.get("_image_height")
+    w, h = props.get("width") or props.get("_image_width"), props.get(
+        "height") or props.get("_image_height")
     return (int(w), int(h)) if isinstance(w, (int, float)) and isinstance(h, (int, float)) else None
 
 
@@ -326,7 +329,7 @@ def _attach_overlays(out_nodes, edges, node_color):
     for src, dst, _, _ in map(_edge4, edges):
         for image_id, box_id in ((src, dst), (dst, src)):
             image, box = by_id.get(image_id), by_id.get(box_id)
-            if not image or not box or image["cls"] != "_Image" or box["cls"] != "_BoundingBox":
+            if not image or not box or _typed_class(image["cls"])[0] != "image" or _typed_class(box["cls"])[0] != "bounding_box":
                 continue
             if (image_id, box_id) in drawn:  # several edge classes may join the same pair
                 continue
@@ -667,7 +670,7 @@ def render_graph(nodes, edges, title, filename, client=None, node_colors=None, h
         for key in ("image", "video", "file"):
             if n.get(key):
                 node[key] = n[key]
-        pixel_kind = _PIXELS.get(cls)
+        pixel_kind = _PIXELS.get(_typed_class(cls)[0])
         if client is not None and pixel_kind and not any(k in node for k in ("image", "video", "file")) and budget > 0 \
                 and (cls != "_BoundingBox" or crops):
             dims = _dims(node["props"])
@@ -675,7 +678,7 @@ def render_graph(nodes, edges, title, filename, client=None, node_colors=None, h
             if uri:
                 budget -= 1
                 node[pixel_kind] = uri
-                if cls == "_Image" and dims and max(dims) > image_max_side:
+                if _typed_class(cls)[0] == "image" and dims and max(dims) > image_max_side:
                     node["refw"] = dims[0]
         out_nodes.append(node)
     if client is not None and budget <= 0:
@@ -684,7 +687,8 @@ def render_graph(nodes, edges, title, filename, client=None, node_colors=None, h
     merged = {}
     for s_, d_, label, color in map(_edge4, edges):
         if s_ in seen and d_ in seen:
-            link = merged.setdefault(tuple(sorted((s_, d_))), {"source": s_, "target": d_, "names": [], "color": color})
+            link = merged.setdefault(tuple(sorted((s_, d_))), {
+                                     "source": s_, "target": d_, "names": [], "color": color})
             if label and label not in link["names"]:
                 link["names"].append(label)
     links = [{"source": l["source"], "target": l["target"], "name": " + ".join(l["names"]), "color": l["color"]}
@@ -727,7 +731,8 @@ def get_schema_graph(client):
     for c in schema["connections"]:
         if c["src"] in schema["classes"] and c["dst"] in schema["classes"]:
             is_system = c["class"].startswith("_") or c["class"].islower()
-            edges.append((c["src"], c["dst"], f"{c['class']} ({c['count']})", SYSTEM_EDGE_COLOR if is_system else None))
+            edges.append(
+                (c["src"], c["dst"], f"{c['class']} ({c['count']})", SYSTEM_EDGE_COLOR if is_system else None))
     return nodes, edges
 
 
@@ -778,17 +783,24 @@ def _start_points(client, query, max_start):
         body["uniqueids"] = True
         if not results.get("list") and not results.get("all_properties"):
             body["results"] = {**results, "list": ["_uniqueid"]}
-        if _FIND_TO_CLASS.get(name) in _HAS_BLOB:
+        if _FIND_TO_CLASS[name] in _HAS_BLOB:
             body["blobs"] = False
-        picks.append((i, name, body.get("with_class") if name == "FindEntity" else _FIND_TO_CLASS[name]))
+        picks.append((i, name, _FIND_TO_CLASS[name], body.get("with_class")))
     resp, _ = client.query(q)
     if isinstance(resp, dict):
         raise ValueError(resp.get("info"))
     points = []
-    for i, name, cls in picks:
+    for i, name, target, selected_class in picks:
         found = resp[i][name].get("entities")
         if isinstance(found, list):
-            points += [(cls, e["_uniqueid"]) for e in found if "_uniqueid" in e]
+            for entity in found:
+                if "_uniqueid" not in entity:
+                    continue
+                class_name = entity.get("_class", selected_class)
+                if not isinstance(class_name, str) or not class_name:
+                    raise ValueError(
+                        f"{name} result is missing its _class; select a class with with_class")
+                points.append((_class_key(target, class_name), entity["_uniqueid"]))
     return list(dict.fromkeys(points))[:max_start]
 
 
@@ -801,7 +813,7 @@ def render_query(client, query, title="Query result", filename=None, depth=1, pe
     start = []
     for cls in dict.fromkeys(c for c, _ in points):
         ids = [u for c, u in points if c == cls]
-        resp, _ = client.query([_find(cls, {"_uniqueid": ["in", ids]})])
+        resp, _ = client.query([_find(cls, ['$_uniqueid', 'in', _literal(ids)])])
         start += [_node(e, cls, label_props) for e in list(resp[0].values())[0].get("entities", [])]
     nodes, edges = expand(client, start, depth=depth, per_class=per_class, sort=sort, include=include,
                           exclude=exclude, max_nodes=max_nodes, label_props=label_props)
@@ -825,7 +837,7 @@ def _client(env_file=None):
 def _parse_where(items, typed=True):
     """``PROP=VALUE`` items -> equality constraints.  VALUE is read as JSON (so 2 is a number)
     when ``typed``; otherwise it stays a string (ids like 10028 are often stored as text)."""
-    constraints = {}
+    predicates = []
     for item in items or []:
         key, _, value = item.partition("=")
         if typed:
@@ -833,28 +845,34 @@ def _parse_where(items, typed=True):
                 value = json.loads(value)
             except ValueError:
                 pass
-        constraints[key] = ["==", value]
-    return constraints
+        predicates.append([f"${key}", "==", _literal(value)])
+    return predicates[0] if len(predicates) == 1 else ["all", *predicates] if predicates else []
 
 
 def main(argv=None):
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--env-file", help="file with APERTUREDB_KEY etc. (the GCS demo's config.py is used when present)")
+    common.add_argument(
+        "--env-file", help="file with APERTUREDB_KEY etc. (the GCS demo's config.py is used when present)")
     common.add_argument("--open", action="store_true", help="open the page in a browser")
     common.add_argument("--out", help="output HTML file")
     common.add_argument("--label", action="append", metavar="CLASS=PROP",
-                        help="property that names the nodes of a class, e.g. _Image=gcs_object_stem (repeatable)")
+                        help="property that names the nodes of a class, e.g. image:NexusImage=gcs_object_stem (repeatable)")
 
-    parser = argparse.ArgumentParser(description="Interactive graph views of an ApertureDB database")
+    parser = argparse.ArgumentParser(
+        description="Interactive graph views of an ApertureDB database")
     sub = parser.add_subparsers(dest="view", required=True)
     sub.add_parser("schema", parents=[common], help="classes and connections with live counts")
-    node = sub.add_parser("node", parents=[common], help="objects of a class and their surroundings")
-    node.add_argument("cls", help="class, e.g. _Image or a user class")
-    node.add_argument("--where", action="append", metavar="PROP=VALUE", help="equality filter (repeatable)")
+    node = sub.add_parser("node", parents=[common],
+                          help="objects of a class and their surroundings")
+    node.add_argument("cls", help="class, e.g. image:NexusImage or NexusContext")
+    node.add_argument("--where", action="append", metavar="PROP=VALUE",
+                      help="equality filter (repeatable)")
     node.add_argument("--depth", type=int, default=1)
     node.add_argument("--limit", type=int, default=5, help="how many starting objects")
-    node.add_argument("--per-class", type=int, default=8, help="neighbours kept per node and connection")
-    query = sub.add_parser("query", parents=[common], help="the objects a query (JSON file) returns, with their neighbours")
+    node.add_argument("--per-class", type=int, default=8,
+                      help="neighbours kept per node and connection")
+    query = sub.add_parser(
+        "query", parents=[common], help="the objects a query (JSON file) returns, with their neighbours")
     query.add_argument("file")
     query.add_argument("--depth", type=int, default=1)
     args = parser.parse_args(argv)

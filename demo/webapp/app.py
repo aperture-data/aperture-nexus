@@ -37,6 +37,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from aperture_nexus import Memory  # noqa: E402
+from aperture_nexus._query import literal as _literal  # noqa: E402
 
 # Optional: LLM backends for the synthesised-answer panel. Falls back
 # cleanly to raw-results-only mode if neither SDK is installed or no key
@@ -108,18 +109,17 @@ NEXUS_NODE_COLORS = {
     "NexusSession":    "#172F94",
     "NexusContext":    "#4B5EAC",
     "NexusCommit":     "#828FC5",
-    "_Blob":           "#1F4E8C",
-    "_Image":          "#0C7A5A",   # diagram images stand out in the graph
-    "_Descriptor":     "#8EC1F0",
-    "_DescriptorSet":  "#C9560C",
+    "blob:NexusBlob":           "#1F4E8C",
+    "image:NexusImage":          "#0C7A5A",   # diagram images stand out in the graph
+    "descriptor":     "#8EC1F0",
 }
 NEXUS_LABEL_PROPS = {
     "NexusUser": "user_id",
     "NexusSession": "session_name",
     "NexusContext": "purpose",
     "NexusCommit": "commit_id",
-    "_Blob": "file_path",
-    "_Image": "figure_id",
+    "blob:NexusBlob": "file_path",
+    "image:NexusImage": "figure_id",
 }
 
 
@@ -173,7 +173,7 @@ def _load_llm():
     """
     want = LLM_PROVIDER
     have_anthropic = _ANTHROPIC_OK and bool(os.environ.get("ANTHROPIC_API_KEY"))
-    have_openai    = _OPENAI_OK and bool(os.environ.get("OPENAI_API_KEY"))
+    have_openai = _OPENAI_OK and bool(os.environ.get("OPENAI_API_KEY"))
 
     if want == "openai" and have_openai:
         return "openai", _openai_client()
@@ -232,10 +232,10 @@ def _build_user_prompt(query: str, results: list[dict]) -> str:
     for i, r in enumerate(results, 1):
         if r.get("source_kind") == "git":
             header = (
-                f"[{i}] GIT COMMIT  {r.get('commit_short','')}  "
-                f"by {r.get('author','?')}  on {r.get('commit_date','?')[:10]}  "
-                f"({r.get('kind','?')})\n"
-                f"    Subject: {r.get('commit_subject','?')}"
+                f"[{i}] GIT COMMIT  {r.get('commit_short', '')}  "
+                f"by {r.get('author', '?')}  on {r.get('commit_date', '?')[:10]}  "
+                f"({r.get('kind', '?')})\n"
+                f"    Subject: {r.get('commit_subject', '?')}"
             )
         else:
             header = f"[{i}] FILE  {r['file_path']}  (score {r['score']:.3f})"
@@ -520,8 +520,8 @@ def graph_query(
     # One Blob per matched file.
     if file_counts:
         all_file_blobs = graph_viz.find_nodes(
-            MEMORY._db, "_Blob",
-            constraints={"file_path": ["in", list(file_counts.keys())]},
+            MEMORY._db, "blob:NexusBlob",
+            constraints=['$file_path', 'in', _literal(list(file_counts.keys()))],
             limit=500,
             label_props=NEXUS_LABEL_PROPS,
         )
@@ -546,8 +546,8 @@ def graph_query(
     # One Blob per matched diagram (the caption chunk).
     if diagram_counts:
         all_diagram_blobs = graph_viz.find_nodes(
-            MEMORY._db, "_Blob",
-            constraints={"figure_id": ["in", list(diagram_counts.keys())]},
+            MEMORY._db, "blob:NexusBlob",
+            constraints=['$figure_id', 'in', _literal(list(diagram_counts.keys()))],
             limit=200,
             label_props=NEXUS_LABEL_PROPS,
         )
@@ -570,8 +570,8 @@ def graph_query(
     # One Blob per matched commit.
     if git_counts:
         all_git_blobs = graph_viz.find_nodes(
-            MEMORY._db, "_Blob",
-            constraints={"commit_sha": ["in", list(git_counts.keys())]},
+            MEMORY._db, "blob:NexusBlob",
+            constraints=['$commit_sha', 'in', _literal(list(git_counts.keys()))],
             limit=1000,
             label_props=NEXUS_LABEL_PROPS,
         )
@@ -583,7 +583,8 @@ def graph_query(
                 g = git_meta.get(sha, {})
                 count = git_counts[sha]
                 subject = (g.get("commit_subject") or "")[:40]
-                n["label"] = f"{g.get('commit_short', sha[:8])} · {subject}" + (f" ({count})" if count > 1 else "")
+                n["label"] = f"{g.get('commit_short', sha[:8])} · {subject}" + \
+                    (f" ({count})" if count > 1 else "")
                 n["props"] = {
                     "source": "git",
                     "commit_sha": sha,
@@ -600,7 +601,7 @@ def graph_query(
     # the shared NexusCommit.
     nodes, edges = graph_viz.expand(
         MEMORY._db, seed_nodes, depth=2, per_class=6,
-        exclude={"_Blob", "_Descriptor", "_DescriptorSet"},
+        exclude={"blob:NexusBlob", "descriptor"},
         label_props=NEXUS_LABEL_PROPS,
         max_nodes=120,
     )
@@ -654,12 +655,8 @@ def counts() -> JSONResponse:
 
     def _bucket(prop: str) -> dict:
         """Count _Blob entries grouped by one property."""
-        resp, _ = db.query([{"FindBlob": {
-            "constraints": {"organization": ["==", DEMO_WORKSPACE]},
-            "blobs": False,
-            "results": {"list": [prop]},
-            "limit": 10000,
-        }}])
+        resp, _ = db.query([{'FindBlob': {'constraints': ['$organization', '==', _literal(DEMO_WORKSPACE)],
+                           'blobs': False, 'results': {'list': [prop]}, 'limit': 10000, 'with_class': 'NexusBlob'}}])
         if not isinstance(resp, list):
             return {}
         entities = resp[0].get("FindBlob", {}).get("entities", []) or []
@@ -730,8 +727,8 @@ def graph_lineage(file: str = Query(..., min_length=1)) -> HTMLResponse:
     anchor_nodes = []
     # Anchor 1: one Blob representing the file (from file-ingest chunks).
     file_blobs = graph_viz.find_nodes(
-        db, "_Blob",
-        constraints={"file_path": ["==", file]},
+        db, "blob:NexusBlob",
+        constraints=['$file_path', '==', _literal(file)],
         limit=1,
         label_props=NEXUS_LABEL_PROPS,
     )
@@ -744,11 +741,9 @@ def graph_lineage(file: str = Query(..., min_length=1)) -> HTMLResponse:
     # which is one per commit — avoids pulling in all N diff chunks).
     if commit_shas:
         git_blobs = graph_viz.find_nodes(
-            db, "_Blob",
-            constraints={
-                "commit_sha": ["in", commit_shas],
-                "kind": ["==", "commit_message"],
-            },
+            db, "blob:NexusBlob",
+            constraints=['all', ['$commit_sha', 'in', _literal(commit_shas)],
+                         ['$kind', '==', 'commit_message']],
             limit=200,
             label_props=NEXUS_LABEL_PROPS,
         )
@@ -779,7 +774,7 @@ def graph_lineage(file: str = Query(..., min_length=1)) -> HTMLResponse:
     # fan-out — keeps the graph focused on the PR lineage.
     nodes, edges = graph_viz.expand(
         db, anchor_nodes, depth=2, per_class=4,
-        exclude={"_Blob", "_Image", "_Descriptor", "_DescriptorSet"},
+        exclude={"blob:NexusBlob", "image:NexusImage", "descriptor"},
         label_props=NEXUS_LABEL_PROPS,
         max_nodes=200,
     )

@@ -3,7 +3,7 @@
 # Starts ApertureDB from its published Docker Compose package
 # (aperturedata/aperturedb-compose-single-node): the database, the Lenz TCP
 # gateway, and the ApertureDB Web UI so you can inspect your data through a
-# browser. APERTUREDB_VERSION selects a release; the default is the latest.
+# browser. APERTUREDB_VERSION selects a release; the default is 1.0.0.
 #
 # See https://www.aperturedata.io/docker-license for the image license, and
 # https://www.aperturedata.io/contact-us for production licensing.
@@ -33,7 +33,7 @@ name: aperture-nexus-local
 
 include:
   - path:
-      - oci://aperturedata/aperturedb-compose-single-node:${APERTUREDB_VERSION:-latest}
+      - oci://aperturedata/aperturedb-compose-single-node:${APERTUREDB_VERSION:-1.0.0}
       - aperturedb.compose.yml
     # Resolve aperturedb.compose.yml's relative paths from this directory.
     project_directory: .

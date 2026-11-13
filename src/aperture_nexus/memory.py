@@ -28,9 +28,9 @@ Multimodal content storage:
     Image → AddImage  (context_id/session_id stamped)
     Video → AddVideo  (context_id/session_id stamped)
     Blob  → AddBlob   (document_type stamped, context_id/session_id stamped)
-    Embedding → AddDescriptor in per-modality+model DescriptorSet
+    Embedding → AddDescriptor in per-modality+model descriptor class
 
-DescriptorSet names: nexus_{modality}__{model_name}  (model name used verbatim)
+descriptor class names: nexus_{modality}__{model_name}  (model name used verbatim)
     e.g. nexus_text__text-embedding-3-small
          nexus_image__ViT-B/16
          nexus_video__ViT-B/16
@@ -50,6 +50,7 @@ from typing import Any, Optional, Union
 import numpy as np
 
 from aperture_nexus._client import get_connector
+from aperture_nexus._query import literal as _literal
 from aperture_nexus.config import load_config
 from aperture_nexus.context import Context
 from aperture_nexus.auth import Principal, validate_credentials
@@ -65,6 +66,13 @@ from aperture_nexus.information import Information
 from aperture_nexus.tasks import MemoryTask
 
 # ApertureDB entity class for user principals (shared with admin.py)
+# Native objects are scoped to Nexus-owned classes, including deletion paths.
+_CONTENT_CLASSES = {
+    f"{operation}{kind}": f"Nexus{kind}"
+    for operation in ("Add", "Find", "Delete", "Update")
+    for kind in ("Blob", "Image", "Video")
+}
+
 _CLASS_USER = "NexusUser"
 
 logger = logging.getLogger(__name__)
@@ -72,26 +80,26 @@ logger = logging.getLogger(__name__)
 # ApertureDB entity class names
 _CLASS_SESSION = "NexusSession"
 _CLASS_CONTEXT = "NexusContext"
-_CLASS_COMMIT  = "NexusCommit"
+_CLASS_COMMIT = "NexusCommit"
 
 # ApertureDB connection class names (snake_case, nexus-prefixed, follow
 # the pattern nexus_<src>_<dst> so the name states the direction).
-_CONN_SESSION_CONTEXT   = "nexus_session_context"    # NexusSession → NexusContext
-_CONN_USER_CONTEXT      = "nexus_user_context"       # NexusUser → NexusContext
-_CONN_CONTEXT_COMMIT    = "nexus_context_commit"     # NexusContext → NexusCommit
-_CONN_COMMIT_ENTRY      = "nexus_commit_entry"       # NexusCommit → Blob/Image/Video
-_CONN_CONTEXT_ENTRY     = "nexus_context_entry"      # NexusContext → Blob/Image/Video
-_CONN_LINK              = "nexus_link"               # NexusContext → NexusContext
-_CONN_DESCRIPTOR_ENTRY  = "nexus_descriptor_entry"   # Descriptor → Blob/Image/Video
+_CONN_SESSION_CONTEXT = "nexus_session_context"    # NexusSession → NexusContext
+_CONN_USER_CONTEXT = "nexus_user_context"       # NexusUser → NexusContext
+_CONN_CONTEXT_COMMIT = "nexus_context_commit"     # NexusContext → NexusCommit
+_CONN_COMMIT_ENTRY = "nexus_commit_entry"       # NexusCommit → Blob/Image/Video
+_CONN_CONTEXT_ENTRY = "nexus_context_entry"      # NexusContext → Blob/Image/Video
+_CONN_LINK = "nexus_link"               # NexusContext → NexusContext
+_CONN_DESCRIPTOR_ENTRY = "nexus_descriptor_entry"   # Descriptor → Blob/Image/Video
 
 # _ref layout used inside a single _write_entry transaction. Every
 # transaction begins with two FindEntity commands (the "graph prefix")
 # anchoring the parent commit and context, then adds the new content
 # entity and its descriptor. Naming these keeps the numeric _refs from
 # colliding if a future edit adds another command to the transaction.
-_REF_COMMIT     = 1   # FindEntity(NexusCommit) from _graph_prefix
-_REF_CONTEXT    = 2   # FindEntity(NexusContext) from _graph_prefix
-_REF_CONTENT    = 3   # AddBlob / AddImage / AddVideo
+_REF_COMMIT = 1   # FindEntity(NexusCommit) from _graph_prefix
+_REF_CONTEXT = 2   # FindEntity(NexusContext) from _graph_prefix
+_REF_CONTENT = 3   # AddBlob / AddImage / AddVideo
 _REF_DESCRIPTOR = 4   # AddDescriptor (when the entry has an embedding)
 
 
@@ -211,20 +219,16 @@ def _check_response(response, operation: str) -> None:
     Handles three ApertureDB response shapes:
     - Normal list-of-dicts: ``[{"CmdName": {"status": 0, ...}}, ...]``
     - Bare-dict error: ``{"info": "...", "status": -1}`` returned for
-      schema / parameter errors (e.g. CreateIndex on an existing index
-      starting with server 0.19.x).
+      schema / parameter errors.
     - List containing a mix of success dicts and bare-dict errors.
 
-    "Already exists" messages are treated as idempotent success for both
-    the list-wrapped status=2 case (older servers) and the bare-dict
-    status=-1 case (0.19.x+). This keeps AddEntity-with-if_not_found,
-    CreateIndex, AddDescriptorSet, and similar idempotent patterns safe
-    to retry.
+    Only explicit success/conditional-exists statuses are accepted. Error
+    messages never turn a rejected transaction into a successful operation.
     """
     if isinstance(response, dict):
         status = response.get("status", -1)
         info = response.get("info", "no details") or ""
-        if status == 0 or "already exists" in info.lower():
+        if status in (0, 2):
             return
         raise NexusStorageError(
             f"{operation} failed (status={status}): {info}. "
@@ -239,11 +243,8 @@ def _check_response(response, operation: str) -> None:
                 )
             status = body.get("status", -1)
             info = body.get("info", "no details") or ""
-            # status=0: success; status=2: "object already exists" (legacy
-            # idempotent path). Also treat any status with "already exists"
-            # in info as idempotent so server-side error-code changes do not
-            # break idempotent write paths.
-            if status in (0, 2) or "already exists" in info.lower():
+            # Conditional adds can report an existing object with status=2.
+            if status in (0, 2):
                 continue
             raise NexusStorageError(
                 f"{operation} failed (status={status}): {info}. "
@@ -251,7 +252,7 @@ def _check_response(response, operation: str) -> None:
             )
 
 
-def _entity_exists(db, entity_class: str, constraints: dict) -> bool:
+def _entity_exists(db, entity_class: str, constraints: list) -> bool:
     """Return True if at least one entity matching constraints exists."""
     cmd = [{
         "FindEntity": {
@@ -343,7 +344,7 @@ def _embedding_to_bytes(embedding: np.ndarray) -> bytes:
 
 
 def _dset_name(modality: str, model: str) -> str:
-    """Return the DescriptorSet name for a given modality and model.
+    """Return the descriptor class name for a given modality and model.
 
     The model name is used verbatim — no sanitization. Invalid characters
     (double-quotes, backslashes, control chars) are rejected at log() time
@@ -420,10 +421,7 @@ class Memory:
         Called automatically on the first ``commit()``. Safe to call
         explicitly at startup to pre-warm the schema before first use.
 
-        Treats "already exists" as success (via _check_response) so this
-        is safe to call on every deployment regardless of whether the
-        server returns the legacy list-wrapped status=2 or the newer
-        bare-dict status=-1 "already exists" shape.
+        Treats an existing index as idempotent success via _check_response.
         """
         if self._schema_ensured:
             return
@@ -436,11 +434,7 @@ class Memory:
             (_CLASS_COMMIT,  "context_id"),
         ]
         for cls, prop in indexes:
-            cmd = [{"CreateIndex": {
-                "index_type": "entity",
-                "class": cls,
-                "property_key": prop,
-            }}]
+            cmd = [{'CreateIndex': {'target': 'entity', 'class': cls, 'property': prop, 'kind': 'ordered'}}]
             response, _ = self._db.query(cmd)
             _check_response(response, f"CreateIndex({cls!r}.{prop!r})")
             logger.debug("Ensured index on %s.%s", cls, prop)
@@ -484,13 +478,8 @@ class Memory:
         """
         user_id = validate_credentials(user_id, api_key)
 
-        cmd = [{
-            "FindEntity": {
-                "with_class": _CLASS_USER,
-                "constraints": {"user_id": ["==", user_id]},
-                "results": {"all_properties": True},
-            }
-        }]
+        cmd = [{'FindEntity': {'with_class': _CLASS_USER, 'constraints': [
+            '$user_id', '==', _literal(user_id)], 'results': {'all_properties': True}}}]
         try:
             response, _ = self._db.query(cmd)
         except Exception as e:
@@ -581,7 +570,7 @@ class Memory:
             self._ensure_context(ctx, session_id)
             self._ensure_commit(ctx, session_id, commit_id)
 
-            # Ensure all required DescriptorSets exist before writing.
+            # Ensure all required descriptor classes exist before writing.
             # Must happen after embeddings are generated (process_and_commit)
             # and before any AddDescriptor in _write_entry.
             self._ensure_descriptor_sets(entries)
@@ -624,7 +613,7 @@ class Memory:
         ``embedding`` (set via ``info.log(embedding=..., embedding_model=...)``)
         are used as-is — no model call is made for those entries.
 
-        Automatically creates the per-modality ApertureDB DescriptorSet
+        Automatically creates the per-modality ApertureDB descriptor class
         (``nexus_text``, ``nexus_image``, ``nexus_video``) on first use,
         using the embedding dimensions inferred from the first embedding.
 
@@ -737,7 +726,7 @@ class Memory:
         """Search stored memories by semantic similarity, metadata, or both.
 
         Search is per-modality: each query type searches its own
-        DescriptorSet. There is no cross-modal search in v1.
+        descriptor class. There is no cross-modal search in v1.
 
         Permissions are not automatically filtered by user_id in v1 —
         search returns results regardless of who wrote them. Cross-user
@@ -865,22 +854,10 @@ class Memory:
             conn_props.update(properties)
 
         cmd = [
-            {
-                "FindEntity": {
-                    "with_class": _CLASS_CONTEXT,
-                    "constraints": {"nexus_ctx_id": ["==", src_id]},
-                    "_ref": 1,
-                    "results": {"count": True},
-                }
-            },
-            {
-                "FindEntity": {
-                    "with_class": _CLASS_CONTEXT,
-                    "constraints": {"nexus_ctx_id": ["==", dst_id]},
-                    "_ref": 2,
-                    "results": {"count": True},
-                }
-            },
+            {'FindEntity': {'with_class': _CLASS_CONTEXT, 'constraints': [
+                '$nexus_ctx_id', '==', _literal(src_id)], '_ref': 1, 'results': {'count': True}}},
+            {'FindEntity': {'with_class': _CLASS_CONTEXT, 'constraints': [
+                '$nexus_ctx_id', '==', _literal(dst_id)], '_ref': 2, 'results': {'count': True}}},
             {
                 "AddConnection": {
                     "class": _CONN_LINK,
@@ -909,7 +886,7 @@ class Memory:
     ) -> list[ContextResult]:
         """Search committed contexts by semantic similarity of their purpose.
 
-        Searches the ``nexus_context`` DescriptorSet populated by
+        Searches the ``nexus_context`` descriptor class populated by
         ``process_and_commit()`` when a context has a ``purpose`` set.
         Only contexts committed via ``process_and_commit()`` with a
         purpose appear here — ``commit()`` does not embed context nodes.
@@ -961,7 +938,9 @@ class Memory:
         dset = _dset_name("context", model)
         constraints = self._build_constraints(filters or {})
         cmd_body: dict = {
-            "set": dset,
+            "with_class": dset,
+            "engine": self._cfg.processing.descriptor_engine,
+            "metric": self._cfg.processing.descriptor_metric,
             "k_neighbors": k,
             "results": {"all_properties": True},
             "distances": True,
@@ -1121,41 +1100,34 @@ class Memory:
                 "Pass ctx.session_id or the session_id from a SearchResult."
             )
 
-        constraints: dict = {}
-        if commit_id:
-            constraints["commit_id"] = ["==", commit_id]
-        if context_id:
-            constraints["context_id"] = ["==", context_id]
-        if session_id:
-            constraints["session_id"] = ["==", session_id]
+        predicates = []
+        for key, value in (("commit_id", commit_id), ("context_id", context_id),
+                           ("session_id", session_id)):
+            if value:
+                predicates.append([f"${key}", "==", _literal(value)])
         if before is not None:
-            constraints["created_at"] = ["<", before.isoformat()]
+            predicates.append(["$created_at", "<", _literal(before.isoformat())])
         if since is not None:
-            constraints["created_at"] = [">=", since.isoformat()]
+            predicates.append(["$created_at", ">=", _literal(since.isoformat())])
+        constraints = predicates[0] if len(predicates) == 1 else ["all", *predicates]
 
         self._delete_content_by_constraints(constraints)
 
         # Remove NexusCommit entity/entities when scope is precise enough
         if commit_id and not any(x is not None for x in (context_id, session_id, before, since)):
-            cmd = [{"DeleteEntity": {
-                "with_class": _CLASS_COMMIT,
-                "constraints": {"commit_id": ["==", commit_id]},
-            }}]
+            cmd = [{'DeleteEntity': {'with_class': _CLASS_COMMIT,
+                                     'constraints': ['$commit_id', '==', _literal(commit_id)]}}]
             response, _ = self._db.query(cmd)
             _check_response(response, f"remove_commit_entity({commit_id!r})")
 
         # Remove NexusContext (and its commits) only when removing by context_id alone
         if context_id and not any(x is not None for x in (commit_id, session_id, before, since)):
-            cmd = [{"DeleteEntity": {
-                "with_class": _CLASS_COMMIT,
-                "constraints": {"context_id": ["==", context_id]},
-            }}]
+            cmd = [{'DeleteEntity': {'with_class': _CLASS_COMMIT,
+                                     'constraints': ['$context_id', '==', _literal(context_id)]}}]
             response, _ = self._db.query(cmd)
             _check_response(response, f"remove_commits_for_context({context_id!r})")
-            cmd = [{"DeleteEntity": {
-                "with_class": _CLASS_CONTEXT,
-                "constraints": {"nexus_ctx_id": ["==", context_id]},
-            }}]
+            cmd = [{'DeleteEntity': {'with_class': _CLASS_CONTEXT,
+                                     'constraints': ['$nexus_ctx_id', '==', _literal(context_id)]}}]
             response, _ = self._db.query(cmd)
             _check_response(response, f"remove_context_entity({context_id!r})")
 
@@ -1163,48 +1135,39 @@ class Memory:
         # removing by session_id alone — mirrors the context_id cascade
         if session_id and not any(x is not None for x in (commit_id, context_id, before, since)):
             for cls in (_CLASS_COMMIT, _CLASS_CONTEXT):
-                cmd = [{"DeleteEntity": {
-                    "with_class": cls,
-                    "constraints": {"session_id": ["==", session_id]},
-                }}]
+                cmd = [{'DeleteEntity': {'with_class': cls,
+                                         'constraints': ['$session_id', '==', _literal(session_id)]}}]
                 response, _ = self._db.query(cmd)
                 _check_response(response, f"remove_{cls}_for_session({session_id!r})")
-            cmd = [{"DeleteEntity": {
-                "with_class": _CLASS_SESSION,
-                "constraints": {"session_id": ["==", session_id]},
-            }}]
+            cmd = [{'DeleteEntity': {'with_class': _CLASS_SESSION,
+                                     'constraints': ['$session_id', '==', _literal(session_id)]}}]
             response, _ = self._db.query(cmd)
             _check_response(response, f"remove_session_entity({session_id!r})")
 
         logger.debug("remove() completed with constraints=%r", constraints)
 
     def _list_nexus_descriptor_sets(self) -> list[str]:
-        """Return names of all nexus DescriptorSets in ApertureDB."""
-        cmd = [{"FindDescriptorSet": {
-            "results": {"list": ["_name"]},
+        """Return names of all nexus descriptor classes in ApertureDB."""
+        cmd = [{"GetIndexes": {
+            "target": "descriptor", "property": "_blob", "kind": "vector",
         }}]
         response, _ = self._db.query(cmd)
-        if isinstance(response, dict):
-            return []
-        body = response[0].get("FindDescriptorSet", {})
-        return [
-            e["_name"]
-            for e in body.get("entities", [])
-            if isinstance(e.get("_name"), str)
-            and e["_name"].startswith("nexus_")
-        ]
+        _check_response(response, "list Nexus descriptor indexes")
+        body = response[0].get("GetIndexes", {})
+        return sorted({
+            index["class"] for index in body.get("indexes", [])
+            if isinstance(index.get("class"), str)
+            and index["class"].startswith("nexus_")
+        })
 
-    def _delete_content_by_constraints(self, constraints: dict) -> None:
+    def _delete_content_by_constraints(self, constraints: list) -> None:
         """Delete all content entities matching the given ApertureDB constraints."""
         for cmd_name in ("DeleteBlob", "DeleteImage", "DeleteVideo"):
-            cmd = [{cmd_name: {"constraints": constraints}}]
+            cmd = [{cmd_name: {"with_class": _CONTENT_CLASSES[cmd_name], "constraints": constraints}}]
             response, _ = self._db.query(cmd)
             _check_response(response, f"remove/{cmd_name}")
         for set_name in self._list_nexus_descriptor_sets():
-            cmd = [{"DeleteDescriptor": {
-                "set": set_name,
-                "constraints": constraints,
-            }}]
+            cmd = [{'DeleteDescriptor': {'with_class': set_name, 'constraints': constraints}}]
             response, _ = self._db.query(cmd)
             _check_response(response, f"remove/DeleteDescriptor[{set_name}]")
 
@@ -1216,7 +1179,7 @@ class Memory:
             if not entry_id or entry_id in seen:
                 continue
             seen.add(entry_id)
-            self._delete_content_by_constraints({"entry_id": ["==", entry_id]})
+            self._delete_content_by_constraints(['$entry_id', '==', _literal(entry_id)])
         if not seen:
             logger.warning(
                 "remove(results=...) found no _entry_id on any result — "
@@ -1265,7 +1228,7 @@ class Memory:
                 "context_id must be a non-empty string. "
                 "Pass the context_id returned by memory.commit()."
             )
-        constraints = {"context_id": ["==", context_id]}
+        constraints = ['$context_id', '==', _literal(context_id)]
         entries: list[MemoryEntry] = []
         entries.extend(self._retrieve_blobs(constraints, context_id))
         entries.extend(self._retrieve_images(constraints, context_id))
@@ -1277,14 +1240,11 @@ class Memory:
         return entries
 
     def _retrieve_blobs(
-        self, constraints: dict, context_id: str
+        self, constraints: list, context_id: str
     ) -> list[MemoryEntry]:
         """Fetch Blob entries (text and raw blobs) for a context."""
-        cmd = [{"FindBlob": {
-            "constraints": constraints,
-            "blobs": True,
-            "results": {"all_properties": True},
-        }}]
+        cmd = [{'FindBlob': {'constraints': constraints, 'blobs': True,
+                             'results': {'all_properties': True}, 'with_class': 'NexusBlob'}}]
         try:
             response, blobs = self._db.query(cmd)
         except Exception as e:
@@ -1330,14 +1290,11 @@ class Memory:
         return entries
 
     def _retrieve_images(
-        self, constraints: dict, context_id: str
+        self, constraints: list, context_id: str
     ) -> list[MemoryEntry]:
         """Fetch Image entries for a context."""
-        cmd = [{"FindImage": {
-            "constraints": constraints,
-            "blobs": True,
-            "results": {"all_properties": True},
-        }}]
+        cmd = [{'FindImage': {'constraints': constraints, 'blobs': True,
+                              'results': {'all_properties': True}, 'with_class': 'NexusImage'}}]
         try:
             response, blobs = self._db.query(cmd)
         except Exception as e:
@@ -1369,14 +1326,11 @@ class Memory:
         return entries
 
     def _retrieve_videos(
-        self, constraints: dict, context_id: str
+        self, constraints: list, context_id: str
     ) -> list[MemoryEntry]:
         """Fetch Video entries for a context."""
-        cmd = [{"FindVideo": {
-            "constraints": constraints,
-            "blobs": True,
-            "results": {"all_properties": True},
-        }}]
+        cmd = [{'FindVideo': {'constraints': constraints, 'blobs': True,
+                              'results': {'all_properties': True}, 'with_class': 'NexusVideo'}}]
         try:
             response, blobs = self._db.query(cmd)
         except Exception as e:
@@ -1499,11 +1453,8 @@ class Memory:
             props["organization"] = ctx.organization
         if ctx.department:
             props["department"] = ctx.department
-        cmd = [{"AddEntity": {
-            "class": _CLASS_SESSION,
-            "properties": props,
-            "if_not_found": {"session_id": ["==", session_id]},
-        }}]
+        cmd = [{'AddEntity': {'class': _CLASS_SESSION, 'properties': props,
+                              'if_not_found': ['$session_id', '==', _literal(session_id)]}}]
         response, _ = self._db.query(cmd)
         _check_response(response, "ensure_session")
 
@@ -1519,40 +1470,19 @@ class Memory:
             val = getattr(ctx, attr, None)
             if val is not None:
                 props[attr] = val
-        cmd = [{"AddEntity": {
-            "class": _CLASS_CONTEXT,
-            "properties": props,
-            "if_not_found": {"nexus_ctx_id": ["==", ctx.id]},
-        }}]
+        cmd = [{'AddEntity': {'class': _CLASS_CONTEXT, 'properties': props,
+                              'if_not_found': ['$nexus_ctx_id', '==', _literal(ctx.id)]}}]
         response, _ = self._db.query(cmd)
         _check_response(response, "ensure_context")
 
         if ctx.id not in self._ensured_contexts:
             conn_cmd = [
-                {
-                    "FindEntity": {
-                        "with_class": _CLASS_SESSION,
-                        "constraints": {"session_id": ["==", session_id]},
-                        "_ref": 1,
-                        "results": {"count": True},
-                    }
-                },
-                {
-                    "FindEntity": {
-                        "with_class": _CLASS_CONTEXT,
-                        "constraints": {"nexus_ctx_id": ["==", ctx.id]},
-                        "_ref": 2,
-                        "results": {"count": True},
-                    }
-                },
-                {
-                    "FindEntity": {
-                        "with_class": _CLASS_USER,
-                        "constraints": {"user_id": ["==", ctx.principal.user_id]},
-                        "_ref": 3,
-                        "results": {"count": True},
-                    }
-                },
+                {'FindEntity': {'with_class': _CLASS_SESSION, 'constraints': [
+                    '$session_id', '==', _literal(session_id)], '_ref': 1, 'results': {'count': True}}},
+                {'FindEntity': {'with_class': _CLASS_CONTEXT, 'constraints': [
+                    '$nexus_ctx_id', '==', _literal(ctx.id)], '_ref': 2, 'results': {'count': True}}},
+                {'FindEntity': {'with_class': _CLASS_USER, 'constraints': [
+                    '$user_id', '==', _literal(ctx.principal.user_id)], '_ref': 3, 'results': {'count': True}}},
                 {
                     "AddConnection": {
                         "class": _CONN_SESSION_CONTEXT,
@@ -1584,14 +1514,8 @@ class Memory:
         }
         cmd = [
             {"AddEntity": {"class": _CLASS_COMMIT, "properties": props, "_ref": 1}},
-            {
-                "FindEntity": {
-                    "with_class": _CLASS_CONTEXT,
-                    "constraints": {"nexus_ctx_id": ["==", ctx.id]},
-                    "_ref": 2,
-                    "results": {"count": True},
-                }
-            },
+            {'FindEntity': {'with_class': _CLASS_CONTEXT, 'constraints': [
+                '$nexus_ctx_id', '==', _literal(ctx.id)], '_ref': 2, 'results': {'count': True}}},
             {"AddConnection": {"class": _CONN_CONTEXT_COMMIT, "src": 2, "dst": 1}},
         ]
         response, _ = self._db.query(cmd)
@@ -1604,22 +1528,10 @@ class Memory:
         so downstream commands in the same transaction stay in sync.
         """
         return [
-            {
-                "FindEntity": {
-                    "with_class": _CLASS_COMMIT,
-                    "constraints": {"commit_id": ["==", commit_id]},
-                    "_ref": _REF_COMMIT,
-                    "results": {"count": True},
-                }
-            },
-            {
-                "FindEntity": {
-                    "with_class": _CLASS_CONTEXT,
-                    "constraints": {"nexus_ctx_id": ["==", ctx_id]},
-                    "_ref": _REF_CONTEXT,
-                    "results": {"count": True},
-                }
-            },
+            {'FindEntity': {'with_class': _CLASS_COMMIT, 'constraints': [
+                '$commit_id', '==', _literal(commit_id)], '_ref': _REF_COMMIT, 'results': {'count': True}}},
+            {'FindEntity': {'with_class': _CLASS_CONTEXT, 'constraints': [
+                '$nexus_ctx_id', '==', _literal(ctx_id)], '_ref': _REF_CONTEXT, 'results': {'count': True}}},
         ]
 
     def _graph_links(self, content_ref: int) -> list[dict]:
@@ -1634,7 +1546,7 @@ class Memory:
     def _write_context_embedding(
         self, ctx: Context, session_id: str
     ) -> None:
-        """Embed the context's purpose into the nexus_context DescriptorSet.
+        """Embed the context's purpose into the nexus_context descriptor class.
 
         Called by ``process_and_commit()`` after a successful ``commit()``.
         Silently skips if ``ctx.purpose`` is not set or no text embedding
@@ -1683,7 +1595,7 @@ class Memory:
                 props[attr] = val
 
         emb_bytes = _embedding_to_bytes(vector)
-        cmd = [{"AddDescriptor": {"set": dset, "properties": props}}]
+        cmd = [{'AddDescriptor': {'class': dset, 'properties': props}}]
         response, _ = self._db.query(cmd, [emb_bytes])
         _check_response(response, "write_context_embedding")
         logger.debug(
@@ -1776,18 +1688,20 @@ class Memory:
 
             if has_emb:
                 dset = _dset_name("text", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "text", commit_id, entry_id)
+                desc_props = self._descriptor_props(
+                    entry, ctx, session_id, "text", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = prefix + [
-                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                    {'AddBlob': {'properties': props, '_ref': _REF_CONTENT, 'class': 'NexusBlob'}},
+                    {'AddDescriptor': {'class': dset, 'properties': desc_props, '_ref': _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY,
+                                       "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
                 ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [text_bytes, emb_bytes])
                 _check_response(response, "write_text_entry+descriptor")
             else:
                 cmd = prefix + [
-                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
+                    {'AddBlob': {'properties': props, '_ref': _REF_CONTENT, 'class': 'NexusBlob'}},
                 ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [text_bytes])
                 _check_response(response, "write_text_entry")
@@ -1799,18 +1713,20 @@ class Memory:
 
             if has_emb:
                 dset = _dset_name("image", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "image", commit_id, entry_id)
+                desc_props = self._descriptor_props(
+                    entry, ctx, session_id, "image", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = prefix + [
-                    {"AddImage": {"properties": props, "_ref": _REF_CONTENT}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                    {'AddImage': {'properties': props, '_ref': _REF_CONTENT, 'class': 'NexusImage'}},
+                    {'AddDescriptor': {'class': dset, 'properties': desc_props, '_ref': _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY,
+                                       "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
                 ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [image_bytes, emb_bytes])
                 _check_response(response, "write_image_entry+descriptor")
             else:
                 cmd = prefix + [
-                    {"AddImage": {"properties": props, "_ref": _REF_CONTENT}},
+                    {'AddImage': {'properties': props, '_ref': _REF_CONTENT, 'class': 'NexusImage'}},
                 ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [image_bytes])
                 _check_response(response, "write_image_entry")
@@ -1824,18 +1740,20 @@ class Memory:
             # but supported.
             if has_emb and entry.video_clip_embeddings is None:
                 dset = _dset_name("video", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "video", commit_id, entry_id)
+                desc_props = self._descriptor_props(
+                    entry, ctx, session_id, "video", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = prefix + [
-                    {"AddVideo": {"properties": props, "_ref": _REF_CONTENT}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                    {'AddVideo': {'properties': props, '_ref': _REF_CONTENT, 'class': 'NexusVideo'}},
+                    {'AddDescriptor': {'class': dset, 'properties': desc_props, '_ref': _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY,
+                                       "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
                 ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [video_bytes, emb_bytes])
                 _check_response(response, "write_video_entry+descriptor")
             else:
                 cmd = prefix + [
-                    {"AddVideo": {"properties": props, "_ref": _REF_CONTENT}},
+                    {'AddVideo': {'properties': props, '_ref': _REF_CONTENT, 'class': 'NexusVideo'}},
                 ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [video_bytes])
                 _check_response(response, "write_video_entry")
@@ -1847,18 +1765,20 @@ class Memory:
 
             if has_emb:
                 dset = _dset_name("text", entry.embedding_model)
-                desc_props = self._descriptor_props(entry, ctx, session_id, "text", commit_id, entry_id)
+                desc_props = self._descriptor_props(
+                    entry, ctx, session_id, "text", commit_id, entry_id)
                 emb_bytes = _embedding_to_bytes(entry.embedding)
                 cmd = prefix + [
-                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
-                    {"AddDescriptor": {"set": dset, "properties": desc_props, "_ref": _REF_DESCRIPTOR}},
-                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY, "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
+                    {'AddBlob': {'properties': props, '_ref': _REF_CONTENT, 'class': 'NexusBlob'}},
+                    {'AddDescriptor': {'class': dset, 'properties': desc_props, '_ref': _REF_DESCRIPTOR}},
+                    {"AddConnection": {"class": _CONN_DESCRIPTOR_ENTRY,
+                                       "src": _REF_DESCRIPTOR, "dst": _REF_CONTENT}},
                 ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [blob_bytes, emb_bytes])
                 _check_response(response, "write_blob_entry+descriptor")
             else:
                 cmd = prefix + [
-                    {"AddBlob": {"properties": props, "_ref": _REF_CONTENT}},
+                    {'AddBlob': {'properties': props, '_ref': _REF_CONTENT, 'class': 'NexusBlob'}},
                 ] + self._graph_links(_REF_CONTENT)
                 response, _ = self._db.query(cmd, [blob_bytes])
                 _check_response(response, "write_blob_entry")
@@ -1895,9 +1815,10 @@ class Memory:
             if entry.metadata:
                 props.update(entry.metadata)
             emb_bytes = _embedding_to_bytes(clip_emb)
-            cmd = [{"AddDescriptor": {"set": dset, "properties": props}}]
+            cmd = [{'AddDescriptor': {'class': dset, 'properties': props}}]
             response, _ = self._db.query(cmd, [emb_bytes])
-            _check_response(response, f"write_video_clip_descriptor(frames {clip_meta['start_frame']}-{clip_meta['stop_frame']})")
+            _check_response(
+                response, f"write_video_clip_descriptor(frames {clip_meta['start_frame']}-{clip_meta['stop_frame']})")
 
     def _infer_modality_from_entry(self, entry) -> str:
         """Infer the modality of an entry from its content."""
@@ -1908,7 +1829,7 @@ class Memory:
         return "text"
 
     # ------------------------------------------------------------------
-    # Internal: DescriptorSet management
+    # Internal: descriptor class management
     # ------------------------------------------------------------------
 
     def _ensure_descriptor_set(
@@ -1916,41 +1837,64 @@ class Memory:
         modality: str, embedding_model: str,
         metric: str, engine: str,
     ) -> None:
-        """Create a DescriptorSet if it doesn't exist."""
-        cmd = [{
-            "FindDescriptorSet": {
-                "with_name": set_name,
-                "results": {"count": True},
-            }
-        }]
-        response, _ = self._db.query(cmd)
-        _check_response(response, f"find DescriptorSet {set_name!r}")
-        body = response[0].get("FindDescriptorSet", {})
-        if body.get("count", 0) > 0:
-            return   # already exists
-
+        """Create a descriptor class if it doesn't exist."""
         dimensions = int(len(probe_embedding))
-        create_cmd = [{
-            "AddDescriptorSet": {
-                "name": set_name,
-                "dimensions": dimensions,
-                "metric": metric,
-                "engine": engine,
-                "properties": {
-                    "embeddings_model": embedding_model,
-                    "modality": modality,
-                },
-            }
-        }]
+        selector = {
+            "target": "descriptor", "class": set_name,
+            "property": "_blob", "kind": "vector",
+        }
+        response, _ = self._db.query([{"GetIndexes": selector}])
+        _check_response(response, f"get descriptor index {set_name!r}")
+        indexes = response[0].get("GetIndexes", {}).get("indexes", [])
+        if indexes:
+            definition = indexes[0]
+            params = definition.get("params", {})
+            metadata = definition.get("metadata", {})
+            if params.get("dimensions", dimensions) != dimensions:
+                raise NexusStorageError(
+                    f"Descriptor class {set_name!r} has dimensions "
+                    f"{params['dimensions']}, expected {dimensions}."
+                )
+            configured_metrics = params.get("metric", [metric])
+            if isinstance(configured_metrics, str):
+                configured_metrics = [configured_metrics]
+            if metric.upper() not in {item.upper() for item in configured_metrics}:
+                raise NexusStorageError(
+                    f"Descriptor class {set_name!r} has a different distance metric."
+                )
+            if metadata.get("embeddings_model", embedding_model) != embedding_model:
+                raise NexusStorageError(
+                    f"Descriptor class {set_name!r} belongs to a different embedding model."
+                )
+            if metadata.get("modality", modality) != modality:
+                raise NexusStorageError(
+                    f"Descriptor class {set_name!r} belongs to a different modality."
+                )
+            configured_engines = params.get("engines", {})
+            if configured_engines and engine.lower() not in configured_engines:
+                raise NexusStorageError(
+                    f"Descriptor class {set_name!r} has no {engine!r} engine. "
+                    "Configure that engine with UpdateIndex before using it."
+                )
+            return
+
+        create_cmd = [{"CreateIndex": {
+            **selector,
+            "params": {
+                "dimensions": dimensions, "metric": metric,
+                "engines": {engine.lower(): {}},
+            },
+            "metadata": {"embeddings_model": embedding_model, "modality": modality},
+        }}]
         response, _ = self._db.query(create_cmd)
-        _check_response(response, f"create DescriptorSet {set_name!r}")
+        _check_response(response, f"create descriptor index {set_name!r}")
         logger.debug(
-            "Created DescriptorSet %r (dims=%d metric=%s engine=%s model=%s)",
+            "Created descriptor class %r (dims=%d metric=%s engine=%s model=%s)",
             set_name, dimensions, metric, engine, embedding_model,
         )
 
     def _ensure_descriptor_sets(self, entries: list) -> None:
-        """Ensure all required DescriptorSets exist before writing."""
+        """Ensure all required descriptor classes exist before writing."""
         for entry in entries:
             if entry.embedding is not None and entry.embedding_model:
                 modality = self._infer_modality_from_entry(entry)
@@ -1989,7 +1933,7 @@ class Memory:
                 continue   # pre-computed — nothing to do
 
             # Image takes priority over text so that combined text+image
-            # entries are indexed in the image DescriptorSet rather than
+            # entries are indexed in the image descriptor class rather than
             # silently receiving only a text descriptor.
             if entry.image is not None:
                 modality = "image"
@@ -2110,13 +2054,13 @@ class Memory:
                     "'adb-nexus validate' to check your connection."
                 ) from e
             # Use the caller's modality if provided — enables cross-modal
-            # search (text query → image or video DescriptorSet).
+            # search (text query → image or video descriptor class).
             target_modality = modality or "text"
 
-            # Cross-modal safety: DescriptorSets are named
+            # Cross-modal safety: descriptor classes are named
             # nexus_<modality>__<model>. If the model configured for the
             # target modality differs from the model used to embed this
-            # text query, the search will hit an empty DescriptorSet
+            # text query, the search will hit an empty descriptor class
             # (or, worse, one from a different embedding space if the
             # caller has overridden embedding_model=). Warn loudly so
             # users notice before assuming "no results" means the data
@@ -2133,7 +2077,7 @@ class Memory:
                         "%r but %s_embedding is configured as %r. "
                         "Cross-modal only works when both models share "
                         "an embedding space (e.g. the same CLIP variant). "
-                        "The DescriptorSet nexus_%s__%s must exist and "
+                        "The descriptor class nexus_%s__%s must exist and "
                         "have been written with the same model, or you "
                         "will get empty / meaningless results.",
                         model, target_modality, target_model,
@@ -2144,7 +2088,7 @@ class Memory:
                         "Cross-modal search: modality=%r requested but no "
                         "%s_embedding is configured. Searching "
                         "nexus_%s__%s; results will be empty unless that "
-                        "DescriptorSet was written with %r.",
+                        "descriptor class was written with %r.",
                         target_modality, target_modality,
                         target_modality, model, model,
                     )
@@ -2166,7 +2110,7 @@ class Memory:
         embedding_model: Optional[str] = None,
         return_content: bool = True,
     ) -> list[SearchResult]:
-        """Execute a KNN search on the appropriate DescriptorSet.
+        """Execute a KNN search on the appropriate descriptor class.
 
         When return_content is True (default), the query is a
         two-command batch: FindDescriptor for the KNN ranking, then
@@ -2186,17 +2130,15 @@ class Memory:
 
         constraints = self._build_constraints(filters)
         find_desc: dict = {
-            "set": dset,
+            "with_class": dset,
+            "engine": self._cfg.processing.descriptor_engine,
+            "metric": self._cfg.processing.descriptor_metric,
             "k_neighbors": k,
             "results": {"all_properties": True},
             "distances": True,
         }
         if constraints:
             find_desc["constraints"] = constraints
-            # knn_first: false is required for constraints to pre-filter
-            # KNN rather than post-filter a global top-k. See
-            # aperturedb-connector-skill.md section 11.
-            find_desc["knn_first"] = False
 
         # Pick the Find* command that matches the modality; text sits in
         # Blob entities with document_type="text", images in Image,
@@ -2210,6 +2152,7 @@ class Memory:
         cmd: list[dict] = [{"FindDescriptor": {**find_desc, "_ref": 1}}]
         if return_content:
             cmd.append({find_content_cmd: {
+                "with_class": _CONTENT_CLASSES[find_content_cmd],
                 "is_connected_to": {
                     "ref": 1,
                     "connection_class": _CONN_DESCRIPTOR_ENTRY,
@@ -2300,10 +2243,10 @@ class Memory:
         (for raw blobs).
         """
         constraints = self._build_constraints(filters)
-        results_limit = {"all_properties": True, "limit": k}
+        results_limit = {"all_properties": True}
 
-        def _body():
-            b: dict = {"results": results_limit}
+        def _body(name):
+            b: dict = {"with_class": _CONTENT_CLASSES[name], "results": results_limit, "limit": k}
             if constraints:
                 b["constraints"] = constraints
             return b
@@ -2331,7 +2274,7 @@ class Memory:
                 f"Choose one of: 'text', 'image', 'video', 'blob'."
             )
 
-        cmd = [{name: _body()} for name, _ in selected]
+        cmd = [{name: _body(name)} for name, _ in selected]
         try:
             response, _ = self._db.query(cmd)
         except Exception as e:
@@ -2381,7 +2324,7 @@ class Memory:
         return results[:k]
 
     @staticmethod
-    def _build_constraints(filters: dict) -> dict:
+    def _build_constraints(filters: dict) -> list:
         """Convert a user-supplied filters dict to ApertureDB constraints.
 
         Raises NexusValidationError for any key not in the allowed set so
@@ -2398,4 +2341,5 @@ class Memory:
                 f"Unknown filter key(s): {sorted(unknown)}. "
                 f"Supported keys: {sorted(allowed)}."
             )
-        return {key: ["==", value] for key, value in filters.items()}
+        predicates = [[f"${key}", "==", _literal(value)] for key, value in filters.items()]
+        return predicates[0] if len(predicates) == 1 else ["all", *predicates] if predicates else []

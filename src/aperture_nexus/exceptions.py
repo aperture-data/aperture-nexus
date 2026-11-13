@@ -71,7 +71,7 @@ class NexusValidationError(NexusError):
     - numpy array with wrong shape or dtype for an image/embedding
     - File path does not exist or is not readable
     - URL is not reachable
-    - Embedding dimensions do not match the configured DescriptorSet
+    - Embedding dimensions do not match the configured descriptor class
 
     Example:
         >>> info.log(image="/nonexistent/path.jpg")

@@ -28,6 +28,7 @@ Skip integration tests without Docker:
 """
 
 import json
+import os
 import time
 import socket
 import uuid
@@ -132,6 +133,15 @@ def aperturedb_container():
     stopped and removed when the ``with`` block exits, regardless of whether
     tests passed or failed.
     """
+    if os.environ.get("NEXUS_TEST_PORT"):
+        yield {
+            "host": os.environ.get("NEXUS_TEST_HOST", "127.0.0.1"),
+            "port": int(os.environ["NEXUS_TEST_PORT"]),
+            "user": os.environ.get("NEXUS_TEST_USER", "admin"),
+            "password": os.environ.get("NEXUS_TEST_PASSWORD", "admin"),
+        }
+        return
+
     try:
         from testcontainers.core.container import DockerContainer
     except ImportError:
@@ -141,7 +151,8 @@ def aperturedb_container():
         )
 
     with (
-        DockerContainer("aperturedata/aperturedb-community:latest")
+        DockerContainer(os.environ.get("NEXUS_TEST_IMAGE",
+                        "aperturedata/aperturedb-community:1.0.0"))
         .with_env("ADB_MASTER_KEY", "admin")
         .with_env("ADB_FORCE_SSL", "false")
         .with_exposed_ports(55555)
@@ -191,8 +202,8 @@ def adb_config_name(aperturedb_container):
         name=config_name,
         host=aperturedb_container["host"],
         port=aperturedb_container["port"],
-        username="admin",
-        password="admin",
+        username=aperturedb_container["user"],
+        password=aperturedb_container["password"],
         use_ssl=False,
         use_rest=False,
         verify_hostname=False,

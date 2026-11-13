@@ -50,6 +50,7 @@ ENV_LOG_LEVEL = "APERTURE_NEXUS_LOG_LEVEL"
 ENV_UI_API_KEY = "APERTURE_NEXUS_UI_API_KEY"
 ENV_NEXUS_API_KEY = "NEXUS_API_KEY"
 
+
 def _default_search_paths() -> list[Path]:
     """
     Return the default config file search paths in priority order.
@@ -224,11 +225,11 @@ class ProcessingConfig(BaseModel):
         ),
     )
 
-    # DescriptorSet defaults
+    # descriptor class defaults
     descriptor_metric: str = Field(
         default="CS",
         description=(
-            "Distance metric for ApertureDB DescriptorSets. "
+            "Distance metric for ApertureDB descriptor classes. "
             "'CS' = cosine similarity (recommended). "
             "Also supported: 'L2', 'IP'."
         ),
@@ -236,9 +237,9 @@ class ProcessingConfig(BaseModel):
     descriptor_engine: str = Field(
         default="HNSW",
         description=(
-            "Index engine for ApertureDB DescriptorSets. "
+            "Index engine for ApertureDB descriptor classes. "
             "'HNSW' = approximate nearest-neighbor, best speed/recall tradeoff (default). "
-            "Also supported: 'FaissFlat' (exact, slow at scale), 'FaissIVFFlat' (IVF quantized)."
+            "Also supported: 'Flat' (exact, slow at scale), 'IVF' (IVF quantized)."
         ),
     )
 

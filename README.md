@@ -166,6 +166,11 @@ results = memory.search(query="missing orders last week")
 
 ---
 
+Requires ApertureDB server 1.0 and the Python SDK 1.0 or later. Existing
+pre-1.0 databases must be migrated before this version is used. Stored media
+uses the NexusBlob, NexusImage and NexusVideo classes; vectors use a named
+descriptor class and vector index per modality/model.
+
 ## Installation
 
 aperture-nexus v0.1.0 is not yet on PyPI. Install directly from the repository:
@@ -176,8 +181,8 @@ cd aperture-nexus
 pip install .
 ```
 
-Requires Python 3.10+, ApertureDB server 0.19.14+, and `aperturedb` Python SDK
-0.5.0+ (installed automatically). See
+Requires Python 3.10+, ApertureDB server 1.0+, and `aperturedb` Python SDK
+1.0.0+ (installed automatically). See
 [Version compatibility](docs/getting-started.md#version-compatibility) for the
 tested matrix.
 
@@ -258,7 +263,7 @@ text model alongside CLIP for images and video:
 ```
 
 > **Note:** Text and image embeddings are stored in separate ApertureDB
-> DescriptorSets. Cross-modal search (text query to image results) requires
+> descriptor classes. Cross-modal search (text query to image results) requires
 > a shared embedding space; CLIP provides this, but separate models do not.
 
 ### Pre-Computed Embeddings
@@ -291,7 +296,7 @@ docker compose up -d
 Starts ApertureDB, the Lenz TCP gateway, and the ApertureDB Web UI from the
 published ApertureDB Docker Compose package
 (`aperturedata/aperturedb-compose-single-node`). `APERTUREDB_VERSION` selects
-a release; the default is the latest. Data persists across restarts. aperture-nexus connects on port `55556`
+a release; the default is 1.0.0. Data persists across restarts. aperture-nexus connects on port `55556`
 by default.
 
 ```
@@ -474,7 +479,7 @@ v0.1 ships the core Nexus API (commit, search, connect, and authenticate) that i
 | Visibility model | `private` / `department` / `organization` / `shared`, enforced automatically at search time |
 | Hybrid keyword + vector search | BM25-style keyword scoring blended with vector similarity |
 | GraphRAG neighborhood search | `search(neighborhood=2)`: traverse the knowledge graph from matched results |
-| Multimodal-native DescriptorSets | One shared set per CLIP variant with a modality property, so cross-modal KNN works natively |
+| Multimodal-native descriptor classes | One shared set per CLIP variant with a modality property, so cross-modal KNN works natively |
 | Recency weighting | Configurable decay in search scoring; `search(lookback=30)` |
 | Memory archiving + consolidation | TTL policies and LLM-based consolidation of older memories into Knowledge |
 | Web UI | Browser interface for browsing sessions, contexts, memories, and search |
@@ -497,3 +502,15 @@ aperture-nexus is released under the [MIT License](LICENSE).
 ## Contributing
 
 See [CLAUDE.md](CLAUDE.md) for development guidelines, conventions, and PR workflow.
+
+## Existing data and generated files
+
+These applications target server 1.0. Updating code does not rename stored
+application classes. Inspect `GetSchema` (`nodes` and `edges`) before reusing an
+existing database: converted built-in categories have names such as `Image`,
+`Video` and `Blob`, while these examples use explicit application classes. On a
+dedicated application database, use the native `RenameClass` command to align
+those categories with the configured names, or reingest through the updated
+loaders. Shared databases need an application-specific export/reingestion plan.
+Regenerate connection CSVs and cached identifiers against the native schema;
+old `_Image@...`/`_Descriptor@...` headers do not identify native categories.

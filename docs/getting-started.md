@@ -37,14 +37,13 @@ reference and for anyone running against an existing ApertureDB instance.
 
 | Component | Required | Tested on |
 |-----------|----------|-----------|
-| ApertureDB server | 0.19.14 or later | 0.19.14 |
-| `aperturedb` Python SDK | 0.5.0 or later | 0.5.0 |
+| ApertureDB server | 1.0.0 or later | 1.0.0 |
+| `aperturedb` Python SDK | 1.0.0 or later | 1.0.0 |
 | Python | 3.10 or later | 3.10, 3.11 |
 
-Older ApertureDB servers (pre-0.19.14) return a different shape for idempotent
-duplicate-detection responses and are not supported. If you connect
-aperture-nexus to an older server, writes that would be idempotent-success
-instead raise `NexusStorageError`.
+This release uses the server 1.0 typed classes, expression constraints and
+vector index API. Older servers are not supported. Upgrade the server and
+migrate an existing database before deploying this version.
 
 ---
 

@@ -282,7 +282,7 @@ Search stored memories by semantic similarity, metadata, or both.
 Permissions are enforced automatically from the Memory's principal.
 
 Search is **per-modality for KNN queries**: a semantic (vector) query hits
-exactly one DescriptorSet, so results come back in a single modality. If
+exactly one descriptor class, so results come back in a single modality. If
 you need semantically related text, images, and videos in the same
 call, issue one `search()` per modality and merge the results client-side.
 
@@ -296,9 +296,9 @@ an embedding space (typically CLIP with the same variant configured
 for both `text_embedding` and `image_embedding`). Passing
 `memory.search(query="scratched product", modality="image")` embeds
 the text with the CLIP text encoder and searches the image
-DescriptorSet. If the target modality's configured model does not
+descriptor class. If the target modality's configured model does not
 match the model used to embed the query, Nexus logs a warning and the
-search will typically return empty (because the DescriptorSet name
+search will typically return empty (because the descriptor class name
 includes the model, so a mismatched model targets a set that was
 never written).
 

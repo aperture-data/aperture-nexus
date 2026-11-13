@@ -765,7 +765,7 @@ def _validate_embedding(
     if any(c in embedding_model for c in ('"', "\\")):
         raise NexusValidationError(
             f"embedding_model {embedding_model!r} contains a character that is "
-            "not valid in an ApertureDB DescriptorSet name. "
+            "not valid in an ApertureDB descriptor class name. "
             'Remove double-quotes and backslashes (e.g. use "ViT-B/16" not "ViT-B\\"16").'
         )
 

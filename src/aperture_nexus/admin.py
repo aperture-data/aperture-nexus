@@ -30,6 +30,7 @@ import secrets
 from typing import Optional
 
 from aperture_nexus._client import get_connector
+from aperture_nexus._query import literal as _literal
 from aperture_nexus.auth import validate_credentials
 from aperture_nexus.config import load_config
 from aperture_nexus.exceptions import (
@@ -42,13 +43,8 @@ logger = logging.getLogger(__name__)
 # ApertureDB entity class names
 _CLASS_USER = "NexusUser"
 
-# ApertureDB permission model note:
-# ApertureDB does not have per-object-type permission grants.
-# Granting a DB user access gives read/write/update/delete on ALL object types.
-# The only permission distinctions are:
-#   - Admin users: can create/remove DB users and roles.
-#   - Regular users: can read/write/update/delete all objects (including indexes).
-# There is no way to grant "entity read" without also granting "blob read", etc.
+# Principal identities are application records. The backing database credentials
+# also need the object and index permissions used by Memory and NexusAdmin.
 
 
 def _hash_key(api_key: str) -> str:
@@ -61,8 +57,7 @@ def _check_response(response, operation: str) -> None:
 
     Handles three ApertureDB response shapes: list-of-dicts, bare-dict
     error, and mixed. Treats "already exists" messages as idempotent
-    success so admin-side idempotent patterns (if_not_found, CreateIndex,
-    AddDescriptorSet) stay safe across server versions.
+    success so conditional adds and index creation stay idempotent.
     """
     if isinstance(response, dict):
         status = response.get("status", -1)
@@ -90,7 +85,7 @@ def _check_response(response, operation: str) -> None:
             )
 
 
-def _entity_exists(db, entity_class: str, constraints: dict) -> bool:
+def _entity_exists(db, entity_class: str, constraints: list) -> bool:
     """Return True if at least one entity matching constraints exists."""
     cmd = [{
         "FindEntity": {
@@ -200,7 +195,7 @@ class NexusAdmin:
         self._ensure_defaults()
 
         if _entity_exists(
-            self._db, _CLASS_USER, {"user_id": ["==", user_id]}
+            self._db, _CLASS_USER, ['$user_id', '==', _literal(user_id)]
         ):
             raise NexusValidationError(
                 f"Principal {user_id!r} already exists. "
@@ -251,19 +246,15 @@ class NexusAdmin:
                 "Pass the user_id used when calling create_principal()."
             )
         if not _entity_exists(
-            self._db, _CLASS_USER, {"user_id": ["==", user_id]}
+            self._db, _CLASS_USER, ['$user_id', '==', _literal(user_id)]
         ):
             raise NexusValidationError(
                 f"Principal {user_id!r} does not exist. "
                 "Check the user_id or call admin.create_principal() first."
             )
 
-        cmd = [{
-            "DeleteEntity": {
-                "with_class": _CLASS_USER,
-                "constraints": {"user_id": ["==", user_id]},
-            }
-        }]
+        cmd = [{'DeleteEntity': {'with_class': _CLASS_USER,
+                                 'constraints': ['$user_id', '==', _literal(user_id)]}}]
         response, _ = self._db.query(cmd)
         _check_response(response, f"delete_principal({user_id!r})")
         logger.debug("Deleted principal %r", user_id)
@@ -296,7 +287,7 @@ class NexusAdmin:
                 "Pass the user_id used when calling create_principal()."
             )
         if not _entity_exists(
-            self._db, _CLASS_USER, {"user_id": ["==", user_id]}
+            self._db, _CLASS_USER, ['$user_id', '==', _literal(user_id)]
         ):
             raise NexusValidationError(
                 f"Principal {user_id!r} does not exist. "
@@ -308,13 +299,8 @@ class NexusAdmin:
             "ApertureDB instance. Use with caution."
         )
         new_key = secrets.token_urlsafe(32)
-        cmd = [{
-            "UpdateEntity": {
-                "with_class": _CLASS_USER,
-                "constraints": {"user_id": ["==", user_id]},
-                "properties": {"api_key_hash": _hash_key(new_key)},
-            }
-        }]
+        cmd = [{'UpdateEntity': {'with_class': _CLASS_USER, 'constraints': [
+            '$user_id', '==', _literal(user_id)], 'properties': {'api_key_hash': _hash_key(new_key)}}}]
         response, _ = self._db.query(cmd)
         _check_response(response, f"rotate_key({user_id!r})")
         logger.debug("Rotated key for principal %r", user_id)
@@ -342,11 +328,7 @@ class NexusAdmin:
             (_CLASS_USER, "user_id"),
         ]
         for cls, prop in indexes:
-            cmd = [{"CreateIndex": {
-                "index_type": "entity",
-                "class": cls,
-                "property_key": prop,
-            }}]
+            cmd = [{'CreateIndex': {'target': 'entity', 'class': cls, 'property': prop, 'kind': 'ordered'}}]
             response, _ = self._db.query(cmd)
             _check_response(response, f"CreateIndex({cls!r}.{prop!r})")
             logger.debug("Ensured index on %s.%s", cls, prop)

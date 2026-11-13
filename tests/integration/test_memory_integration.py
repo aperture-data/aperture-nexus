@@ -126,7 +126,7 @@ class TestVectorSearch:
         memory_engine.commit(ctx, info)
 
         # Search with the same vector — must specify the same embedding_model
-        # used at commit time so search looks in the right DescriptorSet.
+        # used at commit time so search looks in the right descriptor class.
         results = memory_engine.search(
             query=vec, modality="text", k=5, embedding_model="test-model"
         )
@@ -271,6 +271,7 @@ class TestAdminPipeline:
 # ---------------------------------------------------------------------------
 # CLIP process_and_commit — text search, image commit, metadata search
 # ---------------------------------------------------------------------------
+
 
 _CLIP_MODEL = "ViT-B-32"
 

@@ -79,7 +79,7 @@ Required only if `process_and_commit()` or `async_process_and_commit()`
 is used. If you only use `commit()` (raw storage), omit this section.
 
 Each modality has its own embedding model and its own ApertureDB
-DescriptorSet (`nexus_text`, `nexus_image`, `nexus_video`). Search is
+descriptor class (`nexus_text`, `nexus_image`, `nexus_video`). Search is
 per-modality: a text query searches text descriptors only, an image
 query searches image descriptors only.
 
@@ -92,7 +92,7 @@ query searches image descriptors only.
 
 > **Note:** `text_embedding`, `image_embedding`, and `video_embedding`
 > must each match the model used at index time (stored on the
-> DescriptorSet). Mismatches are caught at search time with a
+> descriptor class). Mismatches are caught at search time with a
 > `NexusConfigError`.
 
 ---

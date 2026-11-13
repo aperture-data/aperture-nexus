@@ -104,7 +104,7 @@ DIAGRAMS: list[tuple[str, str, str]] = [
         "session, with session_id and session_name), NexusContext (per "
         "participant, with purpose and metadata), NexusCommit (one per "
         "commit() call, grouping all entries written together), and the "
-        "stored content entities Blob, Image, Video, plus DescriptorSet "
+        "stored content entities Blob, Image, Video, plus descriptor class "
         "and Descriptor for vector search. Edges between them: "
         "nexus_user_context, nexus_session_context, nexus_context_commit, "
         "nexus_commit_entry, nexus_descriptor_entry.",

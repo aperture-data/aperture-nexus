@@ -388,7 +388,7 @@ reference on these primitives.
 | Context → Commit | `Connection` (`nexus_context_commit`) | Context owns its commits |
 | Commit → entry | `Connection` (`nexus_commit_entry`) | Tracks what was written per commit; enables `remove(commit_id=...)` |
 | Context → entry | `Connection` (`nexus_context_entry`) | Direct edge for fast context-scoped traversal |
-| Text (chunked) | `Blob` + `Descriptor` per chunk | Embedding in DescriptorSet |
+| Text (chunked) | `Blob` + `Descriptor` per chunk | Embedding in descriptor class |
 | Image | `Image` + `Descriptor` | ApertureDB native Image type |
 | Video | `Video` → `Clip` entities → `Descriptor` | Per clip |
 | Blob (pdf, mp3…) | `Blob` with `document_type` | Raw bytes; no embedding |
@@ -401,20 +401,23 @@ ApertureDB native storage primitives:
 
 ![aperture-nexus ApertureDB schema graph](https://raw.githubusercontent.com/aperture-data/aperture-nexus/main/demo/nexus_schema.png)
 
-### DescriptorSets
+### Descriptor classes
 
-ApertureDB requires a **DescriptorSet** before any vectors can be
-stored or searched. aperture-nexus creates and manages DescriptorSets
+ApertureDB 1.0 stores vectors in explicit descriptor classes. A vector index
+is required for nearest-neighbor search; vectors can also be stored before an
+index is created. Nexus creates its indexes with CreateIndex and inspects them
+with GetIndexes; model and modality are retained in index metadata.
+aperture-nexus creates and manages descriptor classes
 automatically based on the `embedding_model` name. Each unique model
-name gets its own DescriptorSet.
+and modality pair gets its own descriptor class.
 
 This means:
 - `process_and_commit()` requires at least one model configured in
   `aperture_nexus.json`
 - Pre-computed embeddings passed via
   `info.log(embedding=..., embedding_model="...")` also require an
-  existing or new DescriptorSet
-- Mixing models across calls is supported; each gets its own set
+  existing or new descriptor class
+- Mixing models across calls is supported; each gets its own class and index
 
 ### ApertureDB Web UI
 
@@ -424,7 +427,7 @@ running via `docker compose up -d` or the demo). It shows raw ApertureDB objects
 aperture-nexus concepts. It is useful for:
 - Verifying that aperture-nexus is storing data correctly
 - Debugging schema issues
-- Inspecting DescriptorSets and their dimensions
+- Inspecting descriptor classes and their dimensions
 
 A higher-level aperture-nexus UI showing sessions, contexts,
 memories, and search results is planned for a future release.

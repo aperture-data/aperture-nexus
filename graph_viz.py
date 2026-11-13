@@ -19,10 +19,13 @@ install needed). Opens in a new browser tab by default; pass embed=True for an
 inline IFrame preview instead (or in addition).
 """
 
+
 import base64
 import json
 import os
 import webbrowser
+
+from aperture_nexus._query import literal as _literal
 
 from IPython.display import display, Markdown, IFrame
 
@@ -48,12 +51,15 @@ def get_entities(client, cls, label_prop="name", id_prop="id"):
 
     Returns a list of {"id", "label", "cls", "props"} dicts ready for render_graph.
     """
-    resp, _ = client.query([{"FindEntity": {"with_class": cls, "results": {"all_properties": True}}}])
+    resp, _ = client.query(
+        [{"FindEntity": {"with_class": cls, "results": {"all_properties": True}}}])
     ents = resp[0]["FindEntity"].get("entities", [])
     out = []
     for e in ents:
-        props = {k: v for k, v in e.items() if not k.startswith("_") and k not in (id_prop, label_prop)}
-        out.append({"id": e[id_prop], "label": e.get(label_prop, e[id_prop]), "cls": cls, "props": props})
+        props = {k: v for k, v in e.items() if not k.startswith("_")
+                 and k not in (id_prop, label_prop)}
+        out.append({"id": e[id_prop], "label": e.get(
+            label_prop, e[id_prop]), "cls": cls, "props": props})
     return out
 
 
@@ -67,10 +73,11 @@ def get_edges(client, src_cls, dst_cls, conn_cls, src_ids, id_prop="id"):
     pairs = []
     for sid in src_ids:
         q = [
-            {"FindEntity": {"with_class": src_cls, "_ref": 1, "constraints": {id_prop: ["==", sid]}}},
+            {'FindEntity': {'with_class': src_cls, '_ref': 1,
+                            'constraints': ['$' + id_prop, '==', _literal(sid)]}},
             {"FindEntity": {"with_class": dst_cls,
-                             "is_connected_to": {"ref": 1, "connection_class": conn_cls},
-                             "results": {"list": [id_prop]}}},
+                            "is_connected_to": {"ref": 1, "connection_class": conn_cls},
+                            "results": {"list": [id_prop]}}},
         ]
         resp, _ = client.query(q)
         for d in resp[1]["FindEntity"].get("entities", []):
@@ -89,9 +96,10 @@ def get_blobs(client, src_cls, conn_cls, src_ids, id_prop="id", label_prop="name
     seen_ids = set()
     for sid in src_ids:
         q = [
-            {"FindEntity": {"with_class": src_cls, "_ref": 1, "constraints": {id_prop: ["==", sid]}}},
-            {"FindBlob": {"is_connected_to": {"ref": 1, "connection_class": conn_cls},
-                          "results": {"all_properties": True}}},
+            {'FindEntity': {'with_class': src_cls, '_ref': 1,
+                            'constraints': ['$' + id_prop, '==', _literal(sid)]}},
+            {'FindBlob': {'is_connected_to': {'ref': 1, 'connection_class': conn_cls},
+                          'results': {'all_properties': True}, 'with_class': 'NexusBlob'}},
         ]
         resp, _ = client.query(q)
         for b in resp[1]["FindBlob"].get("entities", []):
@@ -101,8 +109,10 @@ def get_blobs(client, src_cls, conn_cls, src_ids, id_prop="id", label_prop="name
             edges.append((sid, bid))
             if bid not in seen_ids:
                 seen_ids.add(bid)
-                props = {k: v for k, v in b.items() if not k.startswith("_") and k not in (id_prop, label_prop)}
-                nodes.append({"id": bid, "label": b.get(label_prop, bid), "cls": "Blob", "props": props})
+                props = {k: v for k, v in b.items() if not k.startswith("_")
+                         and k not in (id_prop, label_prop)}
+                nodes.append({"id": bid, "label": b.get(
+                    label_prop, bid), "cls": "Blob", "props": props})
     return nodes, edges
 
 
@@ -110,8 +120,8 @@ def get_blob_data_uri(client, blob_id, id_prop="id"):
     """Fetch a Blob's bytes by id and return a base64 data: URI. Mime type is read
     from the blob's own 'type' property when present (e.g. 'pdf' -> application/pdf),
     falling back to a generic binary type otherwise."""
-    resp, blobs = client.query([{"FindBlob": {"constraints": {id_prop: ["==", blob_id]},
-                                               "blobs": True, "results": {"list": ["type"]}}}])
+    resp, blobs = client.query([{'FindBlob': {'constraints': ['$' + id_prop, '==', _literal(blob_id)],
+                               'blobs': True, 'results': {'list': ['type']}, 'with_class': 'NexusBlob'}}])
     if not blobs:
         return None
     ents = resp[0]["FindBlob"].get("entities", [])
@@ -136,7 +146,8 @@ def _sniff_mime(blob_bytes):
 def get_image_data_uri(client, image_id, id_prop="id"):
     """Fetch an Image entity's blob by id and return a base64 data: URI, or None
     if no matching image/no blob was found."""
-    resp, blobs = client.query([{"FindImage": {"constraints": {id_prop: ["==", image_id]}, "blobs": True}}])
+    resp, blobs = client.query(
+        [{'FindImage': {'constraints': ['$' + id_prop, '==', _literal(image_id)], 'blobs': True, 'with_class': 'NexusImage'}}])
     if not blobs:
         return None
     mime = _sniff_mime(blobs[0])
@@ -149,8 +160,8 @@ def get_video_data_uri(client, video_id, id_prop="id"):
     if no matching video/no blob was found. Mime type read from the video's
     'container' property when present (e.g. 'mp4' -> video/mp4), falling back
     to video/mp4 otherwise since that's overwhelmingly the common case."""
-    resp, blobs = client.query([{"FindVideo": {"constraints": {id_prop: ["==", video_id]},
-                                                "blobs": True, "results": {"list": ["container"]}}}])
+    resp, blobs = client.query([{'FindVideo': {'constraints': ['$' + id_prop, '==', _literal(video_id)],
+                               'blobs': True, 'results': {'list': ['container']}, 'with_class': 'NexusVideo'}}])
     if not blobs:
         return None
     ents = resp[0].get("FindVideo", {}).get("entities", [])
@@ -337,7 +348,7 @@ createRoot(document.getElementById('graph')).render(<Graph/>);
 
 
 def render_graph(nodes, edges, title, filename, client=None, node_colors=None,
-                  highlight_ids=None, height=600, open_browser=True, embed=False):
+                 highlight_ids=None, height=600, open_browser=True, embed=False):
     """Render a graph with react-force-graph-2d: hover to highlight connections,
     click a node for a details panel (with an inline image if it's an Image node).
 
@@ -405,33 +416,35 @@ def get_schema_graph(client):
     the same call, not a separate/fake schema view."""
     resp, _ = client.query([{"GetSchema": {}}])
     schema = resp[0].get("GetSchema", {})
-    ent_classes = schema.get("entities", {}).get("classes", {}) or {}
-    conn_classes = schema.get("connections", {}).get("classes", {}) or {}
+
+    def identity(target, name):
+        if target == "entity":
+            prefix, separator, _ = name.partition(":")
+            native = {"entity", "image", "video", "blob", "clip", "bounding_box",
+                      "polygon", "frame", "descriptor"}
+            return f"entity:{name}" if separator and prefix in native else name
+        return f"{target}:{name}"
 
     nodes = []
-    for cls, info in ent_classes.items():
+    for info in schema.get("nodes", []):
+        cls = identity(info["type"], info["class"])
         count = info.get("matched", 0)
         props = info.get("properties", {}) or {}
-        display = cls.lstrip("_")
         nodes.append({
-            "id": cls,
-            "label": f"{display} ({count})",
-            "cls": cls,
-            "props": {"count": count, "properties": ", ".join(sorted(props.keys())) or "(none)"},
+            "id": cls, "label": f"{cls} ({count})", "cls": cls,
+            "props": {"count": count, "properties": ", ".join(sorted(props)) or "(none)"},
         })
 
-    node_ids = {n["id"] for n in nodes}
+    node_ids = {node["id"] for node in nodes}
     edges = []
-    for conn_cls, pairs in conn_classes.items():
-        # System-generated connections (has_embedding, _BoundingBoxToImage, etc.) get a
-        # muted color so user-defined relationships (AFFILIATED_WITH, MONITORS, ...) stand out.
-        is_system = conn_cls.startswith("_") or conn_cls.islower()
-        color = "rgba(150,150,150,0.5)" if is_system else None
-        for pair in pairs:
-            src, dst, count = pair.get("src"), pair.get("dst"), pair.get("matched", 0)
-            if src not in node_ids or dst not in node_ids:
-                continue
-            edges.append((src, dst, f"{conn_cls} ({count})", color))
+    for connection in schema.get("edges", []):
+        src = identity(connection["src_type"], connection["src_class"])
+        dst = identity(connection["dst_type"], connection["dst_class"])
+        if src not in node_ids or dst not in node_ids:
+            continue
+        name = connection["class"]
+        color = "rgba(150,150,150,0.5)" if name.islower() else None
+        edges.append((src, dst, f"{name} ({connection.get('matched', 0)})", color))
     return nodes, edges
 
 
