@@ -173,7 +173,7 @@ descriptor class and vector index per modality/model.
 
 ## Installation
 
-aperture-nexus v0.1.0 is not yet on PyPI. Install directly from the repository:
+aperture-nexus v0.2.0 is not yet on PyPI. Install directly from the repository:
 
 ```bash
 git clone https://github.com/aperture-data/aperture-nexus
