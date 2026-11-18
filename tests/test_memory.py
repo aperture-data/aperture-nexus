@@ -56,7 +56,7 @@ def _find_response(count: int = 0, entities: list | None = None) -> tuple:
 
 
 def _find_descriptor_set_response(count: int = 0) -> tuple:
-    return ([{"GetIndexes": {"status": 0, "indexes": [{}] * count}}], [])
+    return ([{"GetIndexes": {"status": 0, "indexes": [{"kind": "hnsw"}] * count}}], [])
 
 
 def _find_descriptor_response(

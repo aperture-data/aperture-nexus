@@ -17,7 +17,7 @@ def test_reuses_vector_index_and_retains_customer_metadata(memory_engine, test_p
     vector = np.array([1., 0., 0., 0.], dtype=np.float32)
     descriptor_class = f'nexus_text__{name}'
     selector = {'target': 'descriptor', 'class': descriptor_class,
-                'property': '_blob', 'kind': 'vector'}
+                'property': '_blob', 'kind': memory_engine._cfg.processing.descriptor_engine.lower()}
     try:
         for text in ('first', 'second'):
             info = Information(context_id=context.id)

@@ -38,7 +38,7 @@ reference and for anyone running against an existing ApertureDB instance.
 | Component | Required | Tested on |
 |-----------|----------|-----------|
 | ApertureDB server | 1.0.0 or later | 1.0.0 |
-| `aperturedb` Python SDK | 1.0.0 or later | 1.0.0 |
+| `aperturedb` Python SDK | 1.0.1 or later | 1.0.1 |
 | Python | 3.10 or later | 3.10, 3.11 |
 
 This release uses the server 1.0 typed classes, expression constraints and

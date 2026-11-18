@@ -1149,7 +1149,7 @@ class Memory:
     def _list_nexus_descriptor_sets(self) -> list[str]:
         """Return names of all nexus descriptor classes in ApertureDB."""
         cmd = [{"GetIndexes": {
-            "target": "descriptor", "property": "_blob", "kind": "vector",
+            "target": "descriptor", "property": "_blob",
         }}]
         response, _ = self._db.query(cmd)
         _check_response(response, "list Nexus descriptor indexes")
@@ -1841,13 +1841,18 @@ class Memory:
         dimensions = int(len(probe_embedding))
         selector = {
             "target": "descriptor", "class": set_name,
-            "property": "_blob", "kind": "vector",
+            "property": "_blob",
         }
         response, _ = self._db.query([{"GetIndexes": selector}])
         _check_response(response, f"get descriptor index {set_name!r}")
         indexes = response[0].get("GetIndexes", {}).get("indexes", [])
         if indexes:
-            definition = indexes[0]
+            definition = next((index for index in indexes if index["kind"] == engine.lower()), None)
+            if definition is None:
+                raise NexusStorageError(
+                    f"Descriptor class {set_name!r} has no {engine!r} index. "
+                    "Create that index before using it."
+                )
             params = definition.get("params", {})
             metadata = definition.get("metadata", {})
             if params.get("dimensions", dimensions) != dimensions:
@@ -1870,20 +1875,11 @@ class Memory:
                 raise NexusStorageError(
                     f"Descriptor class {set_name!r} belongs to a different modality."
                 )
-            configured_engines = params.get("engines", {})
-            if configured_engines and engine.lower() not in configured_engines:
-                raise NexusStorageError(
-                    f"Descriptor class {set_name!r} has no {engine!r} engine. "
-                    "Configure that engine with UpdateIndex before using it."
-                )
             return
 
         create_cmd = [{"CreateIndex": {
-            **selector,
-            "params": {
-                "dimensions": dimensions, "metric": metric,
-                "engines": {engine.lower(): {}},
-            },
+            **selector, "kind": engine.lower(),
+            "params": {"dimensions": dimensions, "metric": metric},
             "metadata": {"embeddings_model": embedding_model, "modality": modality},
         }}]
         response, _ = self._db.query(create_cmd)

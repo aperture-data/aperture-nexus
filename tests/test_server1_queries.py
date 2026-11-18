@@ -28,22 +28,22 @@ def test_descriptor_index_metadata_and_explicit_engine(mock_connector):
     query = mock_connector.query.call_args_list[1].args[0][0]['CreateIndex']
     assert query == {
         'target': 'descriptor', 'class': 'nexus_text__model',
-        'property': '_blob', 'kind': 'vector',
-        'params': {'dimensions': 4, 'metric': 'CS', 'engines': {'hnsw': {}}},
+        'property': '_blob', 'kind': 'hnsw',
+        'params': {'dimensions': 4, 'metric': 'CS'},
         'metadata': {'embeddings_model': 'model', 'modality': 'text'},
     }
 
 
-@pytest.mark.parametrize('params,metadata', [
-    ({'dimensions': 8}, {}),
-    ({'metric': ['L2']}, {}),
-    ({'engines': {'flat': {}}}, {}),
-    ({}, {'embeddings_model': 'another-model'}),
-    ({}, {'modality': 'image'}),
+@pytest.mark.parametrize('kind,params,metadata', [
+    ('hnsw', {'dimensions': 8}, {}),
+    ('hnsw', {'metric': ['L2']}, {}),
+    ('flat', {}, {}),
+    ('hnsw', {}, {'embeddings_model': 'another-model'}),
+    ('hnsw', {}, {'modality': 'image'}),
 ])
-def test_existing_descriptor_configuration_is_not_silently_replaced(mock_connector, params, metadata):
+def test_existing_descriptor_configuration_is_not_silently_replaced(mock_connector, kind, params, metadata):
     mock_connector.query.return_value = ([{'GetIndexes': {'status': 0, 'indexes': [
-        {'params': params, 'metadata': metadata},
+        {'kind': kind, 'params': params, 'metadata': metadata},
     ]}}], [])
     memory = Memory(db_client=mock_connector)
     with pytest.raises(NexusStorageError):
@@ -55,7 +55,7 @@ def test_existing_descriptor_configuration_is_not_silently_replaced(mock_connect
 def test_existing_index_accepts_server_metric_array_and_retains_metadata(mock_connector):
     metadata = {'embeddings_model': 'model', 'modality': 'text', 'fingerprint': 'sha256:test'}
     mock_connector.query.return_value = ([{'GetIndexes': {'status': 0, 'indexes': [{
-        'params': {'dimensions': 4, 'metric': ['CS'], 'engines': {'hnsw': {}}},
+        'kind': 'hnsw', 'params': {'dimensions': 4, 'metric': ['CS']},
         'metadata': metadata,
     }]}}], [])
     Memory(db_client=mock_connector)._ensure_descriptor_set(
