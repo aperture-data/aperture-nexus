@@ -173,9 +173,9 @@ def get_schema(client):
         for node in schema.get("nodes", [])
     }
     connections = [{
-        "class": edge["class"],
-        "src": _class_key(edge["src_type"], edge["src_class"]),
-        "dst": _class_key(edge["dst_type"], edge["dst_class"]),
+        "class": edge["class"]["connection"],
+        "src": _class_key(edge["target"]["src"], edge["class"]["src"]),
+        "dst": _class_key(edge["target"]["dst"], edge["class"]["dst"]),
         "count": edge.get("matched", 0),
     } for edge in schema.get("edges", [])]
     return {"classes": classes, "connections": connections}

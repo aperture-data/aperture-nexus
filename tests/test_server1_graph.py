@@ -27,8 +27,8 @@ def test_schema_keeps_reserved_prefix_entity_classes_distinct(relative):
     client.query.return_value = ([{"GetSchema": {"status": 0, "nodes": [
         {"type": "entity", "class": "image:Same", "matched": 1, "properties": {}},
         {"type": "image", "class": "Same", "matched": 1, "properties": {}},
-    ], "edges": [{"class": "ShownIn", "src_type": "entity", "src_class": "image:Same",
-                  "dst_type": "image", "dst_class": "Same", "matched": 1}]}}], [])
+    ], "edges": [{"class": {"src": "image:Same", "connection": "ShownIn", "dst": "Same"},
+                  "target": {"src": "entity", "dst": "image"}, "matched": 1}]}}], [])
     nodes, edges = graph.get_schema_graph(client)
     assert {node["id"] for node in nodes} == {"entity:image:Same", "image:Same"}
     assert edges[0][:2] == ("entity:image:Same", "image:Same")
@@ -100,8 +100,8 @@ def test_live_unscoped_find_keeps_reserved_entity_and_image_classes_distinct():
     finally:
         client.query([{"DeleteEntity": {"with_class": entity_class}},
                      {"DeleteImage": {"with_class": name}}])
-        client.query([{"RemoveClass": {"target": {"src_type": "entity", "dst_type": "image"},
-                                       "class": name, "src_class": entity_class, "dst_class": name}},
+        client.query([{"RemoveClass": {"target": {"src": "entity", "dst": "image"},
+                                       "class": {"src": entity_class, "connection": name, "dst": name}}},
                       {"RemoveClass": {"target": "entity", "class": entity_class}},
                       {"RemoveClass": {"target": "image", "class": name}}])
         client.close()

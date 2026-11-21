@@ -29,7 +29,7 @@ classifiers = [
 # Core dependencies — kept minimal intentionally.
 # Install extras for additional capabilities: pip install aperture-nexus[video,metrics,ui,clip]
 dependencies = [
-    "aperturedb>=1.0.1",
+    "aperturedb>=1.0.2",
     "numpy>=1.24",
     "pillow>=10.0",          # PIL image handling
     "pydantic>=2.0",         # config validation and data models

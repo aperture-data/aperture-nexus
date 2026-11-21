@@ -438,11 +438,11 @@ def get_schema_graph(client):
     node_ids = {node["id"] for node in nodes}
     edges = []
     for connection in schema.get("edges", []):
-        src = identity(connection["src_type"], connection["src_class"])
-        dst = identity(connection["dst_type"], connection["dst_class"])
+        src = identity(connection["target"]["src"], connection["class"]["src"])
+        dst = identity(connection["target"]["dst"], connection["class"]["dst"])
         if src not in node_ids or dst not in node_ids:
             continue
-        name = connection["class"]
+        name = connection["class"]["connection"]
         color = "rgba(150,150,150,0.5)" if name.islower() else None
         edges.append((src, dst, f"{name} ({connection.get('matched', 0)})", color))
     return nodes, edges

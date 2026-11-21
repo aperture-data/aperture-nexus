@@ -166,7 +166,7 @@ results = memory.search(query="missing orders last week")
 
 ---
 
-Requires ApertureDB server 1.0 and the Python SDK 1.0.1 or later. Existing
+Requires ApertureDB server 1.0 and the Python SDK 1.0.2 or later. Existing
 pre-1.0 databases must be migrated before this version is used. Stored media
 uses the NexusBlob, NexusImage and NexusVideo classes; vectors use a named
 descriptor class and vector index per modality/model.
@@ -182,7 +182,7 @@ pip install .
 ```
 
 Requires Python 3.10+, ApertureDB server 1.0+, and `aperturedb` Python SDK
-1.0.1+ (installed automatically). See
+1.0.2+ (installed automatically). See
 [Version compatibility](docs/getting-started.md#version-compatibility) for the
 tested matrix.
 

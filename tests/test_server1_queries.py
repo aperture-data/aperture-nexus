@@ -80,8 +80,8 @@ def test_typed_graph_schema_keeps_equal_class_names_distinct():
     client.query.return_value = ([{'GetSchema': {'status': 0, 'nodes': [
         {'type': 'entity', 'class': 'Same', 'matched': 1, 'properties': {}},
         {'type': 'image', 'class': 'Same', 'matched': 2, 'properties': {}},
-    ], 'edges': [{'class': 'ShownIn', 'src_type': 'entity', 'src_class': 'Same',
-                  'dst_type': 'image', 'dst_class': 'Same', 'matched': 2}]}}], [])
+    ], 'edges': [{'class': {'src': 'Same', 'connection': 'ShownIn', 'dst': 'Same'},
+                  'target': {'src': 'entity', 'dst': 'image'}, 'matched': 2}]}}], [])
     schema = graph.get_schema(client)
     assert set(schema['classes']) == {'Same', 'image:Same'}
     assert schema['connections'][0]['dst'] == 'image:Same'
