@@ -285,7 +285,7 @@ Default level: `ERROR`. Override via `APERTURE_NEXUS_LOG_LEVEL` env var or confi
 
 ## Metrics (opt-in)
 
-Requires `pip install aperture-nexus[metrics]`. Prometheus-compatible. Uses user-space ports only (>1024). Enabled in config: `"metrics": { "enabled": true }`.
+Requires `python -m pip install '.[metrics]'`. Prometheus-compatible. Uses user-space ports only (>1024). Enabled in config: `"metrics": { "enabled": true }`.
 
 ---
 

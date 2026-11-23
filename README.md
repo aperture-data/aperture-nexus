@@ -86,12 +86,14 @@ migration when your work grows past chat logs.
 ```bash
 git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
-docker compose --profile demo run --rm nexus-demo
+./demo/run.sh
 ```
 
 Requires [Docker Desktop](https://docs.docker.com/get-started/get-docker/)
 (Mac / Windows) or [Docker Engine](https://docs.docker.com/engine/install/)
-(Linux). Docker Compose is included with both.
+(Linux), ORAS 1.3, and a Docker Hub login with access to the SDK image.
+For a local Python installation using the public SDK on PyPI, see
+[Installation](#installation).
 
 The first run downloads Docker images if not already cached, so allow
 **3–5 minutes**. Subsequent runs start in seconds.
@@ -101,10 +103,6 @@ it proceeds. All services (ApertureDB, the Lenz gateway, and the web UI)
 start automatically. Explore stored data at **https://localhost:8443**
 (ApertureDB web UI; http://localhost:8087 redirects there, and the certificate
 is self-signed) while the demo is running.
-
-> **Note:** Use `run --rm` (above), not `docker compose up`. The `up` variant
-> does not allocate a terminal, so the demo cannot pause for input and will
-> scroll straight through.
 
 When the demo finishes, the stack keeps running so you can explore the web UI.
 Stop it when you're done:
@@ -178,22 +176,22 @@ aperture-nexus v0.2.0 is not yet on PyPI. Install directly from the repository:
 ```bash
 git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
-pip install .
+python -m pip install .
 ```
 
 Requires Python 3.10+, ApertureDB server 1.0+, and `aperturedb` Python SDK
-1.0.2+ (installed automatically). See
+1.0.2+. pip installs the SDK from PyPI with the other dependencies. See
 [Version compatibility](docs/getting-started.md#version-compatibility) for the
 tested matrix.
 
 Optional features:
 
 ```bash
-pip install ".[video]"    # video frame extraction (opencv-python)
-pip install ".[clip]"     # CLIP embeddings for text and images
-pip install ".[tokens]"   # token-based text chunking
-pip install ".[metrics]"  # Prometheus metrics export
-pip install ".[all]"      # everything
+python -m pip install ".[video]"    # video frame extraction (opencv-python)
+python -m pip install ".[clip]"     # CLIP embeddings for text and images
+python -m pip install ".[tokens]"   # token-based text chunking
+python -m pip install ".[metrics]"  # Prometheus metrics export
+python -m pip install ".[all]"      # everything
 ```
 
 > **Video embedding performance:** The built-in video embedder extracts frames
@@ -223,7 +221,7 @@ function of the image encoder alone.
 Install:
 
 ```bash
-pip install aperture-nexus[clip]
+python -m pip install '.[clip]'
 ```
 
 Configure in `aperture_nexus.json`:

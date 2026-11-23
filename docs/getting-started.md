@@ -9,13 +9,14 @@ sidebar_position: 0
 This guide takes you from a fresh machine to storing and searching
 your first multimodal memory. It takes about ten minutes.
 
-Want to see it in action first? Run the interactive demo, no setup
-needed:
+The [Python installation](#1-install-aperture-nexus) uses the public SDK on PyPI.
+To build the interactive Docker demo, install ORAS 1.3 and sign in to Docker Hub
+with access to `aperturedata/aperturedb-python`:
 
 ```bash
 git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
-docker compose --profile demo run --rm nexus-demo
+./demo/run.sh
 ```
 
 This starts all services automatically (ApertureDB, Lenz gateway, and
@@ -32,13 +33,13 @@ the web UI). While the demo is running you can explore stored data at
 ### Version compatibility
 
 aperture-nexus is tested against the following versions. The Docker Compose
-stack and the `pip install` floor pin these for you; this table is for
-reference and for anyone running against an existing ApertureDB instance.
+stack supplies the server. pip installs the Python SDK from PyPI as a
+dependency of Nexus.
 
 | Component | Required | Tested on |
 |-----------|----------|-----------|
 | ApertureDB server | 1.0.0 or later | 1.0.0 |
-| `aperturedb` Python SDK | 1.0.2 or later | 1.0.2 |
+| `aperturedb` Python SDK | 1.0.2 or later | 1.0.2, 1.0.3 |
 | Python | 3.10 or later | 3.10, 3.11 |
 
 This release uses the server 1.0 typed classes, expression constraints and
@@ -55,15 +56,15 @@ directly:
 ```bash
 git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
-pip install .
+python -m pip install .
 ```
 
 To also enable video processing or token-based chunking, use extras:
 
 ```bash
-pip install ".[video]"
-pip install ".[tokens]"
-pip install ".[all]"      # everything
+python -m pip install ".[video]"
+python -m pip install ".[tokens]"
+python -m pip install ".[all]"      # everything
 ```
 
 ---

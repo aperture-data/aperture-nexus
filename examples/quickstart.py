@@ -8,7 +8,7 @@ Run:
     python examples/quickstart.py
 
 Prerequisites:
-    pip install aperture-nexus
+    python -m pip install .
     docker compose up -d   # or set APERTUREDB_KEY in your environment
     adb-nexus init         # or set credentials via environment variables
 """

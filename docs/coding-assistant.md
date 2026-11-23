@@ -46,7 +46,7 @@ Three prerequisites:
 1. A reachable ApertureDB (a local `docker compose up -d` stack works;
    set `APERTUREDB_KEY` or `APERTUREDB_JSON` for anything else).
 2. CLIP installed so `process_and_commit` can embed text:
-   `pip install "aperture-nexus[clip]"`.
+   `python -m pip install '.[clip]'`.
 3. An `aperture_nexus.json` config with an embedding model. Either run
    `adb-nexus init` once (interactive) or create the file inline as
    shown below.

@@ -27,7 +27,7 @@ when all your data is visual. Use a purpose-built text model when your
 workload is primarily text retrieval.
 
 Install:
-    pip install aperture-nexus[clip]
+    python -m pip install '.[clip]'
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ class ClipEmbedder:
         except ImportError:
             raise NexusConfigError(
                 "CLIP embedding requires open-clip-torch. "
-                "Install it with: pip install aperture-nexus[clip]"
+                "Install it with: python -m pip install '.[clip]' from the Nexus checkout"
             )
         model, _, preprocess = open_clip.create_model_and_transforms(
             self._model_name, pretrained=self._pretrained
@@ -290,7 +290,7 @@ class ClipEmbedder:
 # MARCO-style retrieval data and rank the right chunk reliably.
 #
 # Install:
-#     pip install aperture-nexus[sentence-transformers]
+#     python -m pip install '.[sentence-transformers]'
 #
 # Model names that route here (anything with "/" is treated as a HF repo id):
 #     BAAI/bge-small-en-v1.5    384-dim, ~130MB  (strong default for English)
@@ -350,7 +350,7 @@ class SentenceTransformersEmbedder:
         except ImportError:
             raise NexusConfigError(
                 "This embedding model requires sentence-transformers. "
-                "Install it with: pip install aperture-nexus[sentence-transformers] "
+                "Install it with: python -m pip install '.[sentence-transformers]' from the Nexus checkout "
                 "(or: pip install sentence-transformers)."
             )
         self._model = SentenceTransformer(self._model_name)

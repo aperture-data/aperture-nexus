@@ -92,7 +92,7 @@ Short version:
 1. **ApertureDB.** Community in Docker (`docker compose up -d` from the
    repo root), or point `APERTUREDB_KEY` / `APERTUREDB_JSON` at an
    ApertureDB Cloud / VPC endpoint — the webapp works identically.
-2. **Install.** `pip install -e ".[sentence-transformers,clip,ui]"`
+2. **Install.** `python -m pip install -e ".[sentence-transformers,clip,ui]"`
    plus `anthropic` for the synthesised-answer panel (optional).
 3. **Ingest.** Three scripts, each independent and each accepting
    `--repo /path/to/any/repo` for a different codebase:

@@ -175,7 +175,7 @@ class TestInstalledEntryPoint:
         """The adb-nexus binary is discoverable on PATH."""
         assert shutil.which("adb-nexus") is not None, (
             "adb-nexus not found on PATH. "
-            "Install with: pip install -e . (or pip install aperture-nexus)"
+            "Install with: python -m pip install -e ."
         )
 
     def test_adb_nexus_help_exits_zero(self):

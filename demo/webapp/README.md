@@ -48,7 +48,7 @@ TCP endpoint lives.
 
 Python 3.10+. From `aperture-nexus/`:
 ```bash
-pip install -e ".[sentence-transformers,clip,ui]"
+python -m pip install -e ".[sentence-transformers,clip,ui]"
 pip install anthropic openai playwright  # LLM clients + optional GIF recorder
 ```
 `anthropic` and `openai` are both optional — install only the one you

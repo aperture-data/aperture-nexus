@@ -4,8 +4,10 @@ Runnable examples showing how to use aperture-nexus. Each example is self-contai
 
 ## Prerequisites
 
+From the Nexus checkout, install the package. pip fetches the Python SDK from PyPI:
+
 ```bash
-pip install aperture-nexus
+python -m pip install .
 adb-nexus init       # or set APERTUREDB_KEY in your environment
 docker compose up -d # start ApertureDB
 ```

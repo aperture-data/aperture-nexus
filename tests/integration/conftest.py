@@ -147,7 +147,7 @@ def aperturedb_container():
     except ImportError:
         pytest.skip(
             "testcontainers is not installed. "
-            "Run: pip install aperture-nexus[integration]"
+            "Run: python -m pip install '.[integration]' from the Nexus checkout"
         )
 
     with (

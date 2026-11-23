@@ -98,7 +98,7 @@ Long text is automatically chunked before embedding. Chunk size should be tuned 
 |-------|---------|-------------|
 | `text_chunk_size` | `2000` | Size of each chunk. Unit set by `text_chunk_unit`. |
 | `text_chunk_overlap` | `200` | Overlap between consecutive chunks. Must be less than `text_chunk_size`. |
-| `text_chunk_unit` | `"characters"` | `"characters"` (no extra deps) or `"tokens"` (requires `pip install aperture-nexus[tokens]`). |
+| `text_chunk_unit` | `"characters"` | `"characters"` (no extra deps) or `"tokens"` (requires `python -m pip install '.[tokens]'`). |
 
 ### Video Processing
 
@@ -132,7 +132,7 @@ APERTURE_NEXUS_LOG_LEVEL=DEBUG python my_script.py
 
 Exposes a Prometheus-compatible `/metrics` endpoint for integration with Grafana, Datadog, and similar tools.
 
-**Requires:** `pip install aperture-nexus[metrics]`
+**Requires:** `python -m pip install '.[metrics]'`
 
 If `enabled` is `true` but the package is not installed, `NexusConfigError` is raised at startup with install instructions.
 
@@ -160,7 +160,7 @@ If `enabled` is `true` but the package is not installed, `NexusConfigError` is r
 
 Web UI and REST API for browsing sessions, searching memory, and monitoring tasks.
 
-**Requires:** `pip install aperture-nexus[ui]`
+**Requires:** `python -m pip install '.[ui]'`
 
 **Security:** When `host` is not `127.0.0.1`, `api_key` MUST be set. aperture-nexus will raise `NexusConfigError` at startup if this rule is violated. Never put the API key value directly in `aperture_nexus.json` — use the environment variable instead:
 

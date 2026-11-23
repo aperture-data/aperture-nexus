@@ -25,7 +25,7 @@ skill (aperturedb-connector-skill.md) for setup options, or run
 `adb-nexus init` to bootstrap a persistent config + .env.
 
 Prerequisites:
-    pip install "aperture-nexus[clip]"
+    python -m pip install '.[clip]'
     docker compose up -d
 """
 

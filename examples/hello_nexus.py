@@ -16,7 +16,7 @@ Run:
     python examples/hello_nexus.py
 
 Prerequisites:
-    pip install aperture-nexus
+    python -m pip install .
     docker compose up -d          # community edition, or point at a real instance
     # Admin credentials in environment (APERTUREDB_KEY or APERTUREDB_USER/PASSWORD)
 
@@ -40,7 +40,7 @@ try:
     from aperture_nexus.information import Information
 except ImportError as e:
     print(f"Import error: {e}")
-    print("Run: pip install aperture-nexus")
+    print("Run: python -m pip install .")
     sys.exit(1)
 
 user_id = f"hello-nexus-{uuid.uuid4().hex[:8]}"

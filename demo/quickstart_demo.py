@@ -3,7 +3,7 @@ quickstart_demo.py — aperture-nexus walkthrough demo.
 
 Run interactively (pauses at each step, recommended):
 
-    docker compose --profile demo run --rm nexus-demo
+    ./demo/run.sh
 
 Ctrl+C at any point cleans up all demo data from ApertureDB before exiting.
 After the demo, explore stored data at http://localhost:8087 (ApertureDB web UI).
@@ -144,7 +144,7 @@ def pause(label="next step"):
     except EOFError:
         blank()
         print("  stdin is not interactive.")
-        print("  Run: docker compose --profile demo run --rm nexus-demo")
+        print("  Run: ./demo/run.sh")
         cleanup()
         sys.exit(0)
     blank()
@@ -379,7 +379,7 @@ def run_demo() -> None:
     blank()
     print("  Next steps:")
     print("    git clone https://github.com/aperture-data/aperture-nexus")
-    print("    cd aperture-nexus && pip install .")
+    print("    cd aperture-nexus && python -m pip install .")
     print("    docker compose up -d         # start ApertureDB stack")
     print("    adb-nexus init               # create your principal")
     blank()

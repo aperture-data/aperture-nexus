@@ -4,12 +4,13 @@ WORKDIR /app
 
 # Copy package metadata and source — order matters for layer caching.
 # If pyproject.toml changes, deps reinstall. If only src/ changes, they don't.
-COPY pyproject.toml ./
+COPY pyproject.toml README.md LICENSE ./
 COPY src/ ./src/
 
 # Install aperture-nexus (core deps only — no CLIP, no video, no PyTorch).
 # The demo uses commit() + metadata filter search, which requires nothing heavy.
-RUN pip install --no-cache-dir -e .
+RUN --mount=type=bind,from=sdk_wheel,target=/sdk \
+    pip install --no-cache-dir /sdk/aperturedb-*-py3-none-any.whl -e .
 
 COPY demo/quickstart_demo.py ./demo/quickstart_demo.py
 

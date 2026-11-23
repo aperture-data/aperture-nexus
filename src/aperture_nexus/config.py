@@ -86,7 +86,7 @@ class ModelsConfig(BaseModel):
 
     To use CLIP, set all embedding fields to a CLIP model name and
     install the dependency:
-        pip install aperture-nexus[clip]
+        python -m pip install '.[clip]'
 
     CLIP limitations
     ----------------
@@ -221,7 +221,7 @@ class ProcessingConfig(BaseModel):
         default="characters",
         description=(
             "'characters' requires no extra dependencies. "
-            "'tokens' requires pip install aperture-nexus[tokens]."
+            "'tokens' requires python -m pip install '.[tokens]' from the Nexus checkout."
         ),
     )
 
@@ -362,7 +362,7 @@ class MetricsConfig(BaseModel):
     """
     Prometheus metrics export configuration.
 
-    Requires pip install aperture-nexus[metrics].
+    Requires python -m pip install '.[metrics]' from the Nexus checkout.
     Uses user-space ports only (>1024) — no root required.
 
     Example (aperture_nexus.json):
@@ -378,7 +378,7 @@ class MetricsConfig(BaseModel):
         default=False,
         description=(
             "Enable Prometheus metrics endpoint. "
-            "Requires pip install aperture-nexus[metrics]."
+            "Requires python -m pip install '.[metrics]' from the Nexus checkout."
         ),
     )
     port: int = Field(
@@ -400,7 +400,7 @@ class UIConfig(BaseModel):
     """
     Web UI and REST API configuration.
 
-    Requires pip install aperture-nexus[ui].
+    Requires python -m pip install '.[ui]' from the Nexus checkout.
 
     Security: when host is not '127.0.0.1', api_key MUST be set.
     Never put the api_key value in aperture_nexus.json — use the
@@ -585,7 +585,7 @@ def _validate_optional_deps(config: NexusConfig) -> None:
             raise NexusConfigError(
                 "processing.text_chunk_unit is 'tokens' but tiktoken "
                 "is not installed. "
-                "Install it with: pip install aperture-nexus[tokens]"
+                "Install it with: python -m pip install '.[tokens]' from the Nexus checkout"
             )
 
     if config.metrics.enabled:
@@ -595,7 +595,7 @@ def _validate_optional_deps(config: NexusConfig) -> None:
             raise NexusConfigError(
                 "metrics.enabled is true but prometheus-client "
                 "is not installed. "
-                "Install it with: pip install aperture-nexus[metrics]"
+                "Install it with: python -m pip install '.[metrics]' from the Nexus checkout"
             )
 
     if config.ui.enabled:
@@ -605,7 +605,7 @@ def _validate_optional_deps(config: NexusConfig) -> None:
         except ImportError:
             raise NexusConfigError(
                 "ui.enabled is true but the UI dependencies are not installed. "
-                "Install them with: pip install aperture-nexus[ui]"
+                "Install them with: python -m pip install '.[ui]' from the Nexus checkout"
             )
 
 

@@ -316,7 +316,7 @@ class TestOptionalDeps:
         with mock.patch.dict("sys.modules", {"tiktoken": None}):
             with pytest.raises(
                 NexusConfigError,
-                match="pip install aperture-nexus\\[tokens\\]",
+                match="python -m pip install '.\\[tokens\\]'",
             ):
                 load_config(path=config_file, validate_deps=True)
 
@@ -328,7 +328,7 @@ class TestOptionalDeps:
         with mock.patch.dict("sys.modules", {"prometheus_client": None}):
             with pytest.raises(
                 NexusConfigError,
-                match="pip install aperture-nexus\\[metrics\\]",
+                match="python -m pip install '.\\[metrics\\]'",
             ):
                 load_config(path=config_file, validate_deps=True)
 
@@ -340,7 +340,7 @@ class TestOptionalDeps:
         with mock.patch.dict("sys.modules", {"fastapi": None}):
             with pytest.raises(
                 NexusConfigError,
-                match="pip install aperture-nexus\\[ui\\]",
+                match="python -m pip install '.\\[ui\\]'",
             ):
                 load_config(path=config_file, validate_deps=True)
 

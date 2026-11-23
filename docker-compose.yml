@@ -47,10 +47,7 @@ services:
   # sessions and retrieves it — no setup, no credentials, no embedding models.
   #
   # Interactive (pauses at each step — recommended):
-  #   docker compose --profile demo run --rm nexus-demo
-  #
-  # Unattended (streams output without pausing):
-  #   docker compose --profile demo up
+  #   ./demo/run.sh
   #
   # For regular development (ApertureDB stack only):
   #   docker compose up -d
@@ -60,6 +57,8 @@ services:
     build:
       context: .
       dockerfile: demo/Dockerfile.demo
+      additional_contexts:
+        sdk_wheel: ${SDK_WHEEL_DIR:-./.sdk-wheel}
     depends_on:
       aperturedb:
         condition: service_healthy

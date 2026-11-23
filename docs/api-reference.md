@@ -536,7 +536,7 @@ for task in memory.failed_commits():
 memory.stats(scope: str = "session") -> dict
 ```
 
-Return usage statistics. Requires `pip install aperture-nexus[metrics]`.
+Return usage statistics. Requires `python -m pip install '.[metrics]'`.
 
 | `scope` | Description |
 |---------|-------------|

@@ -21,7 +21,7 @@ live ApertureDB instance:
   15. Cleanup                       — remove all contexts, verify DB clean
 
 Prerequisites:
-    pip install aperture-nexus[clip,video]
+    python -m pip install '.[clip,video]'
     docker compose up -d
 
 Run:
@@ -116,7 +116,7 @@ try:
     from aperture_nexus.information import Information
 except ImportError as e:
     print(f"Import error: {e}")
-    print("Run: pip install aperture-nexus")
+    print("Run: python -m pip install .")
     sys.exit(1)
 
 # ---------------------------------------------------------------------------

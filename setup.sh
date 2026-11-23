@@ -55,7 +55,7 @@ step "Installing aperture-nexus"
 if "$PYTHON" -c "import aperture_nexus" 2>/dev/null; then
   ok "aperture-nexus already installed"
 else
-  "$PYTHON" -m pip install --quiet aperture-nexus
+  "$PYTHON" -m pip install --quiet "$(cd "$(dirname "$0")" && pwd)"
   ok "aperture-nexus installed"
 fi
 

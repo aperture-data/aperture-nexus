@@ -8,7 +8,7 @@ everything — text and image — by searching for the session.
 Then: text-query → image results via CLIP semantic search.
 
 Prerequisites:
-    pip install "aperture-nexus[clip]"
+    python -m pip install '.[clip]'
     docker compose up -d
 
 Connection is resolved by the ApertureDB SDK's create_connector(), which
@@ -184,7 +184,7 @@ def run():
     try:
         import aperture_nexus._embeddings as _emb  # noqa: F401
     except ImportError:
-        print("  (skipped — pip install aperture-nexus[clip] to enable)")
+        print("  (skipped — python -m pip install '.[clip]' to enable)")
         _cleanup(admin, memory, ctx1)
         return
 

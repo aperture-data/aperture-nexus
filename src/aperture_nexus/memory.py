@@ -921,7 +921,7 @@ class Memory:
                 "Set models.text_embedding in aperture_nexus.json "
                 "(e.g. \"ViT-B/16\"), or pass embedding_model= to "
                 "search_contexts(). Install CLIP with: "
-                "pip install aperture-nexus[clip]."
+                "python -m pip install '.[clip]' from the Nexus checkout."
             )
 
         from aperture_nexus._embeddings import get_text_embedder
@@ -1404,7 +1404,7 @@ class Memory:
     def stats(self, scope: str = "session") -> dict:
         """Return usage statistics.
 
-        Requires ``pip install aperture-nexus[metrics]``.
+        Requires ``python -m pip install '.[metrics]'`` from the Nexus checkout.
 
         Args:
             scope: ``"session"`` (default) or ``"global"``.
@@ -1418,7 +1418,7 @@ class Memory:
         raise NexusConfigError(
             "memory.stats() is not yet implemented. "
             "Full metrics support is planned for a future release. "
-            "Install: pip install aperture-nexus[metrics]"
+            "Install: python -m pip install '.[metrics]' from the Nexus checkout"
         )
 
     # ------------------------------------------------------------------
@@ -1973,7 +1973,7 @@ class Memory:
                     f"Set models.{modality}_embedding in aperture_nexus.json "
                     f"(e.g. \"ViT-B/16\" for CLIP), or pass "
                     f"embedding=my_vector and embedding_model='...' to info.log(). "
-                    f"Install CLIP with: pip install aperture-nexus[clip]. "
+                    f"Install CLIP with: python -m pip install '.[clip]' from the Nexus checkout. "
                     f"Run 'adb-nexus init' to regenerate your config."
                 )
 
@@ -2035,7 +2035,7 @@ class Memory:
                     "Set models.text_embedding in aperture_nexus.json "
                     "(e.g. \"ViT-B/16\"), or pass embedding_model= to "
                     "memory.search(). Install CLIP with: "
-                    "pip install aperture-nexus[clip]."
+                    "python -m pip install '.[clip]' from the Nexus checkout."
                 )
             from aperture_nexus._embeddings import get_text_embedder
             embedder = get_text_embedder(model)

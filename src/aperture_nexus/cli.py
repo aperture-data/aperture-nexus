@@ -26,7 +26,7 @@ try:
 except ImportError:
     print(
         "aperture-nexus CLI requires typer. "
-        "Install it with: pip install aperture-nexus[ui]  "
+        "Install it with: python -m pip install '.[ui]' from the Nexus checkout  "
         "or: pip install typer"
     )
     sys.exit(1)

@@ -122,12 +122,14 @@ useful mnemonic, not the product.
 
 ## Quick Start
 
-Try the interactive walkthrough in one command, no setup needed:
+For Python, [install Nexus from the checkout](getting-started.md#1-install-aperture-nexus)
+and pip will install its SDK dependency from PyPI. The container walkthrough
+requires Docker Compose, ORAS 1.3 and a Docker Hub login with SDK image access.
 
 ```bash
 git clone https://github.com/aperture-data/aperture-nexus
 cd aperture-nexus
-docker compose --profile demo run --rm nexus-demo
+./demo/run.sh
 ```
 
 Or jump straight to [Getting Started](getting-started.md) to build
