@@ -124,7 +124,7 @@ useful mnemonic, not the product.
 
 For Python, [install Nexus from the checkout](getting-started.md#1-install-aperture-nexus)
 and pip will install its SDK dependency from PyPI. The container walkthrough
-requires Docker Compose, ORAS 1.3 and a Docker Hub login with SDK image access.
+requires Docker Compose and ORAS 1.3.
 
 ```bash
 git clone https://github.com/aperture-data/aperture-nexus

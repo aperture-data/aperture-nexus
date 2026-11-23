@@ -10,8 +10,7 @@ This guide takes you from a fresh machine to storing and searching
 your first multimodal memory. It takes about ten minutes.
 
 The [Python installation](#1-install-aperture-nexus) uses the public SDK on PyPI.
-To build the interactive Docker demo, install ORAS 1.3 and sign in to Docker Hub
-with access to `aperturedata/aperturedb-python`:
+The interactive Docker demo uses ORAS 1.3 to fetch the public SDK wheel:
 
 ```bash
 git clone https://github.com/aperture-data/aperture-nexus

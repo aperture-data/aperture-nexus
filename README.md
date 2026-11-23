@@ -91,7 +91,7 @@ cd aperture-nexus
 
 Requires [Docker Desktop](https://docs.docker.com/get-started/get-docker/)
 (Mac / Windows) or [Docker Engine](https://docs.docker.com/engine/install/)
-(Linux), ORAS 1.3, and a Docker Hub login with access to the SDK image.
+(Linux), and ORAS 1.3 to pull the public SDK image.
 For a local Python installation using the public SDK on PyPI, see
 [Installation](#installation).
 
